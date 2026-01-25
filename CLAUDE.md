@@ -80,6 +80,7 @@ npm run make       # Build DMG (outputs to out/make/)
 7. Cleaned up root directory (removed template leftovers)
 8. Updated README with project-specific documentation
 9. Created GitHub Release v4.1.0 with DMG download
+10. Improved attribution - clarified Steve Ouellette owns all stats4ROI code, this repo is just Electron packaging
 
 ### Testing Results
 - [x] App launches without R errors
