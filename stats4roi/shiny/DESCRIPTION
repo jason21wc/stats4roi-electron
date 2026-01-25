@@ -1,0 +1,54 @@
+Package: stats4ROI
+Type: Package
+Title: Statistical Analysis for Return on Investment - Refactored
+Version: 4.0.0
+Authors@R: person("Your Name", "your.email@example.com", role = c("aut", "cre"))
+Maintainer: Your Name <your.email@example.com>
+Description: A comprehensive statistical analysis application for ROI calculations. 
+    This is a complete refactored version of the original stats4ROI application, 
+    transformed from a 40,000+ line monolithic codebase into a modern, maintainable, 
+    and extensible modular application. It provides a friendly graphic front end 
+    to access powerful statistical program R without requiring knowledge of R scripting.
+License: CC-BY-ND-4.0 + file LICENSE
+URL: https://github.com/yourusername/stats4ROI
+BugReports: https://github.com/yourusername/stats4ROI/issues
+Depends: R (>= 4.0.0)
+Imports:
+    shiny (>= 1.7.0),
+    datamods (>= 0.1.0),
+    shinyWidgets (>= 0.7.0),
+    emmeans (>= 1.8.0),
+    nlme (>= 3.1.0),
+    DT (>= 0.28.0),
+    tidyverse (>= 1.3.0),
+    propagate (>= 1.0.0),
+    svglite (>= 2.1.0),
+    agop (>= 2.0.0),
+    ggh4x (>= 0.2.0),
+    car (>= 3.1.0),
+    bayestestR (>= 0.13.0),
+    bayesboot (>= 0.1.0),
+    lolcat (>= 0.1.0),
+    rhandsontable (>= 0.3.0),
+    htmlwidgets (>= 1.5.0)
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    roxygen2 (>= 7.0.0),
+    devtools,
+    usethis
+VignetteBuilder: knitr
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.2.0
+Language: en-US
+Collate:
+    'app_full_refactored.R'
+    'app_refactored_simple.R'
+    'modules/statistical_modules.R'
+    'modules/distributions_module.R'
+    'modules/anova_module.R'
+    'modules/crosstab_module.R'
+    'modules/msa_module.R'
+Roxygen: list(markdown = TRUE)

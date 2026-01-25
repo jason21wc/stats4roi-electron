@@ -1,0 +1,33 @@
+{
+  "name": "stats4roi",
+  "productName": "stats4ROI",
+  "version": "4.1.0",
+  "description": "Statistical Analysis Tool for ROI",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
+  },
+  "author": {
+    "name": "Steven Ouellette",
+    "email": "steve@roi-ally.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/roi-ally/stats4roi"
+  },
+  "dependencies": {
+    "axios": "0.27.2",
+    "esm": "^3.2.25",
+    "execa": "^5.1.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.2.0",
+    "@electron-forge/maker-zip": "^7.2.0",
+    "@electron-forge/maker-dmg": "^7.2.0",
+    "electron": "^26.6.7",
+    "fs-extra": "^11.2.0"
+  }
+}
