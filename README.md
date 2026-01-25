@@ -4,9 +4,12 @@ Electron-wrapped R Shiny statistical analysis application for Apple Silicon Macs
 
 ## About
 
-stats4ROI is a statistical analysis tool created by [Steven Ouellette](https://www.roi-ally.com) that provides a friendly graphical interface to R's powerful statistical capabilities without requiring any coding knowledge.
+**stats4ROI** is a statistical analysis tool created by [Steven Ouellette](https://www.roi-ally.com) of [The ROI Alliance](https://www.roi-ally.com). It provides a friendly graphical interface to R's powerful statistical capabilities without requiring any coding knowledge.
+
+This repository packages Steve's stats4ROI application as a standalone Electron app for **Apple Silicon Macs** (M1/M2/M3/M4). The R Shiny application code is entirely Steve's work — we simply wrapped it in Electron for easy distribution.
 
 **Version:** 4.1.0 (UI displays "stats4ROI v4.0")
+**Upstream:** [professorperegrine/stats4ROI](https://github.com/ProfessorPeregrine/stats4ROI)
 
 ## Features
 
@@ -58,7 +61,8 @@ stats4roi-electron/
 
 ## Credits
 
-- **stats4ROI:** Steven Ouellette ([ROI Alliance](https://www.roi-ally.com))
+- **stats4ROI Application:** [Steven Ouellette](https://www.roi-ally.com) — all R/Shiny code, statistical modules, and UI
+- **Electron Packaging:** This repo wraps Steve's app for Apple Silicon distribution
 - **Electron Template:** Based on [shiny-electron-template-m1](https://github.com/zarathucorp/shiny-electron-template-m1)
 
 ## License
