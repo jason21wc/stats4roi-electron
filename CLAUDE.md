@@ -5,73 +5,82 @@
 Electron-wrapped R Shiny application for statistical analysis, built for Apple Silicon (ARM64) Macs.
 
 **Current Version:** 4.1.0 (UI displays "stats4ROI v4.0")
+**Repository:** https://github.com/jason21wc/stats4roi-electron
 **Last Updated:** 2024-01-24
-**Status:** Production-ready DMG built and tested
+**Status:** Production-ready, DMG built and tested
 
-## Architecture
+## Project Structure
 
 ```
 stats4roi-electron/
-├── stats4roi/                    # Main application
-│   ├── shiny/                    # R Shiny app (modular v4.0)
-│   │   ├── app.R                 # Entry point (632 lines)
-│   │   ├── modules/              # 85 R module files (40,894 lines total)
-│   │   │   ├── config/           # Global config, data invalidation
-│   │   │   ├── data/             # Import, modification, filtering
-│   │   │   ├── distributions/    # Binomial, Normal, Poisson, etc.
-│   │   │   └── statistical/      # EDA, ANOVA, Crosstabs, SPC, MSA
-│   │   ├── www/                  # Static assets (icons, images)
-│   │   └── _archive/             # Old monolithic app.R (33,033 lines)
-│   ├── src/                      # Electron source
-│   ├── r-mac/                    # Bundled R 4.5.1 runtime (not in git)
-│   ├── out/make/                 # Build output (not in git)
-│   │   └── stats4ROI.dmg         # Distribution (~362MB)
-│   ├── package.json              # Electron config (v4.1.0)
-│   └── forge.config.js           # Electron Forge build config
-├── README.md                     # Template setup instructions
-└── CLAUDE.md                     # This file
+├── .gitignore
+├── CLAUDE.md               # This file - dev notes & session state
+├── LICENSE.md
+├── README.md               # User-facing documentation
+└── stats4roi/              # Self-contained Electron application
+    ├── shiny/              # R Shiny app (modular v4.0)
+    │   ├── app.R           # Entry point (632 lines)
+    │   ├── modules/        # 85 R module files (40,894 lines total)
+    │   │   ├── config/     # Global config, data invalidation
+    │   │   ├── data/       # Import, modification, filtering
+    │   │   ├── distributions/  # Binomial, Normal, Poisson, etc.
+    │   │   └── statistical/    # EDA, ANOVA, Crosstabs, SPC, MSA
+    │   ├── www/            # Static assets (icons, images)
+    │   └── _archive/       # Old monolithic app.R (33,033 lines)
+    ├── src/                # Electron source (main.js, etc.)
+    ├── r-mac/              # Bundled R 4.5.1 runtime (git-ignored)
+    ├── out/make/           # Build output (git-ignored)
+    │   └── stats4ROI.dmg   # Distribution (~362MB)
+    ├── node_modules/       # npm dependencies (git-ignored)
+    ├── package.json        # Electron config (v4.1.0)
+    └── forge.config.js     # Electron Forge build config
 ```
 
-## Key Information
+## Upstream Source
 
-### Upstream Source
 - **Repository:** `professorperegrine/stats4ROI`
 - **Author:** Steven Ouellette (steve@roi-ally.com)
+- **Website:** https://www.roi-ally.com
 - **Sync Pattern:** One-way pull from upstream `deployment/` directory
 
-### Version History
+## Version History
+
 | Version | Type | Lines | Files | Notes |
 |---------|------|-------|-------|-------|
 | 3.2 | Monolithic | 33,033 | 1 | Archived in `_archive/` |
 | 4.0/4.1 | Modular | 40,894 | 85 | Current production |
 
-### Build Commands
+## Build Commands
+
 ```bash
 cd stats4roi
 npm start          # Dev mode
 npm run make       # Build DMG (outputs to out/make/)
 ```
 
-### Git Branches
-- `main` - Production (v4.1.0 modular)
-- `backup/pre-modular-update` - Pre-update snapshot
-- `feature/modular-update` - Feature branch (merged)
+## Git Configuration
+
+- **Remote:** `origin` → https://github.com/jason21wc/stats4roi-electron.git
+- **Branch:** `main` (only branch)
 
 ### Files Excluded from Git
 - `stats4roi/r-mac/` - Bundled R runtime (~800MB)
 - `stats4roi/out/` - Build artifacts
 - `stats4roi/node_modules/` - npm dependencies
 
-## Recent Changes (2024-01-24)
+## Session History (2024-01-24)
 
+### Completed Tasks
 1. Updated from monolithic v3.2 to modular v4.0 architecture
 2. Pulled latest code from `professorperegrine/stats4ROI` deployment folder
 3. Archived old `app.R` for reference
-4. Cleaned up template files from root directory
-5. Built and tested DMG successfully
+4. Built and tested DMG successfully
+5. Installed and verified app launches correctly
+6. Created GitHub repository under `jason21wc` account
+7. Cleaned up root directory (removed template leftovers)
+8. Updated README with project-specific documentation
 
-## Testing Checklist
-
+### Testing Results
 - [x] App launches without R errors
 - [x] Welcome page displays with images
 - [x] Version shows "stats4ROI v4.0"
@@ -82,4 +91,25 @@ npm run make       # Build DMG (outputs to out/make/)
 
 **DMG Location:** `stats4roi/out/make/stats4ROI.dmg` (362MB)
 
-Ready to distribute to Steve/users.
+Ready to distribute. Consider creating a GitHub Release to host the DMG.
+
+## Future Sync from Upstream
+
+To pull updates from Steve's repo:
+
+```bash
+# Clone upstream temporarily
+git clone --depth 1 https://github.com/ProfessorPeregrine/stats4ROI.git /tmp/upstream
+
+# Copy deployment files
+cp /tmp/upstream/deployment/stats4ROI_mod.R stats4roi/shiny/app.R
+cp -r /tmp/upstream/deployment/modules/* stats4roi/shiny/modules/
+cp -r /tmp/upstream/deployment/www/* stats4roi/shiny/www/
+
+# Clean up
+rm -rf /tmp/upstream
+
+# Test and rebuild
+cd stats4roi && npm start
+npm run make
+```
