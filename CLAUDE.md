@@ -79,6 +79,7 @@ npm run make       # Build DMG (outputs to out/make/)
 6. Created GitHub repository under `jason21wc` account
 7. Cleaned up root directory (removed template leftovers)
 8. Updated README with project-specific documentation
+9. Created GitHub Release v4.1.0 with DMG download
 
 ### Testing Results
 - [x] App launches without R errors
@@ -89,9 +90,10 @@ npm run make       # Build DMG (outputs to out/make/)
 
 ## Distribution
 
+**GitHub Release:** https://github.com/jason21wc/stats4roi-electron/releases/tag/v4.1.0
 **DMG Location:** `stats4roi/out/make/stats4ROI.dmg` (362MB)
 
-Ready to distribute. Consider creating a GitHub Release to host the DMG.
+Release v4.1.0 published and ready for distribution.
 
 ## Future Sync from Upstream
 
