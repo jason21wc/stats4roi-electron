@@ -21,9 +21,36 @@ This repository packages Steve's stats4ROI application as a standalone Electron 
 
 ## Installation
 
-Download the latest `stats4ROI.dmg` from [Releases](https://github.com/jason21wc/stats4roi-electron/releases), open it, and drag stats4ROI to your Applications folder.
+### Requirements
+- Mac with Apple Silicon (M1, M2, M3, or M4 chip)
+- macOS 11 (Big Sur) or later
 
-**Requirements:** macOS on Apple Silicon (M1/M2/M3)
+### Steps
+
+1. **Download** the DMG file from the [Releases page](https://github.com/jason21wc/stats4roi-electron/releases)
+
+2. **Open** the downloaded `stats4ROI.dmg` file
+
+3. **Drag** the stats4ROI app to your Applications folder
+
+4. **First launch** — Right-click (or Control-click) the app and select **Open**
+   - You'll see a warning that the app is from an unidentified developer
+   - Click **Open** to confirm
+
+5. The app will start — this may take 10-15 seconds on first launch while R initializes
+
+### Troubleshooting
+
+**"stats4ROI is damaged and can't be opened"**
+
+Run this command in Terminal, then try opening again:
+```bash
+xattr -cr /Applications/stats4ROI.app
+```
+
+**App won't open at all**
+
+Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the stats4ROI message.
 
 ## Development
 

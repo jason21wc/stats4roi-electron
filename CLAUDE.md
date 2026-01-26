@@ -6,7 +6,7 @@ Electron-wrapped R Shiny application for statistical analysis, built for Apple S
 
 **Current Version:** 4.1.0 (UI displays "stats4ROI v4.0")
 **Repository:** https://github.com/jason21wc/stats4roi-electron
-**Last Updated:** 2024-01-24
+**Last Updated:** 2025-01-26
 **Status:** Production-ready, DMG built and tested
 
 ## Project Structure
@@ -68,9 +68,14 @@ npm run make       # Build DMG (outputs to out/make/)
 - `stats4roi/out/` - Build artifacts
 - `stats4roi/node_modules/` - npm dependencies
 
-## Session History (2024-01-24)
+## Session History
 
-### Completed Tasks
+### 2025-01-26
+- Added detailed installation instructions to README (requirements, steps, troubleshooting)
+
+### 2024-01-24 — Initial Release
+
+#### Completed Tasks
 1. Updated from monolithic v3.2 to modular v4.0 architecture
 2. Pulled latest code from `professorperegrine/stats4ROI` deployment folder
 3. Archived old `app.R` for reference
@@ -82,7 +87,7 @@ npm run make       # Build DMG (outputs to out/make/)
 9. Created GitHub Release v4.1.0 with DMG download
 10. Improved attribution - clarified Steve Ouellette owns all stats4ROI code, this repo is just Electron packaging
 
-### Testing Results
+#### Testing Results
 - [x] App launches without R errors
 - [x] Welcome page displays with images
 - [x] Version shows "stats4ROI v4.0"
