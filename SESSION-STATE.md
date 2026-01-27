@@ -14,7 +14,7 @@
 
 ## Context
 
-Production-ready application. v4.1.0 released and distributed via GitHub Releases.
+Production-ready application. v4.1.1 released and distributed via GitHub Releases.
 
 Synced with upstream Jan 26, 2026:
 - `sample_size_power_module.R` updated (2,455 → 3,013 lines)
