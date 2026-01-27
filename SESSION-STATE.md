@@ -16,12 +16,10 @@
 
 Production-ready application. v4.1.0 released and distributed via GitHub Releases.
 
-Documentation restructured per AI governance memory pattern (§7.1-7.5). Memory files now in place:
-- CLAUDE.md (minimal loader)
-- SESSION-STATE.md (this file)
-- PROJECT-MEMORY.md (decisions/constraints)
-- LEARNING-LOG.md (lessons)
-- ARCHITECTURE.md (technical design)
+Synced with upstream Jan 26, 2026:
+- `sample_size_power_module.R` updated (2,455 → 3,013 lines)
+- `roi-stat.svg` updated
+- `stats4ROI_mod.R` version string updated
 
 ## Next Actions
 
@@ -32,4 +30,4 @@ No pending actions. System is stable.
 None.
 
 ---
-*Last Updated: 2025-01-26*
+*Last Updated: 2026-01-26*

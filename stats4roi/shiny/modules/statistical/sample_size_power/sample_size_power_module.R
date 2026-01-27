@@ -6,6 +6,9 @@ library(shiny)
 library(lolcat)
 library(dplyr)
 
+# Source global config for rounding function
+source("modules/config/global_config.R")
+
 # Helper function to create properly spaced table rows
 create_table_row <- function(cell1, cell2 = "", cell3 = "") {
   if (cell3 != "") {
@@ -283,7 +286,171 @@ sample.size.count.poisson.twosample.approximate <- function(lambda_1, lambda_2, 
   return(output)
 }
 
+#####Estimation functions###################################################
+# Function to calculate sample size for desired CI width (Mean, σ known)
+# Replicating app.R lines 5432-5445
+sample_size_for_mean_CI <- function(width, sd, conf.level = 0.95, sigfig = 2) {
+  # Parameters:
+  # width = width of confidence interval (e.g. 2*delta)
+  # sd = known standard deviation
+  # conf.level = confidence level of the ci
+  # sigfig = number of significant digits in final width
+  z <- qnorm(1 - (1 - conf.level)/2)
+  n <- ceiling(signif((2 * z * sd/(width))^2, sigfig))
+  act_width <- 2*z*sd/sqrt(n)
+  return(list(
+    n = n,
+    act_width = act_width
+  ))
+}
+
+# Function to calculate sample size for binomial proportion CI
+# Replicating app.R lines 5448-5485
+sample_size_for_binom_CI <- function(width, p_est = 0.5, conf.level = 0.95, sigfig = 2) {
+  # Parameters:
+  # width = width of confidence interval (e.g. 2*delta)
+  # p_est = best guess as to proportion (.5 is worst-case)
+  # conf.level = confidence level of the ci
+  # sigfig = number of significant digits in final width
+  
+  alpha <- 1 - conf.level
+  
+  # Function to check if CI width is less than target width for a given n
+  check_width <- function(n) {
+    # Calculate confidence interval using exact method
+    ci <- stats::binom.test(round(p_est * n), n, conf.level = conf.level)$conf.int
+    actual_width <- diff(ci)
+    return(actual_width)
+  }
+  # Binary search implementation
+  n_min <- 2  # Minimum possible sample size
+  n_max <- 1e6  # Maximum reasonable sample size
+  
+  while (n_max - n_min > 1) {
+    n_mid <- floor((n_min + n_max) / 2)
+    act_width <- check_width(n_mid)
+    if (signif(act_width, sigfig) <= width) {
+      n_max <- n_mid
+    } else {
+      n_min <- n_mid
+    }
+  }
+  n <- n_max
+  act_width <- check_width(n)
+  
+  if (n == 1e6) {
+    warning("Maximum sample size reached. Consider wider interval width.")
+  }
+  
+  return(list(n = n, act_width = act_width))
+}
+
+# Function to calculate sample size for SD CI (relative width)
+# Replicating app.R lines 5488-5511
+sample_size_for_sd_CI <- function(target_relative_width = 0.5, conf.level = 0.95, sigfig = 2, max_n = 100000) {
+  # Parameters:
+  # target_relative_width = the ratio of the width of the confidence interval to the calculated standard deviation
+  # for example, the default of 0.5 will give the sample size needed to result in a confidence
+  # interval that is half as wide as the standard deviation that is found
+  # conf.level = confidence level of the ci
+  # sigfig = number of significant digits in final width
+  # max_n = the maximum iterations before stopping
+  alpha <- 1 - conf.level
+  for (n in 3:max_n) {  # minimum df = 2
+    chi2_lower <- qchisq(alpha / 2, df = n - 1, lower.tail = FALSE)
+    chi2_upper <- qchisq(1 - alpha / 2, df = n - 1, lower.tail = FALSE)
+    
+    relative_width <- sqrt(n - 1) * 
+      (1 / sqrt(chi2_upper) - 1 / sqrt(chi2_lower))
+    
+    if (signif(relative_width, sigfig) <= target_relative_width) {
+      return(list(n = n, act_width = relative_width))
+    }
+  }
+  
+  warning("Sample size exceeds maximum allowed (max_n).")
+  return(NA)
+}
+
+# Function to calculate sample size for Poisson CI (relative width)
+# Replicating app.R lines 5514-5543
+sample_size_for_poisson_CI <- function(lambda_est, 
+                                       target_relative_width = 0.2, 
+                                       conf.level = 0.95, 
+                                       sigfig = 2,
+                                       max_T = 1e5) {
+  # Parameters
+  # lambda_est = expected average count
+  # target_relative_width = the ratio of the width of the confidence interval to lambda_est
+  # conf.level = confidence level of the ci
+  # sigfig = number of significant digits in final width
+  # max_T = the maximum iterations before stopping
+  
+  alpha <- 1 - conf.level
+  for (T in 1:max_T) {
+    expected_counts <- lambda_est * T
+    
+    # Lower and Upper CI bounds using chi-squared approximation
+    upper <- qchisq(1 - alpha/2, 2 * (expected_counts+1)) / 2
+    lower <- qchisq(alpha/2, 2 * expected_counts) / 2
+    
+    # Relative width calculation
+    relative_width <- (upper - lower) / (lambda_est * T)
+    if (signif(relative_width, sigfig) <= target_relative_width) {
+      return(list(n = T, act_width = relative_width))
+    }
+  }
+  
+  warning("Required sample size exceeds maximum allowed (max_T).")
+  return(NA)
+}
+
+# Function to calculate sample size for correlation CI
+# Replicating app.R lines 5548-5588
+sample_size_for_correlation_CI <- function(r_est, 
+                                           width = 0.2, 
+                                           conf.level = 0.95, 
+                                           sigfig = 4,
+                                           max_n = 1000) {
+  
+  # Uses Fisher's transformation to normalize
+  # Parameters
+  # r_est = estimated correlation coefficient
+  # width = the ratio of the width of the confidence interval to rho
+  # conf.level = confidence level of the ci
+  # sigfig = number of significant digits in final width
+  # max_n = the maximum iterations before stopping
+  
+  alpha <- 1 - conf.level
+  # Fisher's z transform of the true correlation
+  z <- 0.5 * log((1 + r_est) / (1 - r_est))
+  
+  # Critical value for two-sided CI
+  z_crit <- qnorm(1 - alpha / 2)
+  
+  # Loop through sample sizes
+  for (n in 4:max_n) {  # minimum n is 4
+    SE_z <- 1 / sqrt(n - 3)
+    z_lower <- z - z_crit * SE_z
+    z_upper <- z + z_crit * SE_z
+    
+    # Back-transform to r
+    r_lower <- (exp(2 * z_lower) - 1) / (exp(2 * z_lower) + 1)
+    r_upper <- (exp(2 * z_upper) - 1) / (exp(2 * z_upper) + 1)
+    
+    act_width <- r_upper - r_lower
+    
+    if (signif(act_width, sigfig) <= width) {
+      return(list(n = n, act_width = width))
+    }
+  }
+  
+  warning("Required sample size exceeds maximum allowed (max_n).")
+  return(NA)
+}
+
 # Sample Size and Power Analysis UI (replicating app.R lines 1114-1148)
+# REBUILT from scratch to match monolithic app structure exactly
 create_sample_size_power_ui <- function(id) {
   ns <- NS(id)
   
@@ -292,14 +459,27 @@ create_sample_size_power_ui <- function(id) {
       radioButtons(
         inputId = ns("sample_size_type"),
         label = "Calculate the sample size or power for:",
-        choices = c("Means" = 1, "Variances" = 2, "Proportions (binomial)" = 3, "Rates (Poisson)" = 4, "ANOVA" = 5, "Correlations" = 6)
+        choices = c("Means" = 1, "Standard Deviations" = 2, "Proportions (binomial)" = 3, "Rates (Poisson)" = 4, "ANOVA" = 5, "Correlations" = 6)
+        # No selected parameter - matches monolithic app
       ),
-      uiOutput(ns("s_size_tests"))
+      radioButtons(
+        inputId = ns("sample_size_mode"),
+        label = "Calculate for",
+        choices = c("Hypothesis Test" = 1, "Estimation" = 2),
+        selected = 1
+      ),
+      conditionalPanel(
+        condition = "input.sample_size_mode == 1",
+        ns = ns,
+        # Use renderUI like monolithic app - this avoids issues with multiple radioButtons having same inputId
+        uiOutput(ns("s_size_tests"))
+      )
     ), # end sidebarpanel
     mainPanel(
       fluidRow(
         conditionalPanel(
-          condition = paste0("input['", ns("sample_size_type"), "'] != 5"),
+          condition = "!(input.sample_size_type == 5 || input.sample_size_mode == 2)",
+          ns = ns,
           selectInput(
             inputId = ns("one_or_two_size"),
             label = "Alternative is:",
@@ -308,10 +488,14 @@ create_sample_size_power_ui <- function(id) {
             selected = 2
           )
         ),
-        checkboxInput(
-          inputId = ns("power_s"),
-          label = "Power",
-          value = FALSE
+        conditionalPanel(
+          condition = "input.sample_size_mode == 1",
+          ns = ns,
+          checkboxInput(
+            inputId = ns("power_s"),
+            label = "Power",
+            value = FALSE
+          )
         )
       ),
       tags$div(
@@ -326,42 +510,763 @@ create_sample_size_power_ui <- function(id) {
             max = 1,
             step = 0.05,
             width = "150px"
-          ))
-        ),
-        fluidRow(
-          column(3,
+          )),
+          column(9,
             conditionalPanel(
-              condition = paste0("input['", ns("power_s"), "'] == 0"),
+              condition = "input.sample_size_mode == 2",
+              ns = ns,
               numericInput(
-                inputId = ns("s_size_beta"),
-                label = withMathJax("$$\\beta:{ }$$"),
-                value = 0.1,
-                min = 0,
-                max = 1,
-                step = 0.05,
-                width = "150px"
-              )
-            ),
-            conditionalPanel(
-              condition = paste0("input['", ns("power_s"), "'] == 1"),
-              numericInput(
-                inputId = ns("s_size_n"),
-                label = withMathJax("$$n:{ }$$"),
-                value = 10,
-                min = 0,
+                inputId = ns("s_size_sigfig"),
+                label = "CI Width SigFigs",
+                value = 2,
+                min = 1,
+                max = 9,
                 step = 1,
                 width = "150px"
               )
             )
+          )
+        ),
+        fluidRow(
+          column(3,
+            conditionalPanel(
+              condition = "input.sample_size_mode == 1",
+              ns = ns,
+              conditionalPanel(
+                condition = "input.power_s == 0",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_size_beta"),
+                  label = withMathJax("$$\\beta:{ }$$"),
+                  value = 0.1,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.power_s == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_size_n"),
+                  label = withMathJax("$$n:{ }$$"),
+                  value = 10,
+                  min = 0,
+                  step = 1,
+                  width = "150px"
+                )
+              )
+            )
           ),
-          column(3, uiOutput(ns("s_sizeUI3")))
+          column(3, 
+            # s_sizeUI3 - moved from renderUI to UI function using conditionalPanel
+            # Only for hypothesis test mode (sample_size_mode == 1)
+            conditionalPanel(
+              condition = "input.sample_size_mode == 1",
+              ns = ns,
+              # Handle sample_size_type == 5 (ANOVA) which sets sample_calc to 15 - returns NULL
+              # sample_calc == 6 with power_s == TRUE
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 6 && input.power_s == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI3"),
+                  label = withMathJax("$$n_{2}:{ }$$"),
+                  value = 10,
+                  min = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 7 with power_s == TRUE
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 7 && input.power_s == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI3"),
+                  label = withMathJax("$$n_{2}:{ }$$"),
+                  value = 10,
+                  min = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 10 with power_s == TRUE
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 10 && input.power_s == true",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI3"),
+                  label = withMathJax("$$n_{2}:{ }$$"),
+                  value = 10,
+                  min = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 18 with power_s == TRUE
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 18 && input.power_s == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI3"),
+                  label = withMathJax("$$n_{2}:{ }$$"),
+                  value = 10,
+                  min = 1,
+                  width = "150px"
+                )
+              )
+            )
+          )
         ),
         fluidRow(
-          column(3, uiOutput(ns("s_sizeUI1"))),
-          column(6, uiOutput(ns("s_sizeUI4")))
+          column(3, 
+            # s_sizeUI1 - moved from renderUI to UI function using conditionalPanel
+            # Hypothesis test mode (sample_size_mode == 1)
+            conditionalPanel(
+              condition = "input.sample_size_mode == 1",
+              ns = ns,
+              # Handle sample_size_type == 5 (ANOVA) which sets sample_calc to 15
+              conditionalPanel(
+                condition = "input.sample_size_type == 5",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma_{w}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 1
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 2
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 2",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 3
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 3",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 4
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 4",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 5
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 5",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 6
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 6",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 7
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 7",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 8
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 8",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma_{\\bar{D}}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 9
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 9",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma_{0}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 10
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 10",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma_{1}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 11
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 11",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\rho_{0}:{ }$$"),
+                  value = 0.0,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 12
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 12",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\pi_{0}:{ }$$"),
+                  value = 0.5,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 13
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 13",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\pi_{0}:{ }$$"),
+                  value = 0.5,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 14
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 14",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\pi_{1}:{ }$$"),
+                  value = 0.5,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 16
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 16",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\lambda_{0}:{ }$$"),
+                  value = 10,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 17
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 17",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\lambda_{0}:{ }$$"),
+                  value = 10,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 18
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 18",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\lambda_{1}:{ }$$"),
+                  value = 10,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              )
+            ),
+            # Estimation mode (sample_size_mode == 2)
+            conditionalPanel(
+              condition = "input.sample_size_mode == 2",
+              ns = ns,
+              conditionalPanel(
+                condition = "input.sample_size_type == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\sigma_{est}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.sample_size_type == 3",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\pi_{est}:{ }$$"),
+                  value = 0.5,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.sample_size_type == 4",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\lambda_{est}:{ }$$"),
+                  value = 5,
+                  min = 0,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.sample_size_type == 6",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI1"),
+                  label = withMathJax("$$\\rho_{est}:{ }$$"),
+                  value = 0.5,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              )
+            )
+          ),
+          column(6, 
+            # s_sizeUI4 - moved from renderUI to UI function using conditionalPanel
+            # Only for hypothesis test mode (sample_size_mode == 1)
+            conditionalPanel(
+              condition = "input.sample_size_mode == 1",
+              ns = ns,
+              # Handle sample_size_type == 5 (ANOVA) which sets sample_calc to 15
+              conditionalPanel(
+                condition = "input.sample_size_type == 5",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI4"),
+                  label = withMathJax("$$\\text{Levels }:{ }$$"),
+                  value = 4,
+                  min = 2,
+                  step = 1,
+                  width = "300px"
+                )
+              ),
+              # sample_calc == 7
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 7",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI4"),
+                  label = withMathJax("$$\\sigma_{2}:{ }$$"),
+                  value = 10,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 9
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 9",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI4"),
+                  label = withMathJax("$$\\sigma_{1}:{ }$$"),
+                  value = 2,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 10
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 10",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI4"),
+                  label = withMathJax("$$\\sigma_{2}:{ }$$"),
+                  value = 2,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              )
+            )
+          )
         ),
         fluidRow(
-          column(3, uiOutput(ns("s_sizeUI2")))
+          column(3, 
+            # s_sizeUI2 - moved from renderUI to UI function using conditionalPanel
+            # Hypothesis test mode (sample_size_mode == 1)
+            conditionalPanel(
+              condition = "input.sample_size_mode == 1",
+              ns = ns,
+              # Handle sample_size_type == 5 (ANOVA) which sets sample_calc to 15
+              conditionalPanel(
+                condition = "input.sample_size_type == 5",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta_{b}:{ }$$"),
+                  value = 1,
+                  min = 2,
+                  step = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 1
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 2
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 2",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 3
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 3",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 4
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 4",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 5
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 5",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 6
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 6",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 7
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 7",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 8
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 8",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\Delta_{\\bar{D}}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 11
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 11",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\rho_{1}:{ }$$"),
+                  value = 0.5,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 12
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 12",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\pi_{1}:{ }$$"),
+                  value = 0.1,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 13
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 13",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\pi_{1}:{ }$$"),
+                  value = 0.1,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 14
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 14",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\pi_{2}:{ }$$"),
+                  value = 0.1,
+                  min = 0,
+                  max = 1,
+                  step = 0.05,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 16
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 16",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\lambda_{1}:{ }$$"),
+                  value = 20,
+                  min = 2,
+                  step = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 17
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 17",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\lambda_{1}:{ }$$"),
+                  value = 20,
+                  min = 2,
+                  step = 1,
+                  width = "150px"
+                )
+              ),
+              # sample_calc == 18
+              conditionalPanel(
+                condition = "input.sample_size_type != 5 && input.sample_calc == 18",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$\\lambda_{2}:{ }$$"),
+                  value = 20,
+                  min = 2,
+                  step = 1,
+                  width = "150px"
+                )
+              )
+            ),
+            # Estimation mode (sample_size_mode == 2)
+            conditionalPanel(
+              condition = "input.sample_size_mode == 2",
+              ns = ns,
+              conditionalPanel(
+                condition = "input.sample_size_type == 1",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$CI_{Width}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.sample_size_type == 2",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$CI_{RelWidth}:{ }$$"),
+                  value = 0.5,
+                  min = 0,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.sample_size_type == 3",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$CI_{Width}:{ }$$"),
+                  value = 0.1,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.sample_size_type == 4",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$CI_{RelWidth}:{ }$$"),
+                  value = 1,
+                  min = 0,
+                  width = "150px"
+                )
+              ),
+              conditionalPanel(
+                condition = "input.sample_size_type == 6",
+                ns = ns,
+                numericInput(
+                  inputId = ns("s_sizeUI2"),
+                  label = withMathJax("$$CI_{Width}:{ }$$"),
+                  value = 0.2,
+                  min = 0,
+                  max = 1,
+                  width = "150px"
+                )
+              )
+            )
+          )
         )
       ),
       htmlOutput(ns("pretty_ssize"))
@@ -372,9 +1277,18 @@ create_sample_size_power_ui <- function(id) {
 # Sample Size and Power Analysis Server (replicating app.R lines 5166-5320+)
 create_sample_size_power_server <- function(id) {
   moduleServer(id, function(input, output, session) {
-    ns <- NS(id)
+    ns <- session$ns
     
-    # Define choice_sample_size (replicating app.R lines 104-124)
+    # CRITICAL FIX: Create a reactive trigger to force immediate invalidation
+    # When sample_calc is inside nested conditionalPanels, Shiny may not immediately
+    # detect the change. This trigger forces s_size_results to invalidate immediately.
+    sample_calc_trigger <- reactiveVal(0)
+    
+    observeEvent(input$sample_calc, {
+      sample_calc_trigger(sample_calc_trigger() + 1)
+    }, ignoreInit = FALSE, ignoreNULL = FALSE)
+    
+    # Define choice_sample_size in server (like monolithic app)
     choice_sample_size <- c(seq(1, 18))
     names(choice_sample_size) <- c(
       "One-sample Mean z",
@@ -397,9 +1311,12 @@ create_sample_size_power_server <- function(id) {
       "Two-Sample Poisson - Approximate"
     )
     
-    # Test selection UI (replicating app.R lines 7544-7569)
+    # s_size_tests - renderUI like monolithic app (replicating app.R lines 7801-7826)
+    # This avoids issues with multiple radioButtons having the same inputId in different conditionalPanels
     output$s_size_tests <- renderUI({
       sample_size_type <- input$sample_size_type
+      
+      req(sample_size_type)
       
       if (sample_size_type == 1) {
         s_size_test_out <- radioButtons(
@@ -407,602 +1324,49 @@ create_sample_size_power_server <- function(id) {
           label = "Select the Test",
           choices = choice_sample_size[c(1, 3, 5:8)]
         )
-      }
-      if (sample_size_type == 2) {
+      } else if (sample_size_type == 2) {
         s_size_test_out <- radioButtons(
           inputId = ns("sample_calc"),
           label = "Select the Test",
           choices = choice_sample_size[c(9:10)]
         )
-      }
-      if (sample_size_type == 3) {
+      } else if (sample_size_type == 3) {
         s_size_test_out <- radioButtons(
           inputId = ns("sample_calc"),
           label = "Select the Test",
           choices = choice_sample_size[c(12:14)]
         )
-      }
-      if (sample_size_type == 4) {
+      } else if (sample_size_type == 4) {
         s_size_test_out <- radioButtons(
           inputId = ns("sample_calc"),
           label = "Select the Test",
           choices = choice_sample_size[c(16, 17, 18)]
         )
-      }
-      if (sample_size_type == 5) {
+      } else if (sample_size_type == 5) {
         s_size_test_out <- p("")
-      }
-      if (sample_size_type == 6) {
+      } else if (sample_size_type == 6) {
         s_size_test_out <- radioButtons(
           inputId = ns("sample_calc"),
           label = "Select the Test",
           choices = choice_sample_size[c(11)]
         )
+      } else {
+        s_size_test_out <- NULL
       }
       
       s_size_test_out
     })
     
-    # Dynamic UI generation for s_sizeUI1 (replicating app.R lines 7572-7637)
-    output$s_sizeUI1 <- renderUI({
-      sample_calc <- input$sample_calc
-      sample_size_type <- input$sample_size_type
-      
-      req(sample_calc)
-      
-      if (sample_size_type == 5) {
-        sample_calc <- 15
-      }
-      
-      if (sample_calc == 1) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 2) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 3) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 4) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 5) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 6) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 7) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 8) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma_{\\bar{D}}:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 9) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma_{0}:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 10) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma_{1}:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 11) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\rho_{0}:{ }$$"),
-          value = 0.0,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 12) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\pi_{0}:{ }$$"),
-          value = 0.5,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 13) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\pi_{0}:{ }$$"),
-          value = 0.5,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 14) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\pi_{1}:{ }$$"),
-          value = 0.5,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 15) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\sigma_{w}:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 16) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\lambda_{0}:{ }$$"),
-          value = 10,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 17) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\lambda_{0}:{ }$$"),
-          value = 10,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 18) {
-        s_size1_out <- numericInput(
-          inputId = ns("s_sizeUI1"),
-          label = withMathJax("$$\\lambda_{1}:{ }$$"),
-          value = 10,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      
-      s_size1_out
-    })
-    
-    # Dynamic UI generation for s_sizeUI2 (replicating app.R lines 7640-7703)
-    output$s_sizeUI2 <- renderUI({
-      sample_calc <- input$sample_calc
-      sample_size_type <- input$sample_size_type
-      
-      req(sample_calc)
-      
-      if (sample_size_type == 5) {
-        sample_calc <- 15
-      }
-      
-      if (sample_calc == 1) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 2) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 3) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 4) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 5) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 6) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 7) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 8) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta_{\\bar{D}}:{ }$$"),
-          value = 1,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 9) {
-        s_size2_out <- NULL
-      }
-      if (sample_calc == 10) {
-        s_size2_out <- NULL
-      }
-      if (sample_calc == 11) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\rho_{1}:{ }$$"),
-          value = 0.5,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 12) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\pi_{1}:{ }$$"),
-          value = 0.1,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 13) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\pi_{1}:{ }$$"),
-          value = 0.1,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 14) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\pi_{2}:{ }$$"),
-          value = 0.1,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 15) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\Delta_{b}:{ }$$"),
-          value = 1,
-          min = 2,
-          step = 1
-        )
-      }
-      if (sample_calc == 16) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\lambda_{1}:{ }$$"),
-          value = 20,
-          min = 2,
-          step = 1
-        )
-      }
-      if (sample_calc == 17) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\lambda_{1}:{ }$$"),
-          value = 20,
-          min = 2,
-          step = 1
-        )
-      }
-      if (sample_calc == 18) {
-        s_size2_out <- numericInput(
-          inputId = ns("s_sizeUI2"),
-          label = withMathJax("$$\\lambda_{2}:{ }$$"),
-          value = 20,
-          min = 2,
-          step = 1
-        )
-      }
-      s_size2_out
-    })
-    
-    # Dynamic UI generation for s_sizeUI3 (replicating app.R lines 7706-7780)
-    output$s_sizeUI3 <- renderUI({
-      sample_calc <- input$sample_calc
-      power_s <- input$power_s
-      sample_size_type <- input$sample_size_type
-      
-      req(sample_calc)
-      
-      if (sample_size_type == 5) {
-        sample_calc <- 15
-      }
-      
-      if (sample_calc == 1) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 2) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 3) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 4) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 5) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 6) {
-        if (power_s == TRUE) {
-          s_size3_out <- numericInput(
-            inputId = ns("s_sizeUI3"),
-            label = withMathJax("$$n_{2}:{ }$$"),
-            value = 10,
-            min = 1
-          )
-        } else {
-          s_size3_out <- NULL
-        }
-      }
-      if (sample_calc == 7) {
-        if (power_s == TRUE) {
-          s_size3_out <- numericInput(
-            inputId = ns("s_sizeUI3"),
-            label = withMathJax("$$n_{2}:{ }$$"),
-            value = 10,
-            min = 1
-          )
-        } else {
-          s_size3_out <- NULL
-        }
-      }
-      if (sample_calc == 8) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 9) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 10) {
-        if (power_s == TRUE) {
-          s_size3_out <- numericInput(
-            inputId = ns("s_sizeUI3"),
-            label = withMathJax("$$n_{2}:{ }$$"),
-            value = 10,
-            min = 1
-          )
-        } else {
-          s_size3_out <- NULL
-        }
-      }
-      if (sample_calc == 11) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 12) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 13) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 14) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 15) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 16) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 17) {
-        s_size3_out <- NULL
-      }
-      if (sample_calc == 18) {
-        if (power_s == TRUE) {
-          s_size3_out <- numericInput(
-            inputId = ns("s_sizeUI3"),
-            label = withMathJax("$$n_{2}:{ }$$"),
-            value = 10,
-            min = 1
-          )
-        } else {
-          s_size3_out <- NULL
-        }
-      }
-      
-      s_size3_out
-    })
-    
-    # Dynamic UI generation for s_sizeUI4 (replicating app.R lines 7783-7848)
-    output$s_sizeUI4 <- renderUI({
-      sample_calc <- input$sample_calc
-      power_s <- input$power_s
-      sample_size_type <- input$sample_size_type
-      
-      req(sample_calc)
-      
-      if (sample_size_type == 5) {
-        sample_calc <- 15
-      }
-      
-      if (sample_calc == 1) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 2) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 3) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 4) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 5) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 6) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 7) {
-        s_size4_out <- numericInput(
-          inputId = ns("s_sizeUI4"),
-          label = withMathJax("$$\\sigma_{2}:{ }$$"),
-          value = 10,
-          min = 0,
-          max = 1
-        )
-      }
-      if (sample_calc == 8) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 9) {
-        s_size4_out <- numericInput(
-          inputId = ns("s_sizeUI4"),
-          label = withMathJax("$$\\sigma_{1}:{ }$$"),
-          value = 2,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 10) {
-        s_size4_out <- numericInput(
-          inputId = ns("s_sizeUI4"),
-          label = withMathJax("$$\\sigma_{2}:{ }$$"),
-          value = 2,
-          min = 0,
-          max = 1,
-          step = 0.05
-        )
-      }
-      if (sample_calc == 11) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 12) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 13) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 14) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 15) {
-        s_size4_out <- numericInput(
-          inputId = ns("s_sizeUI4"),
-          label = withMathJax("$$\\text{Levels }:{ }$$"),
-          value = 4,
-          min = 2,
-          step = 1,
-          width = "300px"
-        )
-      }
-      if (sample_calc == 16) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 17) {
-        s_size4_out <- NULL
-      }
-      if (sample_calc == 18) {
-        s_size4_out <- NULL
-      }
-      
-      s_size4_out
-    })
+    # s_sizeUI1, s_sizeUI2, s_sizeUI3, s_sizeUI4 UIs remain as conditionalPanel (client-side)
+    # These work fine and render instantly
     
     # Sample Size Calculations (replicating app.R lines 5166-5330)
+    # CRITICAL FIX: Add sample_calc_trigger() as a dependency to force invalidation
     s_size_results <- reactive({
+      # Access the trigger to force this reactive to invalidate when sample_calc changes
+      # This ensures immediate invalidation even if input$sample_calc doesn't trigger it
+      sample_calc_trigger()  # This dependency will force invalidation
+      
       alt <- input$one_or_two_size
       sample_calc <- input$sample_calc
       power_s <- input$power_s
@@ -1014,19 +1378,47 @@ create_sample_size_power_server <- function(id) {
       s_sizeUI3 <- input$s_sizeUI3
       s_sizeUI4 <- input$s_sizeUI4
       sample_size_type <- input$sample_size_type
+      sample_size_mode <- if (is.null(input$sample_size_mode)) 1 else input$sample_size_mode # 1 = hyp test, 2 = estimation, default to 1
+      sigfig <- input$s_size_sigfig
       
-      req(sample_size_type, sample_calc, s_sizeUI1, s_sizeUI2, alt)
-      
-      if (s_size_alpha == 0 || s_size_beta == 0) {
+      # CRITICAL: Check if sample_size_type has a value - if it's NULL, we shouldn't proceed
+      # This prevents the reactive from running with default/unselected values
+      if (is.null(sample_size_type)) {
         return(NULL)
       }
       
-      if (sample_size_type == 5) {
-        sample_calc <- 15
+      req(sample_size_type, s_size_alpha)
+      
+      # Handle ANOVA in estimation mode
+      if (sample_size_type == 5 && sample_size_mode == 2) {
+        return("estimation") # This will trigger message in pretty output
       }
       
-      # Calculate sample size
-      if (power_s == FALSE) {
+      if (sample_size_mode == 1) { # Hypothesis test calculations
+        # CRITICAL: Check if sample_calc has a value - if it's NULL, we shouldn't proceed
+        # This prevents the reactive from running with default/unselected values
+        if (is.null(sample_calc)) {
+          return(NULL)
+        }
+        
+        # CRITICAL: Validate that sample_calc matches sample_size_type
+        # sample_calc == 11 should ONLY happen when sample_size_type == 6
+        if (sample_calc == 11 && sample_size_type != 6) {
+          return(NULL)
+        }
+        
+        req(sample_calc, s_sizeUI1, s_sizeUI2, alt)
+        
+        if (s_size_alpha == 0 || s_size_beta == 0) {
+          return(NULL)
+        }
+        
+        if (sample_size_type == 5) {
+          sample_calc <- 15
+        }
+        
+        # Calculate sample size
+        if (power_s == FALSE) {
         
         if (sample_calc == 1) {
           if (alt == "less") {
@@ -1143,7 +1535,7 @@ create_sample_size_power_server <- function(id) {
             power.from.actual = TRUE
           )
         }
-        if (sample_calc == 11) {
+        if (sample_calc == 11) { # Correlation z-test - should only happen when sample_size_type == 6
           s_size_out <- sample.size.cor.pearson.r.onesample(
             null.hypothesis.correlation = s_sizeUI1,
             alternative.hypothesis.correlation = s_sizeUI2,
@@ -1432,12 +1824,82 @@ create_sample_size_power_server <- function(id) {
         
       } # end power calcs
       
-      # Round results to 4 decimal places (replicating app.R line 5329)
-      round.object(s_size_out, 4)
+      } else if (sample_size_mode == 2) { # Estimation mode
+        if (sample_size_type == 1) {
+          req(s_sizeUI1, s_sizeUI2, sigfig)
+          s_size_out <- sample_size_for_mean_CI(
+            width = s_sizeUI2, 
+            sd = s_sizeUI1, 
+            conf.level = 1 - s_size_alpha, 
+            sigfig = sigfig
+          )
+        } else if (sample_size_type == 2) {
+          req(s_sizeUI2, sigfig)
+          s_size_out <- sample_size_for_sd_CI(
+            target_relative_width = s_sizeUI2, 
+            conf.level = 1 - s_size_alpha, 
+            sigfig = sigfig
+          )
+        } else if (sample_size_type == 3) {
+          req(s_sizeUI1, s_sizeUI2, sigfig)
+          if (s_sizeUI2 >= 1 || s_sizeUI1 >= 1) {
+            return(NULL)
+          }
+          s_size_out <- sample_size_for_binom_CI(
+            width = s_sizeUI2, 
+            p_est = s_sizeUI1, 
+            conf.level = 1 - s_size_alpha, 
+            sigfig = sigfig
+          )
+        } else if (sample_size_type == 4) {
+          req(s_sizeUI1, s_sizeUI2, sigfig)
+          s_size_out <- sample_size_for_poisson_CI(
+            lambda_est = s_sizeUI1, 
+            target_relative_width = s_sizeUI2, 
+            conf.level = 1 - s_size_alpha, 
+            sigfig = sigfig
+          )
+        } else if (sample_size_type == 5) {
+          # Should already have been handled at beginning of function
+          s_size_out <- "estimation"
+        } else if (sample_size_type == 6) {
+          req(s_sizeUI1, s_sizeUI2, sigfig)
+          if (s_sizeUI1 >= 1 || s_sizeUI2 >= 1) {
+            return(NULL)
+          }
+          s_size_out <- sample_size_for_correlation_CI(
+            r_est = s_sizeUI1, 
+            width = s_sizeUI2, 
+            conf.level = 1 - s_size_alpha, 
+            sigfig = sigfig
+          )
+        }
+      } # end estimation section
+      
+      # Round results to 4 decimal places (replicating app.R line 5426)
+      
+      
+      result <- ro(s_size_out, 4)
+      
+      
+      
+      
+      
+      result
+    })
+    
+    # Track when pretty_ssize dependencies change (s_size_results reactive)
+    observe({
+      # This will fire whenever s_size_results() changes (is invalidated)
+      s_size_results_val <- s_size_results()
+      
+      
     })
     
     # HTML output formatting (replicating app.R lines 11126+)
     output$pretty_ssize <- renderUI({
+      
+      
       alt <- input$one_or_two_size
       sample_calc <- input$sample_calc
       power_s <- input$power_s
@@ -1449,10 +1911,100 @@ create_sample_size_power_server <- function(id) {
       s_sizeUI3 <- input$s_sizeUI3
       s_sizeUI4 <- input$s_sizeUI4
       sample_size_type <- input$sample_size_type
+      sample_size_mode <- if (is.null(input$sample_size_mode)) 1 else input$sample_size_mode # 1 = hyp test, 2 = estimation, default to 1
+      sigfig <- input$s_size_sigfig
+      
+      
+      
+      
+      
       results <- s_size_results()
       
+      
+      
+      
+      
+      req(sample_size_type, results)
+      
+      
+      
+      
+      
+      if (sample_size_mode == 2) { # Estimation mode
+        if (sample_size_type == 1) {
+          output <- HTML(paste(
+            "<b>Sample Size Calculations for Estimation - Mean σ known</b>",
+            "<br><br>",
+            "<table>",
+            "<tr><td>", 100*(1-s_size_alpha), "% Confidence Interval", "</td></tr>",
+            "<tr><td>", paste(withMathJax("$\\sigma_{est} =$"), s_sizeUI1), "</td></tr>",
+            "<tr><td>", "Target CI Width = ", s_sizeUI2, "</td></tr>",
+            "<tr><td>", " Significant Figures Used = ", sigfig, "</td></tr>",
+            "<tr><td>", paste(withMathJax("$n =$"), results$n), "</td></tr>",
+            "<tr><td>", "Actual CI Width = ", results$act_width, "</td></tr>",
+            "</table>"
+          ))
+        } else if (sample_size_type == 2) {
+          output <- HTML(paste(
+            "<b>Sample Size Calculations for Estimation - Standard Deviation</b>",
+            "<br>Relative Width = (UCI-LCI)/σ",
+            "<br><br>",
+            "<table>",
+            "<tr><td>", 100*(1-s_size_alpha), "% Confidence Interval", "</td></tr>",
+            "<tr><td>", "Target Relative CI Width = ", s_sizeUI2, "</td></tr>",
+            "<tr><td>", " Significant Figures Used = ", sigfig, "</td></tr>",
+            "<tr><td>", paste(withMathJax("$n =$"), results$n), "</td></tr>",
+            "<tr><td>", "Actual Relative CI Width = ", results$act_width, "</td></tr>",
+            "</table>"
+          ))
+        } else if (sample_size_type == 3) {
+          output <- HTML(paste(
+            "<b>Sample Size Calculations for Estimation - Binomial Proportion (Exact)</b>",
+            "<br><br>",
+            "<table>",
+            "<tr><td>", 100*(1-s_size_alpha), "% Confidence Interval", "</td></tr>",
+            "<tr><td>", paste(withMathJax("$\\pi_{est} =$"), s_sizeUI1), "</td></tr>",
+            "<tr><td>", "Target CI Width = ", s_sizeUI2, "</td></tr>",
+            "<tr><td>", " Significant Figures Used = ", sigfig, "</td></tr>",
+            "<tr><td>", paste(withMathJax("$n =$"), results$n), "</td></tr>",
+            "<tr><td>", "Actual CI Width = ", results$act_width, "</td></tr>",
+            "</table>"
+          ))
+        } else if (sample_size_type == 4) {
+          output <- HTML(paste(
+            "<b>Sample Size Calculations for Estimation - Poisson Rates (Exact)</b>",
+            "<br>Relative Width = (UCI-LCI)/λ",
+            "<br><br>",
+            "<table>",
+            "<tr><td>", 100*(1-s_size_alpha), "% Confidence Interval", "</td></tr>",
+            "<tr><td>", paste(withMathJax("$\\lambda_{est} =$"), s_sizeUI1), "</td></tr>",
+            "<tr><td>", "Target Relative CI Width = ", s_sizeUI2, "</td></tr>",
+            "<tr><td>", " Significant Figures Used = ", sigfig, "</td></tr>",
+            "<tr><td>", paste(withMathJax("$n =$"), results$n), "</td></tr>",
+            "<tr><td>", "Actual Relative CI Width = ", results$act_width, "</td></tr>",
+            "</table>"
+          ))
+        } else if (sample_size_type == 5) {
+          output <- HTML("For calculating a confidence interval sample size for ANOVA mean estimates, select Means. <br>For calculating a confidence interval sample size for ANOVA standard deviation estimates, select Standard Deviation.")
+        } else if (sample_size_type == 6) {
+          output <- HTML(paste(
+            "<b>Sample Size Calculations for Estimation - Correlation: Pearson's R</b>",
+            "<br><br>",
+            "<table>",
+            "<tr><td>", 100*(1-s_size_alpha), "% Confidence Interval", "</td></tr>",
+            "<tr><td>", paste(withMathJax("$\\rho_{est} =$"), s_sizeUI1), "</td></tr>",
+            "<tr><td>", "Target CI Width = ", s_sizeUI2, "</td></tr>",
+            "<tr><td>", " Significant Figures Used = ", sigfig, "</td></tr>",
+            "<tr><td>", paste(withMathJax("$n =$"), results$n), "</td></tr>",
+            "<tr><td>", "Actual CI Width = ", results$act_width, "</td></tr>",
+            "</table>"
+          ))
+        }
+        return(output)
+      }
+      
+      # Hypothesis test mode (existing code)
       req(sample_calc)
-      req(sample_size_type)
       
       if (sample_size_type == 5) {
         sample_calc <- 15
@@ -1492,6 +2044,8 @@ create_sample_size_power_server <- function(id) {
       }
       
       if (power_s == FALSE) { # sample size
+        
+        
         if (sample_calc == 1) {
           output <- withMathJax(HTML(c(
             paste("<b>", "Sample Size Calculations - One-Sample Mean: ", safe_get(results, "test", "z"), " test, σ known", "</b>"),
@@ -2448,6 +3002,10 @@ create_sample_size_power_server <- function(id) {
                               "Sample Size: ", s_size_n)))
         }
       }
+      
+      
+      
+      
       
       output
     })

@@ -191,7 +191,7 @@ ui <- fluidPage(
   ),
   useSweetAlert(),
   
-  titlePanel("stats4ROI"),
+  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.0"), windowTitle = "stats4ROI"),
   navbarPage(
     title = "stats4ROI v4.0",
     # Welcome Page - First tabPanel is the default
