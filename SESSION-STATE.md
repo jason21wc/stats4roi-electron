@@ -16,6 +16,13 @@
 
 Production-ready application. v4.1.0 released and distributed via GitHub Releases.
 
+Documentation restructured per AI governance memory pattern (§7.1-7.5). Memory files now in place:
+- CLAUDE.md (minimal loader)
+- SESSION-STATE.md (this file)
+- PROJECT-MEMORY.md (decisions/constraints)
+- LEARNING-LOG.md (lessons)
+- ARCHITECTURE.md (technical design)
+
 ## Next Actions
 
 No pending actions. System is stable.
