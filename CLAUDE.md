@@ -27,7 +27,7 @@ npm run make       # Build DMG
 
 ## Quick Reference
 
-- **Version:** 4.1.0
+- **Version:** 4.1.2
 - **Status:** Production
 - **Upstream:** [professorperegrine/stats4ROI](https://github.com/ProfessorPeregrine/stats4ROI)
 - **Owner:** Steven Ouellette (all R/Shiny code)

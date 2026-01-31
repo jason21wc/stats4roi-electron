@@ -3,6 +3,7 @@
 # No UI rendering - that happens in the coordinator
 
 library(ggplot2)
+# Shiny-compatible fork required; CRAN propagate fails in Shiny (predictNLS). https://github.com/ProfessorPeregrine/propagate
 library(propagate)  # For predictNLS function
 
 create_scatterplot_worker <- function(id, filtered_data, input_values, choice_corr_alt_text) {
@@ -134,11 +135,10 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         
         fm0 <- nls(formula = form_1, start = list(a = 1, b = 1), data = data)
         nls_m <- nls(formula = form_2, start = coef(fm0), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         A_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R)
         B_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][2], R)
         p <- p + labs(title = as.expression(bquote("Model: y = " ~ .(A_const) ~ "e"^{.(B_const) ~ "x"})))
-        
         pred_conf <- predictNLS(model = nls_m, interval = "confidence", newdata = new_dat, alpha = (1 - conf), do.sim = F)
         pred_conf_data <- data.frame(new_dat, pred_conf$summary)
         names(pred_conf_data)[6] <- "lwr"
@@ -186,7 +186,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         names(new_dat) <- names(data)[x]
         
         nls_m <- nls(formula = form_2, start = list(a = 1, b = 1), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         model_text <- paste0("y = ", ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R), " + ", ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][2], R), " ln x")
         p <- p + labs(title = model_text)
         
@@ -237,7 +237,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         names(new_dat) <- names(data)[x]
         
         nls_m <- nls(formula = form_2, start = list(a = 1), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         model_text <- paste0("Model: y = ", ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R), " x")
         p <- p + labs(title = model_text)
         
@@ -284,7 +284,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         names(new_dat) <- names(data)[x]
         
         nls_m <- nls(formula = form_2, start = list(a = 1, b = 1), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         A_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R)
         B_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][2], R)
         p <- p + labs(title = as.expression(bquote("Model: y = " ~ .(A_const) ~ "+" ~ .(B_const) ~ "/x")))
@@ -334,7 +334,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
         names(new_dat) <- names(data)[x]
         nls_m <- nls(formula = form_2, start = list(a = 1, b = 1), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         A_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R)
         B_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][2], R)
         p <- p + labs(title = as.expression(bquote("Model: y = " ~ .(A_const) ~ " * " ~ .(B_const)^"x")))
@@ -385,7 +385,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
         names(new_dat) <- names(data)[x]
         nls_m <- nls(formula = form_2, start = coef(fm0), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         A_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R)
         B_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][2], R)
         p <- p + labs(title = as.expression(bquote("Model: y = e"^{.(A_const) ~ " + " ~ .(B_const) ~ "x"})))
@@ -593,7 +593,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         
         fm0 <- nls(formula = form_1, start = list(a = 1, b = 1), data = data)
         nls_m <- nls(formula = form_2, start = coef(fm0), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         A_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R)
         B_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][2], R)
         p <- p + labs(title = as.expression(bquote("Model: y = e"^{.(A_const) ~ " + " ~ .(B_const) ~ "/x"})))
@@ -646,7 +646,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         
         fm0 <- lm(formula = form_1, data = data)
         nls_m <- nls(formula = form_2, start = list(a = exp(coef(fm0)[1]), b = coef(fm0)[2]), data = data)
-        
+        nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
         A_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][1], R)
         B_const <- ro(environment(nls_m[["m"]][["formula"]])[["internalPars"]][2], R)
         p <- p + labs(title = as.expression(bquote("Model: y = " ~ .(A_const) ~ "x"^.(B_const))))

@@ -1,7 +1,7 @@
 {
   "name": "stats4roi",
   "productName": "stats4ROI",
-  "version": "4.1.1",
+  "version": "4.1.2",
   "description": "Statistical Analysis Tool for ROI",
   "main": "src/index.js",
   "scripts": {

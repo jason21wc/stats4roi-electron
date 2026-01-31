@@ -15,7 +15,16 @@ library(ggh4x)
 library(emmeans)
 library(nlme)
 library(tidyverse)
+# Shiny-compatible fork required: https://github.com/ProfessorPeregrine/propagate (CRAN version prints messages and fails in modules)
 library(propagate)
+propagate_desc <- packageDescription("propagate")
+if (is.null(propagate_desc$RemoteUsername) || propagate_desc$RemoteUsername != "ProfessorPeregrine") {
+  warning(
+    "propagate does not appear to be the Shiny fork from ProfessorPeregrine. ",
+    "You may see 'predictNLS: Propagating predictor value...' messages and scatterplot fit errors. ",
+    "Fix: remove.packages('propagate'); remotes::install_github('ProfessorPeregrine/propagate')"
+  )
+}
 library(svglite)
 library(car)
 library(bayestestR)
@@ -374,7 +383,19 @@ colors from the <a href= 'https://CRAN.R-project.org/package=Polychrome '>Polych
 
 # Server
 server <- function(input, output, session) {
-  
+
+  session$onSessionEnded(function() {
+    stopApp()
+    # Quit this R process when: non-interactive (Electron/portable/batch), or when we are
+    # RStudio's background "Run App" process (rstudioapi not available = no IDE in this process).
+    # That way the background R session exits and does not stay as a zombie (~600 MB).
+    quit_background <- !interactive() ||
+      (requireNamespace("rstudioapi", quietly = TRUE) && !rstudioapi::isAvailable())
+    if (quit_background) {
+      q("no")
+    }
+  })
+
   # Global settings are now handled by global_config.R
   # No need to duplicate here - they're already set when the config is sourced
   

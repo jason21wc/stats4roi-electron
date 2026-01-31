@@ -10,7 +10,7 @@
 | Name | stats4roi-electron |
 | Purpose | Electron wrapper for stats4ROI R Shiny application |
 | Target Platform | Apple Silicon Macs (ARM64) |
-| Current Version | 4.1.0 |
+| Current Version | 4.1.2 |
 | Status | Production |
 
 ## Specification Summary
@@ -102,4 +102,4 @@ npm run make
 ```
 
 ---
-*Last Updated: 2025-01-26*
+*Last Updated: 2026-01-30*
