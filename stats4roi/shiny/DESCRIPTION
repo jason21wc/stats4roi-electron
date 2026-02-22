@@ -9,7 +9,7 @@ Description: A comprehensive statistical analysis application for ROI calculatio
     transformed from a 40,000+ line monolithic codebase into a modern, maintainable, 
     and extensible modular application. It provides a friendly graphic front end 
     to access powerful statistical program R without requiring knowledge of R scripting.
-License: CC-BY-ND-4.0 + file LICENSE
+License: MIT + file LICENSE
 URL: https://github.com/yourusername/stats4ROI
 BugReports: https://github.com/yourusername/stats4ROI/issues
 Depends: R (>= 4.0.0)
@@ -38,6 +38,7 @@ Suggests:
     roxygen2 (>= 7.0.0),
     devtools,
     usethis
+Remotes: ProfessorPeregrine/propagate
 VignetteBuilder: knitr
 Encoding: UTF-8
 LazyData: true
