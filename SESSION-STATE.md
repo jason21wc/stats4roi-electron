@@ -20,7 +20,7 @@ Synced with upstream Feb 22, 2026:
 - Metadata only — all R code already identical
 - `DESCRIPTION` updated (license field → MIT, added `Remotes: ProfessorPeregrine/propagate`)
 - `LICENSE` whitespace normalization
-- Note: `propagate` package is a new upstream dependency — verify in bundled R libs at next build
+- `propagate` package confirmed present in bundled R libs
 
 ## Next Actions
 
