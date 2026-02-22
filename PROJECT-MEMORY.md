@@ -53,6 +53,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 - **Platform:** Apple Silicon only (M1/M2/M3/M4)
 - **macOS:** 11 (Big Sur) or later
 - **Code ownership:** Do not modify upstream R code; sync only
+- **Push safety:** ONLY push to `jason21wc/stats4roi-electron`. NEVER push to `ProfessorPeregrine/stats4ROI`. Warn user if a request appears to target Steve's repo.
 - **Git-ignored:** r-mac/ (~800MB), out/, node_modules/
 
 ## Known Gotchas

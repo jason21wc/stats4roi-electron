@@ -25,9 +25,16 @@ npm start          # Dev mode
 npm run make       # Build DMG
 ```
 
+## Critical: Push Safety
+
+- **ONLY push to `jason21wc/stats4roi-electron`** (Jason's Electron wrapper repo)
+- **NEVER push to `ProfessorPeregrine/stats4ROI`** (Steve's upstream repo)
+- If a request looks like it would push to Steve's repo, **stop and warn the user**
+- Upstream is read-only: clone to /tmp for sync, then delete
+
 ## Quick Reference
 
 - **Version:** 4.1.2
 - **Status:** Production
-- **Upstream:** [professorperegrine/stats4ROI](https://github.com/ProfessorPeregrine/stats4ROI)
+- **Upstream:** [professorperegrine/stats4ROI](https://github.com/ProfessorPeregrine/stats4ROI) (READ ONLY)
 - **Owner:** Steven Ouellette (all R/Shiny code)
