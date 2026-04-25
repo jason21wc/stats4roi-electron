@@ -14,7 +14,7 @@
 
 ## Context
 
-Production-ready application. **v4.2.0 built and ready for release.**
+Production-ready application. **v4.2.0 released:** https://github.com/jason21wc/stats4roi-electron/releases/tag/v4.2.0
 
 Synced with upstream Apr 25, 2026 (37 commits since Feb 22 sync):
 - **New module:** DOE / Orthogonal Array (`modules/statistical/doe_orthogonal/` — 3 R files + 9 OA design files: L4, L8, L9, L12, L16, L18, L27, L32, L64)
@@ -22,8 +22,8 @@ Synced with upstream Apr 25, 2026 (37 commits since Feb 22 sync):
 - **New UI:** initializing spinner overlay, DataTable tab-show redraw fix
 - **New UI:** "enter np" checkbox for binomial tests
 - Bug fixes: ANOVA (oneway/multifactor, three-level factor), EDA (descriptives, normality), screening/DOE resolution calc, dynamic filtering, global data invalidation
-- Smoke-tested in dev mode by user — confirmed working
-- DMG + zip artifacts built at `stats4roi/out/make/`
+- Smoke-tested in dev mode + DMG hand-tested by user — confirmed working
+- DMG + zip artifacts built at `stats4roi/out/make/` and attached to GitHub release
 
 Prior sync (Feb 22, 2026): metadata only — DESCRIPTION license → MIT, added `Remotes: ProfessorPeregrine/propagate`, LICENSE whitespace.
 
