@@ -9,6 +9,31 @@ library(dplyr)
 # Source global systems
 source("modules/config/global_config.R")
 
+# Min within-cell variance for dispersion (n<2 -> NA excluded); avoids min(NA,...) and if(NA) on tibble==0.
+ow_dispersion_min_cell_var <- function(disp_df, var_name) {
+  v <- disp_df %>%
+    dplyr::group_by(grp = as.factor(.data$grp)) %>%
+    dplyr::filter(!is.na(.data[[var_name]])) %>%
+    dplyr::summarize(
+      cell_var = if (dplyr::n() > 1L) stats::var(.data[[var_name]]) else NA_real_,
+      .groups = "drop"
+    ) %>%
+    dplyr::pull(cell_var)
+  if (!length(v)) return(Inf)
+  mv <- suppressWarnings(min(v, na.rm = TRUE))
+  if (!is.finite(mv)) Inf else mv
+}
+
+# p can be NA from degenerate aov/oneway.test; never use if(p <= ...) inside paste()
+ow_dispersion_sig_star <- function(p, conf) {
+  if (length(conf) < 1L) return("")
+  thr <- 1 - conf[[1L]]
+  if (is.na(thr) || length(p) < 1L) return("")
+  pv <- p[[1L]]
+  if (is.na(pv)) return("")
+  if (isTRUE(pv <= thr)) "*" else ""
+}
+
 create_oneway_anova_worker <- function(id, filtered_data, input_values) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
@@ -202,46 +227,55 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
         adm_dat <- compute.group.dispersion.ADM(fx = form_c, data = data)
         admn1_dat <- compute.group.dispersion.ADMn1(fx = form_c, data = data)
         
-        disp_data <- as.data.frame(cbind(factor = data[[factor_ow]], ada = ada_dat, adm = adm_dat, admn1 = admn1_dat))
+        # data.frame + as.numeric: cbind() with a character factor column coerces ada/adm/admn1 to character → invalid aov()
+        disp_data <- data.frame(
+          grp = data[[factor_ow]],
+          ada = as.numeric(ada_dat),
+          adm = as.numeric(adm_dat),
+          admn1 = as.numeric(admn1_dat),
+          stringsAsFactors = FALSE
+        )
+        # ADMn-1 sets one obs per cell to NA (lolcat::dispersion.ADMn1); match two-sample path na.omit(ADMn1) in monolithic app
+        disp_data_admn1 <- dplyr::filter(disp_data, !is.na(.data$admn1))
         
         if (length(unique((data %>% count(!!as.name(names(data)[factor_ow])))$n)) != 1) {  # branch to use Welch anova for dispersion if sample sizes are unequal
-          if (disp_data %>% group_by(as.factor(factor)) %>% filter(!is.na(ada)) %>% summarize(var = var(ada)) %>% summarize(value = min(var)) == 0) {  # must use Fisher
+          if (ow_dispersion_min_cell_var(disp_data, "ada") == 0) {  # must use Fisher
             ada_type <- "Fisher (unequal n, cell var = 0)"
-            ada_aov <- summary(aov(formula = ada ~ as.factor(factor), data = disp_data))
+            ada_aov <- summary(aov(formula = ada ~ as.factor(grp), data = disp_data))
             lev_df <- paste("F(", ada_aov[[1]]$Df[1], ",", ada_aov[[1]]$Df[2], ")")
             lev_f <- ada_aov[[1]]$`F value`[1]
             lev_p <- ada_aov[[1]]$`Pr(>F)`[1]
           } else {  # use Welch
             ada_type <- "Welch (unequal n)"
-            ada_aov <- oneway.test(formula = ada ~ as.factor(factor), data = disp_data, var.equal = FALSE)
+            ada_aov <- oneway.test(formula = ada ~ as.factor(grp), data = disp_data, var.equal = FALSE)
             lev_df <- paste("F(", ada_aov[["parameter"]][1], ",", ro(ada_aov[["parameter"]][2], R), ")")
             lev_f <- ada_aov[["statistic"]][["F"]]
             lev_p <- ada_aov[["p.value"]]
           }
           
-          if (disp_data %>% group_by(as.factor(factor)) %>% filter(!is.na(adm)) %>% summarize(var = var(adm)) %>% summarize(value = min(var)) == 0) {  # must use Fisher
+          if (ow_dispersion_min_cell_var(disp_data, "adm") == 0) {  # must use Fisher
             adm_type <- "Fisher (unequal n, cell var = 0)"
-            adm_aov <- summary(aov(formula = adm ~ as.factor(factor), data = disp_data))
+            adm_aov <- summary(aov(formula = adm ~ as.factor(grp), data = disp_data))
             adm_df <- paste("F(", adm_aov[[1]]$Df[1], ",", ro(adm_aov[[1]]$Df[2], R), ")")
             adm_f <- adm_aov[[1]]$`F value`[1]
             adm_p <- adm_aov[[1]]$`Pr(>F)`[1]
           } else {  # use Welch
             adm_type <- "Welch (unequal n)"
-            adm_aov <- oneway.test(formula = adm ~ as.factor(factor), data = disp_data, var.equal = FALSE)
+            adm_aov <- oneway.test(formula = adm ~ as.factor(grp), data = disp_data, var.equal = FALSE)
             adm_df <- paste("F(", adm_aov[["parameter"]][1], ",", ro(adm_aov[["parameter"]][2], R), ")")
             adm_f <- adm_aov[["statistic"]][["F"]]
             adm_p <- adm_aov[["p.value"]]
           }
           
-          if (disp_data %>% group_by(as.factor(factor)) %>% filter(!is.na(admn1)) %>% summarize(var = var(admn1)) %>% summarize(value = min(var)) == 0) {  # must use Fisher
+          if (ow_dispersion_min_cell_var(disp_data, "admn1") == 0) {  # must use Fisher
             admn1_type <- "Fisher (unequal n, cell var = 0)"
-            admn1_aov <- summary(aov(formula = admn1 ~ as.factor(factor), data = disp_data))
+            admn1_aov <- summary(aov(formula = admn1 ~ as.factor(grp), data = disp_data_admn1))
             admn1_df <- paste("F(", admn1_aov[[1]]$Df[1], ",", admn1_aov[[1]]$Df[2], ")")
             admn1_f <- admn1_aov[[1]]$`F value`[1]
             admn1_p <- admn1_aov[[1]]$`Pr(>F)`[1]
           } else {  # use Welch
             admn1_type <- "Welch (unequal n)"
-            admn1_aov <- oneway.test(formula = admn1 ~ as.factor(factor), data = disp_data, var.equal = FALSE)
+            admn1_aov <- oneway.test(formula = admn1 ~ as.factor(grp), data = disp_data_admn1, var.equal = FALSE)
             admn1_df <- paste("F(", admn1_aov[["parameter"]][1], ",", admn1_aov[["parameter"]][2], ")")
             admn1_f <- admn1_aov[["statistic"]][["F"]]
             admn1_p <- admn1_aov[["p.value"]]
@@ -250,17 +284,17 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
           ada_type <- "Fisher (equal n)"
           adm_type <- "Fisher (equal n)"
           admn1_type <- "Fisher (equal n)"
-          ada_aov <- summary(aov(formula = ada ~ as.factor(factor), data = disp_data))
+          ada_aov <- summary(aov(formula = ada ~ as.factor(grp), data = disp_data))
           lev_df <- paste("F(", ada_aov[[1]]$Df[1], ",", ada_aov[[1]]$Df[2], ")")
           lev_f <- ada_aov[[1]]$`F value`[1]
           lev_p <- ada_aov[[1]]$`Pr(>F)`[1]
           
-          adm_aov <- summary(aov(formula = adm ~ as.factor(factor), data = disp_data))
+          adm_aov <- summary(aov(formula = adm ~ as.factor(grp), data = disp_data))
           adm_df <- paste("F(", adm_aov[[1]]$Df[1], ",", adm_aov[[1]]$Df[2], ")")
           adm_f <- adm_aov[[1]]$`F value`[1]
           adm_p <- adm_aov[[1]]$`Pr(>F)`[1]
           
-          admn1_aov <- summary(aov(formula = admn1 ~ as.factor(factor), data = disp_data))
+          admn1_aov <- summary(aov(formula = admn1 ~ as.factor(grp), data = disp_data_admn1))
           admn1_df <- paste("F(", admn1_aov[[1]]$Df[1], ",", admn1_aov[[1]]$Df[2], ")")
           admn1_f <- admn1_aov[[1]]$`F value`[1]
           admn1_p <- admn1_aov[[1]]$`Pr(>F)`[1]
@@ -271,10 +305,10 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
           "</br></br><b><u>Dispersion Analysis</u></b></br>",
           "<table>",
           "<tr><td colspan='4' style='text-align:left;background-color:#DCDCDC'><i>If normally distributed within cells</i></td><td style='text-align:left;background-color:#DCDCDC'><b>Calculation</b></td></tr>",
-          "<tr><td style='text-align:left;'>", withMathJax("$\\text{Levene}$"), "</td><td style='text-align:left;'>", lev_df, " = ", ro(lev_f, R), "</td><td></td><td style='text-align:left;'>p = ", ro(lev_p, R), if(lev_p <= 1 - conf){"*"}else{""}, "</td><td style='text-align:left;'>", ada_type, "</td></tr>",
+          "<tr><td style='text-align:left;'>", withMathJax("$\\text{Levene}$"), "</td><td style='text-align:left;'>", lev_df, " = ", ro(lev_f, R), "</td><td></td><td style='text-align:left;'>p = ", ro(lev_p, R), ow_dispersion_sig_star(lev_p, conf), "</td><td style='text-align:left;'>", ada_type, "</td></tr>",
           "<tr><td colspan='4' style='text-align:left;background-color:#DCDCDC'><i>If not normally distributed within cells</i></td><td style='text-align:left;background-color:#DCDCDC'><b>Calculation</b></td></tr>",
-          "<tr><td style='text-align:left;'>If n ≤ 10", withMathJax("$ADM$"), "</td><td style='text-align:left;'>", adm_df, " = ", ro(adm_f, R), "</td><td></td><td style='text-align:left;'>p = ", ro(adm_p, R), if(adm_p <= 1 - conf){"*"}else{""}, "</td><td style='text-align:left;'>", adm_type, "</td></tr>",
-          "<tr><td style='text-align:left;'>If n > 10", withMathJax("$ADM_{n-1}$"), "</td><td style='text-align:left;'>", admn1_df, " = ", ro(admn1_f, R), "</td><td></td><td style='text-align:left;'>p = ", ro(admn1_p, R), if(admn1_p <= 1 - conf){"*"}else{""}, "</td><td style='text-align:left;'>", admn1_type, "</td></tr>",
+          "<tr><td style='text-align:left;'>If n ≤ 10", withMathJax("$ADM$"), "</td><td style='text-align:left;'>", adm_df, " = ", ro(adm_f, R), "</td><td></td><td style='text-align:left;'>p = ", ro(adm_p, R), ow_dispersion_sig_star(adm_p, conf), "</td><td style='text-align:left;'>", adm_type, "</td></tr>",
+          "<tr><td style='text-align:left;'>If n > 10", withMathJax("$ADM_{n-1}$"), "</td><td style='text-align:left;'>", admn1_df, " = ", ro(admn1_f, R), "</td><td></td><td style='text-align:left;'>p = ", ro(admn1_p, R), ow_dispersion_sig_star(admn1_p, conf), "</td><td style='text-align:left;'>", admn1_type, "</td></tr>",
           "</table>"
         ))
       }

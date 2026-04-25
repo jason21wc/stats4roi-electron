@@ -14,21 +14,26 @@
 
 ## Context
 
-Production-ready application. v4.1.2 built and ready for release.
+Production-ready application. **v4.2.0 built and ready for release.**
 
-Synced with upstream Feb 22, 2026:
-- Metadata only — all R code already identical
-- `DESCRIPTION` updated (license field → MIT, added `Remotes: ProfessorPeregrine/propagate`)
-- `LICENSE` whitespace normalization
-- `propagate` package confirmed present in bundled R libs
+Synced with upstream Apr 25, 2026 (37 commits since Feb 22 sync):
+- **New module:** DOE / Orthogonal Array (`modules/statistical/doe_orthogonal/` — 3 R files + 9 OA design files: L4, L8, L9, L12, L16, L18, L27, L32, L64)
+- **New module:** Data Transformation (`modules/data/data_transformation_module.R`)
+- **New UI:** initializing spinner overlay, DataTable tab-show redraw fix
+- **New UI:** "enter np" checkbox for binomial tests
+- Bug fixes: ANOVA (oneway/multifactor, three-level factor), EDA (descriptives, normality), screening/DOE resolution calc, dynamic filtering, global data invalidation
+- Smoke-tested in dev mode by user — confirmed working
+- DMG + zip artifacts built at `stats4roi/out/make/`
+
+Prior sync (Feb 22, 2026): metadata only — DESCRIPTION license → MIT, added `Remotes: ProfessorPeregrine/propagate`, LICENSE whitespace.
 
 ## Next Actions
 
-No pending actions. System is stable.
+No pending actions. v4.2.0 ready for distribution.
 
 ## Open Questions
 
 None.
 
 ---
-*Last Updated: 2026-02-22*
+*Last Updated: 2026-04-25*

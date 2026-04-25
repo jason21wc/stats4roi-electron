@@ -1,6 +1,19 @@
 # Dynamic Filtering Module for stats4ROI
 # This module handles the filtering functionality only when needed
 
+# Replace Inf/NaN with NA in numeric columns so datamods filter UI (find_range_step, etc.) doesn't error
+sanitize_for_filter_ui <- function(data) {
+  if (is.null(data) || !is.data.frame(data)) return(data)
+  out <- as.data.frame(data)
+  for (j in seq_len(ncol(out))) {
+    if (is.numeric(out[[j]])) {
+      x <- out[[j]]
+      out[[j]] <- replace(x, !is.finite(x), NA_real_)
+    }
+  }
+  out
+}
+
 # Dynamic Filtering UI
 create_dynamic_filtering_ui <- function(id) {
   ns <- NS(id)
@@ -34,9 +47,9 @@ create_dynamic_filtering_server <- function(id, working_data) {
     # Get namespace function
     ns <- session$ns
     
-    # Data reactive
+    # Data reactive: sanitize so datamods filter UI doesn't error on Inf/NaN from transforms
     data <- reactive({
-      working_data()
+      sanitize_for_filter_ui(working_data())
     })
     
     # Filter server - only initialize when this module is active

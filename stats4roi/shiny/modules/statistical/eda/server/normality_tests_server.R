@@ -375,6 +375,8 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             ))
           }
           
+          names(data) <- make.names(names(data))
+          
           # Get column names for formula
           # data_col is the index within the selected data columns (UI2), need to map to original data
           selected_data_cols <- as.numeric(selections$eda_UI2)

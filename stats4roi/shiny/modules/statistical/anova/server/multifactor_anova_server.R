@@ -26,6 +26,65 @@ standardize_interaction <- function(factor) {
   return(standardized)
 }
 
+# lm() fails with "contrasts can be applied only to factors with 2 or more levels" when a
+# factor predictor has a single level; filter dummy-column predictors before fitting.
+predictor_ok_for_lm <- function(dat, nm) {
+  if (!nm %in% names(dat)) {
+    return(FALSE)
+  }
+  x <- dat[[nm]]
+  if (inherits(x, "factor") || is.factor(x)) {
+    return(nlevels(droplevels(x)) >= 2L)
+  }
+  if (is.numeric(x) || is.integer(x)) {
+    return(TRUE)
+  }
+  if (is.logical(x)) {
+    return(TRUE)
+  }
+  if (is.character(x)) {
+    return(nlevels(droplevels(factor(x))) >= 2L)
+  }
+  # Dates / other types: let lm() decide
+  TRUE
+}
+
+# Every variable in formula (except response) must allow contrasts or be numeric-like.
+validate_lm_predictors <- function(dat, formula_str) {
+  f <- tryCatch(stats::as.formula(formula_str), error = function(e) NULL)
+  if (is.null(f)) {
+    return(FALSE)
+  }
+  resp <- all.vars(f[[2]])
+  preds <- setdiff(all.vars(f), resp)
+  if (length(preds) == 0L) {
+    return(TRUE)
+  }
+  ok <- vapply(preds, function(nm) predictor_ok_for_lm(dat, nm), NA)
+  !anyNA(ok) && all(ok)
+}
+
+# Catch contrasts / rank-deficiency edge cases that still reach lm() (e.g. interaction aliasing).
+safe_lm <- function(formula_str, dat, context = "lm") {
+  f <- tryCatch(stats::as.formula(formula_str), error = function(e) NULL)
+  if (is.null(f)) {
+    warning(context, ": invalid formula", call. = FALSE)
+    return(NULL)
+  }
+  tryCatch(
+    stats::lm(f, data = dat),
+    error = function(e) {
+      msg <- conditionMessage(e)
+      if (grepl("contrasts can be applied only to factors", msg, fixed = TRUE) ||
+        grepl("2 or more levels", msg, fixed = TRUE)) {
+        warning(context, ": ", msg, call. = FALSE)
+        return(NULL)
+      }
+      stop(e)
+    }
+  )
+}
+
 # Source global systems and helper/override functions
 source("modules/config/global_config.R")
 source("modules/statistical/anova/utils/anova_helpers.R")
@@ -118,6 +177,8 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       inputs_vals <- core_inputs()
       data <- filtered_data()
       req(data, inputs_vals)
+
+      names(data) <- make.names(names(data))
 
       factors_id <- as.numeric(inputs_vals$factors_ems)
       data_id <- as.numeric(inputs_vals$data_ems)
@@ -236,8 +297,6 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       info <- factors_info()
       req(inputs_vals, info)
 
-      reset_anova_note()
-
       data <- info$data
       factors_id <- info$factors_id
       factors_names <- info$factors_names
@@ -313,8 +372,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       EMSflag <- balance_test(factors_names = factors_names, data = data) # nolint
 
       if (!EMSflag) {
-        anova_note(isolate(add_comment(anova_note(), "Balanced design")))
-        # Balanced: EMSanova_roi with approximate F
+        # Balanced: EMSanova_roi with approximate F (ANOVA notes added in ems_pooled when pooled path runs)
         # Pass nested as-is (vector of strings, empty strings are handled by EMSanova_roi)
         result <- EMSanova_roi( # nolint
           formula = formula(formula_str),
@@ -390,7 +448,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       if (as.numeric(unbal) == 2) {
         anova_note(isolate(add_comment(anova_note(), ", Orthogonal design odd levels (reduced model)")))
-        # Fractional/odd-level factorial: return reduced formula string (used later by pooled logic)
+        # Fractional/odd-level factorial: pass reduced formula to ems_pooled() (monolithic contract)
         effects <- setdiff(all_effects(), inputs_vals$ems_pool)
         effects <- sub(":", "*", effects)
         effects <- paste(effects, collapse = "+")
@@ -414,39 +472,337 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
     })
 
     # -------------------------------------------------------------------------
-    # ems_pooled(): pooled ANOVA table (initial port; deeper parity later)
+    # ems_pooled(): parity with app_monolithic.R ems_pooled (~L30379-30793)
     # -------------------------------------------------------------------------
     ems_pooled <- reactive({
       inputs_vals <- core_inputs()
       req(inputs_vals)
 
+      pool_vars <- inputs_vals$ems_pool
+      if (is.null(pool_vars)) pool_vars <- character(0)
+
+      info <- factors_info()
+      req(info)
+      data <- info$data
+      factors_id <- info$factors_id
+      factors_names <- info$factors_names
+      data_id <- info$data_id
+      conf <- inputs_vals$ems_conf
+      disp <- isTRUE(inputs_vals$ems_disp)
+      disp_type <- as.numeric(inputs_vals$ems_disp_type)
+      primary_dummy <- inputs_vals$ems_primary_col
+
       reset_anova_note()
 
-      pool_vars <- inputs_vals$ems_pool
-      if (is.null(pool_vars) || length(pool_vars) == 0) return(NULL)
+      backup_opts <- options()
+      options(contrasts = c("contr.sum", "contr.poly"))
+      on.exit(options(backup_opts), add = TRUE)
+
+      count_per_cell <- data %>%
+        group_by(across(all_of(factors_names))) %>%
+        summarize(count = n(), .groups = "drop")
+      min_count <- min(count_per_cell$count)
+
+      EMSflag <- balance_test(factors_names = factors_names, data = data) # nolint
+
+      # Reduced model formula string (effects not excluded by pool UI), matching monolithic odd-level path
+      reduced_formula_chr <- function() {
+        ae <- all_effects()
+        req(ae)
+        excl <- setdiff(ae, pool_vars)
+        excl <- sub(":", "*", excl)
+        paste(names(data)[data_id], "~", paste(excl, collapse = "+"))
+      }
+
+      if (EMSflag) {
+        unbal <- inputs_vals$ems_ems
+        req(unbal)
+        if (is.logical(unbal)) {
+          return(NULL)
+        }
+        unbal <- as.numeric(unbal)
+
+        data[, factors_names] <- lapply(data[, factors_id], factor)
+
+        fo <- aov_out()
+        if (is.character(fo) && length(fo) == 1 && grepl("can't calculate", fo, fixed = TRUE)) {
+          return(fo)
+        }
+
+        formula <- if (unbal == 2 && is.character(fo) && length(fo) == 1) {
+          fo
+        } else {
+          reduced_formula_chr()
+        }
+
+        formula2 <- paste(names(data)[data_id], "~", paste(factors_names, collapse = "*"))
+
+        if (disp) {
+          if (min_count < 3) {
+            return(NULL)
+          }
+          if (disp_type == 1L) {
+            data$ADA <- compute.group.dispersion.ADA(formula(formula), data = data)
+            colnames(data)[colnames(data) == "ADA"] <- paste0(names(data)[data_id], "_ADA")
+            formula <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADA"), formula, fixed = TRUE)
+            formula2 <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADA"), formula2, fixed = TRUE)
+          } else if (disp_type == 2L) {
+            data$ADM <- compute.group.dispersion.ADM(formula(formula), data = data)
+            colnames(data)[colnames(data) == "ADM"] <- paste0(names(data)[data_id], "_ADM")
+            formula <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADM"), formula, fixed = TRUE)
+            formula2 <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADM"), formula2, fixed = TRUE)
+          } else if (disp_type == 3L) {
+            data$ADMn1 <- compute.group.dispersion.ADMn1(formula(formula), data = data)
+            colnames(data)[colnames(data) == "ADMn1"] <- paste0(names(data)[data_id], "_ADMn1")
+            formula <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADMn1"), formula, fixed = TRUE)
+            formula2 <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADMn1"), formula2, fixed = TRUE)
+          }
+        }
+
+        if (unbal == 1L) {
+          agg <- do.call(
+            data.frame,
+            aggregate(formula(formula), data = data, FUN = function(x) c(n = length(x), sum = sum(x), mean = mean(x)))
+          )
+          if (disp) {
+            d_type <- c("ADA", "ADM", "ADMn1")
+            names(agg)[(ncol(agg) - 2):ncol(agg)] <- c("n", "sum", paste0(names(data)[data_id], "_", d_type[as.numeric(disp_type)]))
+          } else {
+            names(agg)[(ncol(agg) - 2):ncol(agg)] <- c("n", "sum", names(data)[data_id])
+          }
+          ssw <- sum(data[[data_id]]^2) - sum(agg$sum^2 / agg$n)
+          dfw <- sum(agg$n) - nrow(agg)
+          msw <- ssw / dfw
+          n_harm <- nrow(agg) / sum(1 / agg$n)
+          aet <- msw / n_harm
+          temp <- lm(formula = formula(formula), data = agg)
+          aov_model(temp)
+          temp <- suppressWarnings(stats::anova(temp))
+          temp$`F value` <- temp$`Mean Sq` / aet
+          temp$`Pr(>F)` <- pf(q = temp$`F value`, df1 = temp$Df, df2 = dfw, lower.tail = FALSE)
+          temp["Residuals", ] <- c(dfw, ssw, msw, NA, NA)
+          temp <- data.frame(temp)
+          names(temp) <- c("Df", "SS", "MS", "Fvalue", "Pvalue")
+          aov_out <- temp
+          aov_out <- aov_out[order(rownames(aov_out)), ]
+          aov_out <- aov_out[order(str_count(string = row.names(aov_out), ":"), str_count(string = row.names(aov_out), ":")), ]
+          aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Residuals")), ]
+          return(aov_out)
+        }
+
+        if (unbal == 2L) {
+          anova_note(isolate(add_comment(anova_note(), "Unbalanced design due to dummy level(s)")))
+
+          if (!validate_lm_predictors(data, formula)) {
+            return(paste0(
+              "Unable to fit odd-level ANOVA: one or more model terms correspond to factors with ",
+              "fewer than two levels in the current data (after filtering)."
+            ))
+          }
+          lm_effects <- safe_lm(formula, data, "odd-level ANOVA (reduced model)")
+          if (is.null(lm_effects)) {
+            return("Unable to fit odd-level ANOVA: linear model could not be constructed (check factor levels).")
+          }
+          aov_lm_effects <- suppressWarnings(car::Anova(lm_effects, type = 3, singular.ok = TRUE))
+          aov_model(lm_effects)
+          aov_lm_effects$`Mean Sq` <- aov_lm_effects$`Sum Sq` / aov_lm_effects$Df
+          e_tot <- aov_lm_effects["Residuals", , drop = FALSE]
+
+          dummy_col_names <- primary_dummy
+          dummy_col <- isTruthy(dummy_col_names) && length(dummy_col_names) > 0
+          if (dummy_col) {
+            dummy_col_names <- dummy_col_names[vapply(dummy_col_names, function(nm) predictor_ok_for_lm(data, nm), logical(1))]
+            dummy_col <- length(dummy_col_names) > 0
+          }
+          aov_lm_w_dummy_col <- NULL
+          if (dummy_col) {
+            formula_w_dummy_col <- paste(formula, "+", paste(dummy_col_names, collapse = "+"))
+            if (!validate_lm_predictors(data, formula_w_dummy_col)) {
+              anova_note(isolate(add_comment(
+                anova_note(),
+                ", dummy-column terms omitted: one or more predictors lack two or more factor levels"
+              )))
+              dummy_col <- FALSE
+            } else {
+              lm_w_dummy_col <- safe_lm(formula_w_dummy_col, data, "dummy-column odd-level ANOVA")
+              if (is.null(lm_w_dummy_col)) {
+                dummy_col <- FALSE
+              } else {
+                aov_lm_w_dummy_col <- suppressWarnings(car::Anova(lm_w_dummy_col, type = 3, singular.ok = TRUE))
+                aov_lm_w_dummy_col$`Mean Sq` <- aov_lm_w_dummy_col$`Sum Sq` / aov_lm_w_dummy_col$Df
+              }
+            }
+          }
+
+          agg <- do.call(
+            data.frame,
+            aggregate(formula(formula), data = data, FUN = function(x) c(n = length(x), sum = sum(x), mean = mean(x)))
+          )
+          names(agg)[seq(from = ncol(agg) - 2, to = ncol(agg))] <- c("n", "sum", "mean")
+
+          if (mean(agg$n) == 1) {
+            if (dummy_col) {
+              e1 <- aov_lm_w_dummy_col["Residuals", , drop = FALSE]
+              dum_SS <- sum(aov_lm_w_dummy_col[dummy_col_names, "Sum Sq", drop = TRUE])
+              dum_df <- sum(aov_lm_w_dummy_col[dummy_col_names, "Df", drop = TRUE])
+              e1$`Sum Sq` <- e1$`Sum Sq` + dum_SS
+              e1$Df <- e1$Df + dum_df
+              e1$`Mean Sq` <- e1$`Sum Sq` / e1$Df
+              aov_lm_effects["Residuals", ] <- e1
+              aov_lm_effects$`F value` <- aov_lm_effects$`Mean Sq` / aov_lm_effects["Residuals", ]$`Mean Sq`
+              aov_lm_effects$`Pr(>F)` <- pf(
+                q = aov_lm_effects$`F value`, df1 = aov_lm_effects$Df,
+                df2 = aov_lm_effects["Residuals", ]$Df, lower.tail = FALSE
+              )
+              aov_lm_effects <- aov_lm_effects[c(1, 2, 5, 3, 4)]
+              anova_note(isolate(add_comment(anova_note(), ", unreplicated, using dummy column(s) and dummy level(s) as error term")))
+            } else {
+              anova_note(isolate(add_comment(anova_note(), ", unreplicated, dummy level(s) added to error term")))
+              aov_lm_effects <- aov_lm_effects[c(1, 2, 5, 3, 4)]
+            }
+          } else {
+            data_no_factor <- filtered_data()
+            names(data_no_factor) <- make.names(names(data_no_factor))
+            data_id_nm <- make.names(names(data)[data_id])
+            fac_nm <- make.names(factors_names)
+            if (disp) {
+              data_no_factor <- cbind(data_no_factor, data[, ncol(data), drop = FALSE])
+              names(data_no_factor)[ncol(data_no_factor)] <- names(data)[ncol(data)]
+            }
+            formula2_unique <- paste(data_id_nm, "~", paste(fac_nm, collapse = "*"))
+            if (!validate_lm_predictors(data_no_factor, formula2_unique)) {
+              return(paste0(
+                "Unable to compute unique-SS error term: one or more factors have only one level ",
+                "in the data used for replication (e<sub>2</sub>)."
+              ))
+            }
+            unique.out <- safe_lm(formula2_unique, data_no_factor, "unique-SS (e2) lm")
+            if (is.null(unique.out)) {
+              return("Unable to compute unique-SS error term (linear model failed).")
+            }
+            e2 <- stats::anova(unique.out)["Residuals", , drop = FALSE]
+            e2$`Mean Sq` <- e2$`Sum Sq` / e2$Df
+            e2 <- e2[c(2, 1, 4, 5, 3)]
+
+            if (dummy_col) {
+              e1 <- aov_lm_w_dummy_col["Residuals", , drop = FALSE]
+              e1$`Sum Sq` <- e1$`Sum Sq` - e2$`Sum Sq`
+              e1$Df <- e1$Df - e2$Df
+              dum_SS <- sum(aov_lm_w_dummy_col[dummy_col_names, "Sum Sq", drop = TRUE])
+              dum_df <- sum(aov_lm_w_dummy_col[dummy_col_names, "Df", drop = TRUE])
+              e1$`Sum Sq` <- e1$`Sum Sq` + dum_SS
+              e1$Df <- e1$Df + dum_df
+            } else {
+              e1 <- e_tot
+              e1$`Sum Sq` <- e_tot$`Sum Sq` - e2$`Sum Sq`
+              e1$Df <- e_tot$Df - e2$Df
+            }
+            e1$`Mean Sq` <- e1$`Sum Sq` / e1$Df
+
+            F_prime_sec <- e1$`Mean Sq` / e2$`Mean Sq`
+            p_F_prime_sec <- pf(q = F_prime_sec, df1 = e1$Df, df2 = e2$Df, lower.tail = FALSE)
+            if (p_F_prime_sec <= (1 - conf)) {
+              aov_lm_effects["Residuals", ] <- e1
+              aov_lm_effects$`F value` <- aov_lm_effects$`Mean Sq` / e1$`Mean Sq`
+              aov_lm_effects$`Pr(>F)` <- pf(
+                q = aov_lm_effects$`F value`, df1 = aov_lm_effects$Df, df2 = e1$Df, lower.tail = FALSE
+              )
+              anova_note(isolate(add_comment(
+                anova_note(),
+                ", used e<sub>1</sub> for error term since MSe<sub>1</sub>/MSe<sub>2</sub> was significant, examine alias table for potential confounded factors in unassigned columns"
+              )))
+              aov_lm_effects <- aov_lm_effects[c(1, 2, 5, 3, 4)]
+              if (e1$Df == 1) {
+                anova_note(isolate(add_comment(
+                  anova_note(),
+                  ", e<sub>1</sub> had 1df so you are allowed to pool insignificant main or interactive effects"
+                )))
+              }
+            } else {
+              anova_note(isolate(add_comment(
+                anova_note(),
+                ", e<sub>1</sub> and e<sub>2</sub> not significantly different, pooled e<sub>1</sub> and e<sub>2</sub>"
+              )))
+              if (dummy_col) {
+                aov_lm_effects <- aov_lm_w_dummy_col[-match(dummy_col_names, rownames(aov_lm_w_dummy_col), nomatch = 0L), ]
+              }
+              aov_lm_effects <- aov_lm_effects[-which(rownames(aov_lm_effects) == "Residuals"), ]
+              aov_lm_effects["Residuals", ] <- c(
+                e1$`Sum Sq` + e2$`Sum Sq`, e1$Df + e2$Df, NA, NA,
+                (e1$`Sum Sq` + e2$`Sum Sq`) / (e1$Df + e2$Df)
+              )
+              aov_lm_effects["Residuals", ]$`Mean Sq` <- aov_lm_effects["Residuals", ]$`Sum Sq` / aov_lm_effects["Residuals", ]$Df
+              aov_lm_effects$`F value` <- aov_lm_effects$`Mean Sq` / aov_lm_effects["Residuals", ]$`Mean Sq`
+              aov_lm_effects$`Pr(>F)` <- pf(
+                q = aov_lm_effects$`F value`, df1 = aov_lm_effects$Df,
+                df2 = aov_lm_effects["Residuals", ]$Df, lower.tail = FALSE
+              )
+              aov_lm_effects <- aov_lm_effects[c(1, 2, 5, 3, 4)]
+            }
+          }
+
+          aov_out <- as.data.frame(aov_lm_effects)
+          aov_out <- aov_out[order(rownames(aov_out)), ]
+          aov_out <- aov_out[order(str_count(string = row.names(aov_out), ":"), str_count(string = row.names(aov_out), ":")), ]
+          aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Within Cells")), ]
+          aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Residuals")), ]
+          names(aov_out) <- c("SS", "Df", "MS", "Fvalue", "Pvalue")
+          return(aov_out)
+        }
+
+        if (unbal == 3L) {
+          aov_mod <- lm(formula = formula(formula), data = data, singular.ok = TRUE)
+          aov_model(aov_mod)
+          aov_out <- as.data.frame(car::Anova(aov_mod, type = 3))
+          aov_out <- aov_out[order(rownames(aov_out)), ]
+          aov_out <- aov_out[order(str_count(string = row.names(aov_out), ":"), str_count(string = row.names(aov_out), ":")), ]
+          aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Residuals")), ]
+          aov_out <- aov_out[!rownames(aov_out) %in% "(Intercept)", ]
+          aov_out$MS <- aov_out$`Sum Sq` / aov_out$Df
+          names(aov_out) <- c("SS", "Df", "Fvalue", "Pvalue", "MS")
+          return(aov_out)
+        }
+
+        return(NULL)
+      }
+
+      # Balanced design: PooledANOVA path (monolithic L30609+)
+      anova_note(isolate(add_comment(anova_note(), "Balanced design")))
+      if (disp && min_count < 2) {
+        return(NULL)
+      }
 
       aov_out_l <- aov_out()
       req(aov_out_l)
-
-      # If aov_out returned a reduced formula string (fractional design), we can't pool here yet.
       if (is.character(aov_out_l) && length(aov_out_l) == 1) {
         return(aov_out_l)
       }
-      if (!is.data.frame(aov_out_l)) return(aov_out_l)
+      if (!is.data.frame(aov_out_l)) {
+        return(aov_out_l)
+      }
 
-      # Only pool effects that exist in the table
-      pool_vars <- pool_vars[pool_vars %in% row.names(aov_out_l)]
-      if (length(pool_vars) == 0) return(aov_out_l)
-
-      # Get original aov_out for building reduced model if needed
       aov_out_original <- aov_out_l
+      data[, factors_names] <- lapply(data[, factors_id], factor)
 
-      # Call PooledANOVA and check for NAs
+      # Monolithic L30616-30630: drop pool selections not present in the unpooled ANOVA
+      rn_aov <- row.names(aov_out_l)
+      rn_effects <- rn_aov[rn_aov != "Residuals" & rn_aov != "(Intercept)"]
+      if (length(pool_vars) > 0 && any(!(pool_vars %in% rn_effects))) {
+        anova_note(isolate(add_comment(anova_note(), ", the following effects selected to pool were not in the initial ANOVA and will be removed from the pooling list:<br>")))
+        anova_note(isolate(add_comment(anova_note(), pool_vars[!(pool_vars %in% rn_effects)])))
+        anova_note(isolate(add_comment(anova_note(), "<br>")))
+        pool_vars <- pool_vars[pool_vars %in% rn_aov]
+        if (length(pool_vars) == 0) {
+          anova_note(isolate(add_comment(anova_note(), "<br>All pooling variables removed")))
+        }
+      }
+
+      pool_vars <- pool_vars[pool_vars %in% row.names(aov_out_l)]
+
       if (length(pool_vars) == 0) {
         test_pool <- aov_out_l
       } else {
         test_pool <- PooledANOVA_roi(SS.table = aov_out_l, del.ID = c(pool_vars, "Residuals")) # nolint
-        # Transform columns to numeric (matching monolithic)
         test_pool$Df <- as.numeric(test_pool$Df)
         test_pool$SS <- as.numeric(test_pool$SS)
         test_pool$MS <- as.numeric(test_pool$MS)
@@ -454,8 +810,6 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         test_pool$Pvalue <- as.numeric(test_pool$Pvalue)
       }
 
-      # Check if pooled ANOVA returned NAs somewhere (not in residuals)
-      # Line 30640 in monolithic: if( any(is.na(test_pool[-nrow(test_pool),]$SS==TRUE)) )
       if (any(is.na(test_pool[-nrow(test_pool), ]$SS))) {
         # Pooled has returned NAs somewhere not in residuals, use lm to get reduced model
         anova_note(isolate(add_comment(anova_note(), ", ANOVA based on reduced model")))
@@ -582,20 +936,105 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         aov_out_reduced <- aov_out_reduced[order(str_count(string = row.names(aov_out_reduced), ":"), str_count(string = row.names(aov_out_reduced), ":")), ]
         aov_out_reduced <- aov_out_reduced[order(str_count(string = row.names(aov_out_reduced), pattern = "Residuals")), ]
 
-        return(aov_out_reduced)
+        aov_out <- aov_out_reduced
       } else {
-        # EMSanova has not returned NAs, use PooledANOVA result directly
+        # EMSanova has not returned NAs, use PooledANOVA result directly (monolithic L30719-30730)
         if (length(pool_vars) == 0) {
-          # No pooled variables showed up in the anova so don't pool them
-          return(aov_out_l)
+          aov_out <- aov_out_l
         } else {
-          # Return the pooled result
-          test_pool <- test_pool[order(rownames(test_pool)), ]
-          test_pool <- test_pool[order(str_count(string = row.names(test_pool), ":"), str_count(string = row.names(test_pool), ":")), ]
-          test_pool <- test_pool[order(str_count(string = row.names(test_pool), pattern = "Residuals")), ]
-          return(test_pool)
+          aov_out <- test_pool
+          aov_out <- aov_out[order(rownames(aov_out)), ]
+        }
+        aov_out <- aov_out[order(str_count(string = row.names(aov_out), ":"), str_count(string = row.names(aov_out), ":")), ]
+        aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Residuals")), ]
+      }
+
+      # Balanced dummy-column e1/e2 (monolithic L30733-30786)
+      if (isTruthy(primary_dummy)) {
+        formula_bal <- paste(
+          names(data)[data_id], "~",
+          paste(
+            row.names(aov_out)[!row.names(aov_out) %in% c("Residuals", "(Intercept)")],
+            collapse = "+"
+          )
+        )
+        agg <- do.call(
+          data.frame,
+          aggregate(stats::as.formula(formula_bal), data = data, FUN = function(x) c(n = length(x), sum = sum(x), mean = mean(x)))
+        )
+        names(agg)[seq(from = ncol(agg) - 2, to = ncol(agg))] <- c("n", "sum", "mean")
+        if (mean(agg$n) == 1) {
+          if (isTruthy(aov_out[nrow(aov_out), ]$SS)) {
+            anova_note(isolate(add_comment(anova_note(), ", unreplicated, dummy column(s) added to error term")))
+          }
+        } else {
+          dcn <- primary_dummy[vapply(primary_dummy, function(nm) predictor_ok_for_lm(data, nm), logical(1))]
+          if (length(dcn) == 0) {
+            # Selected dummy columns are constant / single-level; skip lm with extra terms
+          } else {
+          dummy_col_names <- dcn
+          anova_note(isolate(add_comment(anova_note(), "replicated, with dummy columns")))
+          formula_w_dummy_col <- paste(formula_bal, "+", paste(dummy_col_names, collapse = "+"))
+          if (!validate_lm_predictors(data, formula_w_dummy_col)) {
+            anova_note(isolate(add_comment(
+              anova_note(),
+              ", balanced dummy-column model skipped: insufficient factor level variation"
+            )))
+          } else {
+          lm_w_dummy_col <- safe_lm(formula_w_dummy_col, data, "balanced dummy-column ANOVA")
+          if (is.null(lm_w_dummy_col)) {
+            anova_note(isolate(add_comment(
+              anova_note(),
+              ", balanced dummy-column model could not be fitted"
+            )))
+          } else {
+          aov_lm_w_dummy_col <- suppressWarnings(car::Anova(lm_w_dummy_col, type = 3, singular.ok = TRUE))
+          aov_lm_w_dummy_col$`Mean Sq` <- aov_lm_w_dummy_col$`Sum Sq` / aov_lm_w_dummy_col$Df
+          e2 <- aov_lm_w_dummy_col["Residuals", , drop = FALSE]
+          dum_SS <- sum(aov_lm_w_dummy_col[dummy_col_names, "Sum Sq", drop = TRUE])
+          dum_df <- sum(aov_lm_w_dummy_col[dummy_col_names, "Df", drop = TRUE])
+          e1 <- data.frame(`Sum Sq` = dum_SS, Df = dum_df, check.names = FALSE)
+          e1$`Mean Sq` <- e1$`Sum Sq` / e1$Df
+
+          F_prime_sec <- e1$`Mean Sq` / e2$`Mean Sq`
+          p_F_prime_sec <- pf(q = F_prime_sec, df1 = e1$Df, df2 = e2$Df, lower.tail = FALSE)
+          if (p_F_prime_sec <= (1 - conf)) {
+            aov_out["Residuals", ]$SS <- e1$`Sum Sq`
+            aov_out["Residuals", ]$Df <- e1$Df
+            aov_out["Residuals", ]$MS <- e1$`Mean Sq`
+            aov_out$Fvalue <- aov_out$MS / aov_out["Residuals", ]$MS
+            aov_out$Pvalue <- pf(q = aov_out$Fvalue, df1 = aov_out$Df, df2 = aov_out["Residuals", ]$Df, lower.tail = FALSE)
+            anova_note(isolate(add_comment(anova_note(), ", used e<sub>1</sub> for error term since MSe<sub>1</sub>/MSe<sub>2</sub> was significant, examine alias table for potential confounded factors in unassigned columns")))
+            if (e1$Df == 1) {
+              anova_note(isolate(add_comment(anova_note(), ", e<sub>1</sub> had 1df so you are allowed to pool insignificant main or interactive effects")))
+            }
+          } else {
+            anova_note(isolate(add_comment(anova_note(), ", e<sub>1</sub> and e<sub>2</sub> not significantly different, pooled e<sub>1</sub> and e<sub>2</sub>")))
+            aov_out <- aov_lm_w_dummy_col[-which(rownames(aov_lm_w_dummy_col) == "Residuals"), , drop = FALSE]
+            aov_out["Residuals", ] <- c(
+              e1$`Sum Sq` + e2$`Sum Sq`,
+              e1$Df + e2$Df,
+              NA_real_,
+              NA_real_,
+              (e1$`Sum Sq` + e2$`Sum Sq`) / (e1$Df + e2$Df)
+            )
+            aov_out$`F value` <- aov_out$`Mean Sq` / aov_out["Residuals", ]$`Mean Sq`
+            aov_out$`Pr(>F)` <- pf(
+              q = aov_out$`F value`,
+              df1 = aov_out$Df,
+              df2 = aov_out["Residuals", ]$Df,
+              lower.tail = FALSE
+            )
+            aov_out <- aov_out[c(1, 2, 5, 3, 4)]
+            names(aov_out) <- c("SS", "Df", "MS", "Fvalue", "Pvalue")
+          }
+          }
+          }
+        }
         }
       }
+
+      aov_out
     })
 
     # -------------------------------------------------------------------------
@@ -608,10 +1047,13 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       req(inputs_vals, data)
 
       pool <- inputs_vals$ems_pool
-      if (!is.null(pool) && length(pool) > 0) {
+      ao <- aov_out()
+      use_pooled <- (!is.null(pool) && length(pool) > 0) ||
+        (is.character(ao) && length(ao) == 1L && !grepl("can't calculate", ao, fixed = TRUE) && grepl("~", ao, fixed = TRUE))
+      if (use_pooled) {
         aov_l <- ems_pooled()
       } else {
-        aov_l <- aov_out()
+        aov_l <- ao
       }
       factors_sel <- inputs_vals$factors_ems
       n_factors <- length(factors_sel)

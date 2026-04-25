@@ -30,6 +30,29 @@ create_module_data_trigger <- function(working_data, module_name) {
   })
 }
 
+# DOE Screening Design: fingerprint when any setup control changes (no dataset).
+# Same idea as create_global_data_trigger: downstream reactives compare to a
+# committed snapshot after "Design the Experiment" to clear stale outputs.
+create_doe_orthogonal_setup_trigger <- function(input) {
+  reactive({
+    n <- suppressWarnings(as.integer(input$n_factors %||% 3L))
+    if (length(n) == 0L || is.na(n[1L])) n <- 3L
+    n <- as.integer(min(20L, max(2L, n[1L])))
+    levs <- vapply(seq_len(n), function(i) as.character(input[[paste0("level_", i)]] %||% "2"), character(1))
+    merges <- vapply(seq_len(n), function(i) as.character(input[[paste0("merge_", i)]] %||% ""), character(1))
+    parts <- list(
+      n = n,
+      factor_names_custom = input$factor_names_custom %||% "",
+      level_names_custom = input$level_names_custom %||% "",
+      interactions_digest = digest::digest(sort(setdiff(input$interactions %||% character(0), "__doe_inter_placeholder__")), algo = "md5"),
+      array_choice = input$array_choice %||% "",
+      levels_digest = digest::digest(levs, algo = "md5"),
+      merges_digest = digest::digest(merges, algo = "md5")
+    )
+    digest::digest(parts, algo = "md5")
+  })
+}
+
 # =============================================================================
 # MODULAR UI RESET SYSTEM
 # =============================================================================

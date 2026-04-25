@@ -162,6 +162,8 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
             return(data.frame(Message = "Please select a data column"))
           }
           
+          names(data) <- make.names(names(data))
+          
           # Get column names for formula
           # data_col is the index within the selected data columns (UI2), need to map to original data
           selected_data_cols <- as.numeric(selections$eda_UI2)

@@ -612,8 +612,19 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
         return(HTML("Not enough samples within cell to calculate dispersion."))
       }
       
-      # Propagate worker error strings
+      # Propagate worker error strings; odd-level reduced model is a formula string (see ems_pooled)
       if (is.character(aov_out_l) && length(aov_out_l) == 1) {
+        if (grepl("can't calculate", aov_out_l, fixed = TRUE)) {
+          return(HTML(aov_out_l))
+        }
+        if (grepl("~", aov_out_l, fixed = TRUE)) {
+          return(HTML(paste0(
+            "<p>Orthogonal design with odd levels (dummy levels): the unpooled table is completed using the same reduced model on the ",
+            "<b>Pooled ANOVA</b> tab. Reduced model: <code>",
+            htmltools::htmlEscape(aov_out_l),
+            "</code></p>"
+          )))
+        }
         return(HTML(aov_out_l))
       }
       

@@ -43,6 +43,7 @@ source("modules/data/data_modification_module.R")
 # Note: data_filtering_module.R not needed - using datamods package directly
 source("modules/data/working_data_module.R")
 source("modules/data/dynamic_filtering_module.R")
+source("modules/data/data_transformation_module.R")
 # Crosstabs module (now modular)
 source("modules/statistical/crosstabs/crosstabs_module.R")
 # ANOVA module (now modular)
@@ -70,6 +71,7 @@ source("modules/statistical/correlation_association/correlation_association_modu
 source("modules/statistical/spc/spc_module.R")
 # MSA module (to be implemented for parity with monolithic app)
 source("modules/statistical/msa/msa_module.R")
+source("modules/statistical/doe_orthogonal/doe_orthogonal_module.R")
 
 # UI
 ui <- fluidPage(
@@ -164,6 +166,29 @@ ui <- fluidPage(
             };
             checkDataTables();
           });
+          // Redraw DataTables when their tab is shown (fixes rows not drawn when table initializes in hidden tab)
+          $(document).on('shown.bs.tab', 'a[data-toggle=\"tab\"], a[data-bs-toggle=\"tab\"]', function() {
+            var href = $(this).attr('href');
+            if (!href || href.indexOf('#') === -1) return;
+            var $pane = $(href);
+            if (!$pane.length) return;
+            setTimeout(function() {
+              var tableIds = ['w_data', 'dynamic_filtering-table'];
+              tableIds.forEach(function(id) {
+                if ($pane.find('#' + id).length === 0) return;
+                var $container = $('#' + id);
+                var $table = $container.find('table');
+                if ($table.length && $.fn.DataTable && $table.DataTable) {
+                  try {
+                    var api = $table.DataTable();
+                    if (api && api.columns) {
+                      api.columns.adjust().draw(false);
+                    }
+                  } catch (e) {}
+                }
+              });
+            }, 100);
+          });
         })();
       })();
     ")),
@@ -196,13 +221,82 @@ ui <- fluidPage(
                                     th{border-bottom: 1px solid black;}
                             table {border-collapse: separate !important;}
                             
-                            ")))
+                            "))),
+    tags$head(tags$style(HTML("
+      #stats4roi-init-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 200000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        background: rgba(248, 249, 250, 0.92);
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+        pointer-events: all;
+      }
+      #stats4roi-init-overlay .stats4roi-init-spinner {
+        width: 3rem;
+        height: 3rem;
+        border: 0.35rem solid rgba(13, 110, 253, 0.2);
+        border-top-color: #0d6efd;
+        border-radius: 50%;
+        animation: stats4roi-spin 0.85s linear infinite;
+      }
+      @keyframes stats4roi-spin {
+        to { transform: rotate(360deg); }
+      }
+      #stats4roi-init-overlay .stats4roi-init-text {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: #212529;
+      }
+    "))),
+    tags$head(tags$script(HTML("
+      (function() {
+        function hideStats4roiInitOverlay() {
+          var el = document.getElementById('stats4roi-init-overlay');
+          if (!el || el.getAttribute('data-hidden') === '1') return;
+          el.setAttribute('data-hidden', '1');
+          el.style.opacity = '0';
+          el.style.transition = 'opacity 0.25s ease';
+          setTimeout(function() {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          }, 280);
+        }
+        function bindHide() {
+          if (typeof jQuery === 'undefined') {
+            setTimeout(bindHide, 30);
+            return;
+          }
+          var $ = jQuery;
+          if ($(document).data('stats4roi-init-bound')) return;
+          $(document).data('stats4roi-init-bound', true);
+          $(document).on('shiny:connected', function() {
+            $(document).one('shiny:idle', function() {
+              requestAnimationFrame(function() {
+                requestAnimationFrame(hideStats4roiInitOverlay);
+              });
+            });
+          });
+          setTimeout(hideStats4roiInitOverlay, 120000);
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', bindHide);
+        } else {
+          bindHide();
+        }
+      })();
+    ")))
   ),
   useSweetAlert(),
   
-  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.0"), windowTitle = "stats4ROI"),
+  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.1"), windowTitle = "stats4ROI"),
   navbarPage(
-    title = "stats4ROI v4.0",
+    title = NULL,
     # Welcome Page - First tabPanel is the default
     tabPanel(
       title = "Welcome to stats4ROI!",
@@ -269,6 +363,10 @@ ui <- fluidPage(
         )
       ),
       tabPanel(
+        title = "Transform Data",
+        create_data_transformation_ui("transform")
+      ),
+      tabPanel(
         title = "Dynamically Filter Data",
         create_dynamic_filtering_ui("dynamic_filtering")
       ),
@@ -276,6 +374,8 @@ ui <- fluidPage(
         title = "Current Working Data",
         h3("Current Working Data"),
         p("This is the filtered data that will be used by the statistical analysis modules."),
+        downloadButton(outputId = "download_working_data", label = "Download current data (CSV)"),
+        br(), br(),
         DT::dataTableOutput(outputId = "w_data")
       )
     ),
@@ -377,7 +477,16 @@ colors from the <a href= 'https://CRAN.R-project.org/package=Polychrome '>Polych
     create_spc_ui("spc"),
     create_msa_ui("msa"),
     create_crosstabs_ui("crosstabs"),
-    create_anova_ui("anova")
+    create_anova_ui("anova"),
+    create_doe_orthogonal_ui("doe_orthogonal")
+  ),
+  tags$div(
+    id = "stats4roi-init-overlay",
+    role = "status",
+    `aria-live` = "polite",
+    `aria-busy` = "true",
+    tags$div(class = "stats4roi-init-spinner"),
+    tags$p("Initializing Program", class = "stats4roi-init-text")
   )
 )
 
@@ -398,7 +507,7 @@ server <- function(input, output, session) {
 
   # Global settings are now handled by global_config.R
   # No need to duplicate here - they're already set when the config is sourced
-  
+
   # Data Import (replicating app.R lines 3779-3815)
   # Import modal (replicating app.R lines 3779-3786)
   observeEvent(input$launch_modal, {
@@ -485,22 +594,24 @@ server <- function(input, output, session) {
   })
   
   working_data_result <- create_working_data_server("working_data", reactive(imported$data()), reactive(updated_data()), new_data_signal)
-  
-  
+
+  # Data transformation module - adds transform columns to working data (pass-through when none applied)
+  transform_result <- create_data_transformation_server("transform", working_data_result$data)
+
   # Data filtering (replicating app.R lines 3857-3895)
-  # Data reactive for filtering - use working data directly
+  # Data reactive for filtering - use transformed data (or working data when no transforms)
   data <- reactive({
-    working_data_result$data()
+    transform_result$data()
   })
-  
+
   # Filter server (replicating app.R lines 3862-3868)
-  # Use working data directly as filtered data to avoid initialization conflicts
+  # Use transformed data for filtering
   res_filter <- list(
     filtered = data,
     code = reactive("No filtering applied"),
     expr = reactive("No filtering applied")
   )
-  
+
   # Progress bar update (replicating app.R lines 3870-3875)
   observeEvent(res_filter$filtered(), {
     tryCatch({
@@ -513,31 +624,39 @@ server <- function(input, output, session) {
       cat("Progress bar update error:", e$message, "\n")
     })
   })
+
+  # Dynamic filtering module - receives transformed data
+  dynamic_filtering_result <- create_dynamic_filtering_server("dynamic_filtering", transform_result$data)
   
-  # Dynamic filtering module - only initializes when filtering tab is visited
-  dynamic_filtering_result <- create_dynamic_filtering_server("dynamic_filtering", working_data_result$data)
-  
-  # Current working data output (replicating app.R lines 3877-3879)
-  output$w_data <- DT::renderDataTable({
-    req(res_filter$filtered())
-    res_filter$filtered()
-  })
-  
-  # Create a safe filtered data reactive that uses filtered data when available
-  # The dynamic filtering module's filtered() reactive should always be available
-  # and will return the filtered data (or original data if no filters applied)
+  # Current working data output (same pattern as deployment: static output + renderDT with data)
+  # Shows the same data used by analyses (filtered + transformed)
+  output$w_data <- DT::renderDT({
+    req(safe_filtered_data())
+    safe_filtered_data()
+  }, options = list(lengthMenu = c(5, 10, 50), pageLength = 10))
+
+  # Safe filtered data reactive (filtered data when available, else working data)
   safe_filtered_data <- reactive({
-    # Use filtered data from dynamic filtering module
-    # This will return filtered data if filters are applied, or original data if not
-    # The filter_data_server from datamods always returns a reactive
     tryCatch({
       dynamic_filtering_result$filtered()
     }, error = function(e) {
-      # If there's an error (e.g., module not initialized), fall back to working data
-      # This should rarely happen, but provides a safety net
       working_data_result$data()
     })
   })
+
+  # Download current data (transformed + filtered) as CSV
+  output$download_working_data <- downloadHandler(
+    filename = function() {
+      paste0("stats4ROI_data_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv")
+    },
+    content = function(file) {
+      df <- safe_filtered_data()
+      if (is.null(df) || nrow(df) == 0) {
+        df <- data.frame(Message = "No data to export.")
+      }
+      readr::write_csv(df, file)
+    }
+  )
   
   # Global working data reactive for use by other modules
   # This provides the filtered data (with filters applied when available)
@@ -620,6 +739,7 @@ server <- function(input, output, session) {
   # Crosstabs Module
   create_crosstabs_server("crosstabs", safe_filtered_data, reactive_color_palette)
   create_anova_server("anova", safe_filtered_data, reactive_color_palette)
+  create_doe_orthogonal_server("doe_orthogonal", reactive_color_palette)
 
   # Distribution Testing
   create_distribution_testing_server("distribution_testing", safe_filtered_data, reactive_color_palette)
