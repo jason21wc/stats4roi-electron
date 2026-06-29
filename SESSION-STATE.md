@@ -9,13 +9,15 @@
 |-------|-------|
 | Phase | Maintenance |
 | Mode | Standard |
-| Active Task | v4.2.1 built + DMG verified/opened for hand-test — running completion sequence (commit/tag/release) |
+| Active Task | None |
 | Blocked By | — |
 
 ## Context
 
-**v4.2.1 synced from upstream + built (Jun 28, 2026).** Upstream `deployment/`
-pulled at upstream HEAD `4e2fcf64` ("built distribution directory and 4.2").
+**v4.2.1 RELEASED (Jun 28, 2026):** https://github.com/jason21wc/stats4roi-electron/releases/tag/v4.2.1
+Hand-tested by user — confirmed working. DMG + zip attached to the release.
+
+Synced from upstream `deployment/` at upstream HEAD `4e2fcf64` ("built distribution directory and 4.2").
 Local `shiny/` (app.R + 119 module files) now byte-identical to upstream deployment.
 
 New since v4.2.0 (Apr 25):
@@ -34,21 +36,15 @@ Verification done:
 - Smoke test green: Shiny boots, all modules source clean, `Listening on 127.0.0.1`, NO fork warning.
 - Build verified: packaged `.app` bundles the fork (RemoteUsername ProfessorPeregrine).
 
-Artifacts at `stats4roi/out/make/`:
-- `stats4ROI.dmg` (362 MB)
-- `zip/darwin/arm64/stats4ROI-darwin-arm64-4.2.1.zip` (369 MB)
+Local build artifacts at `stats4roi/out/make/` (git-ignored): `stats4ROI-4.2.1.dmg`
+(362 MB) + `zip/darwin/arm64/stats4ROI-darwin-arm64-4.2.1.zip` (368 MB) — both
+attached to the GitHub release.
+
+Shipped commit `6b7d06f` (source sync + docs) + tag `v4.2.1` pushed to `origin` (jason21wc).
 
 ## Next Actions
 
-DMG verified (only DMG in project; internal `CFBundleShortVersionString` = 4.2.1;
-fork bundled) and opened for hand-test on Jun 28, 2026.
-
-1. **Hand-test the DMG** (in progress) — spot-check the new ANOVA optimization tab +
-   a scatterplot fit (confirms propagate fork works).
-2. **Commit + tag `v4.2.1`** the synced sources + doc updates (sync staged in working
-   tree; r-mac/ and out/ git-ignored).
-3. **GitHub release** v4.2.1 on `jason21wc/stats4roi-electron` (NEVER upstream) —
-   attach DMG + zip. Awaiting user go-ahead.
+No pending actions. v4.2.1 released and distributed.
 
 ## Open Questions
 
