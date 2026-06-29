@@ -44,6 +44,25 @@ create_doe_orthogonal_ui <- function(id) {
         DT::dataTableOutput(ns("assign_table")),
         uiOutput(ns("design_results_run_header_ui")),
         DT::dataTableOutput(ns("run_sheet_table")),
+        checkboxInput(ns("show_alias"), "Show alias table", value = FALSE),
+        conditionalPanel(
+          condition = paste0("input['", ns("show_alias"), "'] == true"),
+          radioButtons(
+            ns("alias_display"),
+            "Show confounding effects",
+            choices = c("2-way only" = "2fi", "2-way and 3-way" = "2fi_3fi", "All" = "all"),
+            selected = "2fi_3fi",
+            inline = TRUE
+          ),
+          p(
+            class = "text-muted",
+            style = "font-size: 0.9em; margin-top: 0.5rem;",
+            strong("Bold"),
+            ": confounding from Taguchi column pairs (first pass). ",
+            "Plain text: confounding from multi-column products and structural terms (second pass)."
+          ),
+          DT::dataTableOutput(ns("alias_table"))
+        ),
         uiOutput(ns("design_results_bottom_ui"))
       )
     )
@@ -432,25 +451,6 @@ create_doe_orthogonal_server <- function(id, color_palette = NULL) {
       }
       ns <- session$ns
       tagList(
-        checkboxInput(ns("show_alias"), "Show alias table", value = FALSE),
-        conditionalPanel(
-          condition = "input.show_alias == true",
-          ns = ns,
-          radioButtons(
-            ns("alias_display"),
-            "Show confounding effects",
-            choices = c("2-way only" = "2fi", "2-way and 3-way" = "2fi_3fi", "All" = "all"),
-            selected = "2fi_3fi",
-            inline = TRUE
-          ),
-          p(
-            class = "text-muted",
-            style = "font-size: 0.9em; margin-top: 0.5rem;",
-            strong("Bold"), ": confounding from Taguchi column pairs (first pass). ",
-            "Plain text: confounding from multi-column products and structural terms (second pass)."
-          ),
-          DT::dataTableOutput(ns("alias_table"))
-        ),
         h4("Export"),
         checkboxGroupInput(ns("export_which"), "Export", choices = c("Run sheet" = "run", "Column assignment" = "assign", "Alias table" = "alias"), selected = "run"),
         downloadButton(ns("download_btn"), "Download selected (CSV)")
@@ -478,10 +478,14 @@ create_doe_orthogonal_server <- function(id, color_palette = NULL) {
     }, options = list(paging = FALSE, searching = FALSE, autoWidth = TRUE, columnDefs = list(list(className = "dt-center", targets = "_all"))))
 
     output$alias_table <- DT::renderDataTable({
+      req(isTRUE(input$show_alias))
+      res <- design_result()
+      if (is.null(res) || !is.null(res$error)) return(NULL)
       at <- alias_table()
       if (is.null(at)) return(NULL)
       at
     }, escape = c(TRUE, TRUE, FALSE), options = list(paging = FALSE, searching = FALSE, autoWidth = TRUE, columnDefs = list(list(className = "dt-center", targets = "_all"))))
+    shiny::outputOptions(output, "alias_table", suspendWhenHidden = TRUE)
 
     # Sanitize data for CSV: replace Unicode × (U+00D7) with ASCII "x" so files open correctly;
     # strip HTML from alias Confounded_interactions (bold vs plain in the UI).

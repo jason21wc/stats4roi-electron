@@ -50,8 +50,7 @@ create_nonparametric_one_two_sample_ui <- function(ns) {
           fluidRow(
             column(6,
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 uiOutput(ns("npUI1")),
                 HTML("</br>"),
                 uiOutput(ns("npUI3")),
@@ -61,8 +60,7 @@ create_nonparametric_one_two_sample_ui <- function(ns) {
             ),
             column(6,
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 uiOutput(ns("npUI2")),
                 HTML("</br>"),
                 uiOutput(ns("npUI4")),
@@ -100,14 +98,16 @@ create_nonparametric_one_two_sample_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_np"), "'] == 1"),
-            uiOutput(ns("data_choice_column_np"))
+            uiOutput(ns("data_choice_column_np")),
+            uiOutput(ns("ots_np_group_assignment"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_np"), "'] == 2"),
             uiOutput(ns("data_choice_ref_np")),
             uiOutput(ns("data_choice_data_np")),
             uiOutput(ns("data_choice_g1_np")),
-            uiOutput(ns("data_choice_g2_np"))
+            uiOutput(ns("data_choice_g2_np")),
+            uiOutput(ns("ots_np_group_assignment"))
           ),
           uiOutput(ns("ind_or_dep_np_data")),
           uiOutput(ns("np_tests_data")),
@@ -149,8 +149,7 @@ create_nonparametric_one_two_sample_ui <- function(ns) {
           fluidRow(
             column(6,
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 uiOutput(ns("npUI1_data")),
                 HTML("</br>"),
                 uiOutput(ns("npUI3_data")),
@@ -160,8 +159,7 @@ create_nonparametric_one_two_sample_ui <- function(ns) {
             ),
             column(6,
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 uiOutput(ns("npUI2_data")),
                 HTML("</br>"),
                 uiOutput(ns("npUI4_data")),

@@ -63,12 +63,17 @@ create_proportions_ui <- function(ns) {
           ),
           hr(),
           h3("Enter Statistics and Parameters"),
+          checkboxInput(
+            inputId = ns("prop_enter_counts"),
+            label = "Enter Counts",
+            value = FALSE
+          ),
           fluidRow(
+            class = "sample-size-input-row",
             column(
-              width = 3,
+              width = 6,
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 numericInput(
                   inputId = ns("p_samp"),
                   label = withMathJax("$$p_{1}$$"),
@@ -79,8 +84,7 @@ create_proportions_ui <- function(ns) {
                 )
               ),
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 numericInput(
                   inputId = ns("n_samp_p"),
                   label = withMathJax("$$n_{1}$$"),
@@ -92,12 +96,11 @@ create_proportions_ui <- function(ns) {
               )
             ),
             column(
-              width = 3,
+              width = 6,
               conditionalPanel(
                 condition = paste0("input['", ns("one_or_two_p"), "'] == 1"),
                 tags$div(
-                  id = "inline1",
-                  class = "inline",
+                  class = "inline sample-size-param",
                   numericInput(
                     inputId = ns("p0"),
                     label = withMathJax("$$\\pi_{0}:{ }$$"),
@@ -111,8 +114,7 @@ create_proportions_ui <- function(ns) {
               conditionalPanel(
                 condition = paste0("input['", ns("one_or_two_p"), "'] == 2"),
                 tags$div(
-                  id = "inline1",
-                  class = "inline",
+                  class = "inline sample-size-param",
                   numericInput(
                     inputId = ns("p2"),
                     label = withMathJax("$$p_{2}:{ }$$"),
@@ -123,13 +125,12 @@ create_proportions_ui <- function(ns) {
                   )
                 ),
                 tags$div(
-                  id = "inline1",
-                  class = "inline",
+                  class = "inline sample-size-param",
                   numericInput(
                     inputId = ns("n_samp_p_2"),
                     label = withMathJax("$$n_{2}:{ }$$"),
                     value = 10,
-                    min = 0,
+                    min = 1,
                     step = 1,
                     width = "150px"
                   )
@@ -157,14 +158,16 @@ create_proportions_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_bi"), "'] == 1"),
-            uiOutput(ns("data_choice_column_bi"))
+            uiOutput(ns("data_choice_column_bi")),
+            uiOutput(ns("ots_bi_group_assignment"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_bi"), "'] == 2"),
             uiOutput(ns("data_choice_ref_bi")),
             uiOutput(ns("data_choice_data_bi")),
             uiOutput(ns("data_choice_g1_bi")),
-            uiOutput(ns("data_choice_g2_bi"))
+            uiOutput(ns("data_choice_g2_bi")),
+            uiOutput(ns("ots_bi_group_assignment"))
           ),
           uiOutput(ns("data_bi_success1")),
           uiOutput(ns("data_bi_success2")),
@@ -194,12 +197,14 @@ create_proportions_ui <- function(ns) {
           hr(),
           h3("Statistics from Data"),
           fluidRow(
-            column(3, uiOutput(ns("bi_test_data_ui1"))),
-            column(3, uiOutput(ns("bi_test_data_ui2")))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("bi_test_data_ui1")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("bi_test_data_ui2"))))
           ),
           fluidRow(
-            column(3, uiOutput(ns("bi_test_data_ui3"))),
-            column(3, uiOutput(ns("bi_test_data_ui4")))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("bi_test_data_ui3")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("bi_test_data_ui4"))))
           ),
           br(),
           h4("Results"),

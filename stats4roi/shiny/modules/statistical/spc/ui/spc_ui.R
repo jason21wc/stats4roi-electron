@@ -7,8 +7,9 @@ library(shiny)
 library(DT)
 library(shinyWidgets)
 
-# Source limits UI
+# Source limits and capability UI
 source("modules/statistical/spc/ui/spc_limits_ui.R")
+source("modules/statistical/spc/ui/spc_capability_ui.R")
 
 create_spc_ui_internal <- function(ns) {
   tabPanel(
@@ -353,6 +354,10 @@ create_spc_ui_internal <- function(ns) {
       tabPanel(
         title = "Limits Calculations",
         create_spc_limits_ui_internal(ns)
+      ),
+      tabPanel(
+        title = "Capability Calculations",
+        create_spc_capability_ui_internal(ns)
       )
     )
   )

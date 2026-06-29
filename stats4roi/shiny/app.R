@@ -73,6 +73,11 @@ source("modules/statistical/spc/spc_module.R")
 source("modules/statistical/msa/msa_module.R")
 source("modules/statistical/doe_orthogonal/doe_orthogonal_module.R")
 
+# Concept simulators (teaching demos; no working data)
+source("modules/learning/simulators/clt_simulator_module.R")
+source("modules/learning/simulators/power_simulator_module.R")
+source("modules/learning/simulators/anova_simulator_module.R")
+
 # UI
 ui <- fluidPage(
   # Suppress synchronous XMLHttpRequest warnings
@@ -213,12 +218,60 @@ ui <- fluidPage(
       tags$style(type="text/css", ".inline label{ display: table-cell; text-align: left !important; vertical-align: middle; }
                                    .inline .form-group { display: table-row;}")
     ),
+    # Sample Size/Power: fixed input width (label table-cell layout otherwise sizes inputs by label length)
+    tags$head(
+      tags$style(type="text/css", "
+        .sample-size-param.inline label,
+        .inline.sample-size-param label {
+          display: table-cell;
+          text-align: left !important;
+          vertical-align: middle;
+          min-width: 88px;
+          padding-right: 8px;
+          white-space: nowrap;
+        }
+        .sample-size-param.inline .form-group,
+        .inline.sample-size-param .form-group {
+          display: table-row;
+        }
+        .sample-size-param .shiny-input-container {
+          display: table-cell;
+          width: 150px !important;
+          min-width: 150px !important;
+          max-width: 150px !important;
+          vertical-align: middle;
+        }
+        .sample-size-param input[type='number'] {
+          width: 150px !important;
+          min-width: 150px !important;
+          max-width: 150px !important;
+          box-sizing: border-box;
+        }
+        .sample-size-input-row > [class*='col-'] {
+          margin-bottom: 8px;
+        }
+        @media (max-width: 992px) {
+          .sample-size-input-row > [class*='col-'] {
+            width: 100%;
+            float: none;
+          }
+        }
+      ")
+    ),
     # CSS for tables (match monolithic app defaults)
     tags$head(tags$style(HTML("
                             th,td {padding: 2px !important;
-                                    min-width:60px;
-                                    text-align: right} 
-                                    th{border-bottom: 1px solid black;}
+                                    min-width:60px;}
+                            td {text-align: right;}
+                            th {text-align: center;
+                                    border-bottom: 1px solid black;}
+                            table.dataTable.eda-table thead th,
+                            table.dataTable.eda-table thead td {
+                              text-align: center !important;
+                            }
+                            table.dataTable.eda-table tbody td {
+                              text-align: right !important;
+                            }
                             table {border-collapse: separate !important;}
                             
                             "))),
@@ -294,7 +347,7 @@ ui <- fluidPage(
   ),
   useSweetAlert(),
   
-  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.1"), windowTitle = "stats4ROI"),
+  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.2"), windowTitle = "stats4ROI"),
   navbarPage(
     title = NULL,
     # Welcome Page - First tabPanel is the default
@@ -317,6 +370,21 @@ ui <- fluidPage(
       hr(),
       h3("stats4ROI News"),
       HTML("<a href='https://www.roi-ally.com/index.php/en/roistat-blog-feed' target='_blank'>Click here to see the current version of stats4ROI!</a>")
+    ),
+    navbarMenu(
+      title = "Concept Simulators",
+      tabPanel(
+        title = "Central Limit Theorem",
+        create_clt_simulator_ui("clt_sim")
+      ),
+      tabPanel(
+        title = "Power & Sample Size",
+        create_power_simulator_ui("power_sim")
+      ),
+      tabPanel(
+        title = "How ANOVA Works",
+        create_anova_simulator_ui("anova_sim")
+      )
     ),
     navbarMenu(
       title = "File",
@@ -589,8 +657,9 @@ server <- function(input, output, session) {
   # Working data (replicating app.R lines 3817-3831)
   # Create a signal for new data imports
   new_data_signal <- reactive({
-    req(imported$data())
-    TRUE
+    data <- imported$data()
+    req(data)
+    digest::digest(data)
   })
   
   working_data_result <- create_working_data_server("working_data", reactive(imported$data()), reactive(updated_data()), new_data_signal)
@@ -689,6 +758,11 @@ server <- function(input, output, session) {
   
   # Initialize color palette immediately
   values$color_palette <- get_color_palette("R4")
+
+  # Concept simulators (no working data)
+  create_clt_simulator_server("clt_sim", reactive_color_palette)
+  create_power_simulator_server("power_sim", reactive_color_palette)
+  create_anova_simulator_server("anova_sim", reactive_color_palette)
   
   # Distribution modules (replicating app.R distribution functionality)
   # Binomial distribution - use reactive color palette
@@ -719,7 +793,7 @@ server <- function(input, output, session) {
   create_critical_values_server("critical_values", reactive_color_palette)
   
   # Sample Size and Power Analysis
-  create_sample_size_power_server("sample_size_power")
+  create_sample_size_power_server("sample_size_power", reactive_color_palette)
   
   # EDA Module
   create_eda_server("eda", safe_filtered_data, reactive_color_palette)

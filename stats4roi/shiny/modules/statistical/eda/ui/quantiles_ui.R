@@ -18,6 +18,7 @@ create_quantiles_ui <- function(ns) {
           step = 1,
           width = "75px"
         ),
+        quantile_type_picker_input(ns, "quantile_type"),
         uiOutput(ns("quant_data_list"))
       ), # end sidebarpanel
       mainPanel(
@@ -44,7 +45,7 @@ create_quantiles_ui <- function(ns) {
           )
         ),
         DTOutput(ns("quant_out")),
-        HTML("<br><br>Quantiles are calculated using Type 6 <a href='https://www.rdocumentation.org/packages/stats/versions/3.4.3/topics/quantile'>Learn more here.</a>")
+        quantile_type_help_output(ns, "quantile_type_help")
       ) # end main panel
     ) # end sidebarlayout
   )

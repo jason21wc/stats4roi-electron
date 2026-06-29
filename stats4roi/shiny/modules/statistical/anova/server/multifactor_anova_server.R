@@ -26,6 +26,72 @@ standardize_interaction <- function(factor) {
   return(standardized)
 }
 
+#' Map pooled-effect selections from Set Up / Results onto the spelling used by
+#' all_effects(), ANOVA rownames, and lm formulae (\code{make.names} column names
+#' plus standardized ":" interaction order).
+#' @keywords internal
+normalize_ems_pool_input <- function(pool_vars, all_effects_vec, data, factors_id) {
+  if (is.null(pool_vars) || length(pool_vars) < 1L) return(character(0))
+  pool_vars <- unique(as.character(pool_vars))
+  fid <- as.integer(factors_id)
+  if (length(fid) < 2L || is.null(all_effects_vec) || length(all_effects_vec) < 1L) {
+    return(pool_vars)
+  }
+  if (is.null(data) || !is.data.frame(data)) return(pool_vars)
+  raw_fac <- names(data)[fid]
+  model_fac <- make.names(raw_fac)
+
+  canon_tokens <- function(parts) {
+    parts <- trimws(parts)
+    parts <- parts[nzchar(parts)]
+    mp <- character(length(parts))
+    for (j in seq_along(parts)) {
+      t <- parts[j]
+      w <- match(t, raw_fac, nomatch = 0L)
+      if (w >= 1L) {
+        mp[j] <- model_fac[w]
+        next
+      }
+      w <- match(t, model_fac, nomatch = 0L)
+      if (w >= 1L) {
+        mp[j] <- model_fac[w]
+        next
+      }
+      wm <- match(make.names(t), model_fac, nomatch = 0L)
+      if (wm >= 1L) {
+        mp[j] <- model_fac[wm]
+        next
+      }
+      return(NULL)
+    }
+    mp
+  }
+
+  resolve_one <- function(pv_one, ae_map, std_keys, all_effects_vec) {
+    parts <- unlist(strsplit(as.character(pv_one), ":", fixed = TRUE))
+    mp <- canon_tokens(parts)
+    if (is.null(mp)) return(NULL)
+    key <- standardize_interaction(paste(mp, collapse = ":"))
+    hit <- ae_map[[key]]
+    if (!is.null(hit)) return(unname(hit[[1L]]))
+    # Fallback: linear scan only when hash lookup misses (legacy spellings)
+    hits <- all_effects_vec[vapply(all_effects_vec, function(ae) identical(standardize_interaction(ae), key), logical(1))]
+    if (length(hits) >= 1L) return(hits[[1L]])
+    paste(sort(mp), collapse = ":")
+  }
+
+  std_keys <- vapply(all_effects_vec, standardize_interaction, character(1))
+  keep <- !duplicated(std_keys)
+  ae_map <- split(all_effects_vec[keep], std_keys[keep])
+
+  out <- character(0)
+  for (pv in pool_vars) {
+    r <- resolve_one(pv, ae_map, std_keys, all_effects_vec)
+    if (!is.null(r) && nzchar(r)) out <- c(out, r)
+  }
+  unique(out)
+}
+
 # lm() fails with "contrasts can be applied only to factors with 2 or more levels" when a
 # factor predictor has a single level; filter dummy-column predictors before fitting.
 predictor_ok_for_lm <- function(dat, nm) {
@@ -90,7 +156,7 @@ source("modules/config/global_config.R")
 source("modules/statistical/anova/utils/anova_helpers.R")
 source("modules/statistical/anova/utils/emsanova_roi_overrides.R")
 
-create_multifactor_anova_worker <- function(id, filtered_data, core_input_values, posthoc_input_values, reactive_color_palette) {
+create_multifactor_anova_worker <- function(id, filtered_data, core_input_values, posthoc_input_values, reactive_color_palette, data_invalidation_trigger = NULL) {
   moduleServer(id, function(input, output, session) {
     # Inputs from coordinator (NOT namespaced to this module; passed in explicitly)
     core_inputs <- reactive({
@@ -99,6 +165,78 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
     posthoc_inputs <- reactive({
       posthoc_input_values()
     })
+
+    .ems_pooled_force_disp <- reactiveVal(FALSE)
+    .ems_pooled_force_means <- reactiveVal(FALSE)
+
+    # Session memo for ems_pooled() and the expensive full-factorial e2 residual fit.
+    .ems_pooled_mem_env <- new.env(parent = emptyenv())
+    .ems_pooled_mem_env$key <- NULL
+    .ems_pooled_mem_env$result <- NULL
+    .ems_pooled_mem_env$note <- NULL
+
+    clear_ems_pooled_mem <- function() {
+      .ems_pooled_mem_env$key <- NULL
+      .ems_pooled_mem_env$result <- NULL
+      .ems_pooled_mem_env$note <- NULL
+      e2_keys <- grep("^e2\\|", ls(.ems_pooled_mem_env, all.names = TRUE), value = TRUE)
+      if (length(e2_keys) > 0L) rm(list = e2_keys, envir = .ems_pooled_mem_env)
+    }
+
+    # Bump when pooled dispersion refit / note bundling logic changes (invalidates bindCache).
+    ANOVA_POOLED_LOGIC_REV <- 10L
+
+    build_ems_pooled_memo_key <- function(inputs_vals, info, pool_vars, force_disp, force_means = FALSE) {
+      fd <- tryCatch(filtered_data(), error = function(e) NULL)
+      list(
+        logic_rev = ANOVA_POOLED_LOGIC_REV,
+        factors = sort(as.integer(info$factors_id)),
+        data_col = as.integer(info$data_id)[1L],
+        n = nrow(info$data),
+        pool = sort(as.character(pool_vars)),
+        setup_pool = sort(as.character(inputs_vals$ems_pool_setup %||% character(0))),
+        applied_pool = sort(as.character(inputs_vals$ems_pool %||% character(0))),
+        primary = sort(as.character(inputs_vals$ems_primary_col %||% character(0))),
+        conf = inputs_vals$ems_conf,
+        ems = inputs_vals$ems_ems,
+        disp = if (isTRUE(force_means)) {
+          FALSE
+        } else {
+          isTRUE(inputs_vals$ems_disp) || isTRUE(force_disp)
+        },
+        disp_type = inputs_vals$ems_disp_type,
+        mixed = isTRUE(inputs_vals$ems_show_mixed_nest),
+        n_filtered = if (is.data.frame(fd)) nrow(fd) else NA_integer_
+      )
+    }
+
+    finish_ems_pooled <- function(aov_out, memo_key) {
+      if (is.data.frame(aov_out)) {
+        note_txt <- report_commentary(isolate(anova_note()))
+        attr(aov_out, "anova_note") <- note_txt
+        .ems_pooled_mem_env$key <- memo_key
+        .ems_pooled_mem_env$result <- aov_out
+        .ems_pooled_mem_env$note <- isolate(anova_note())
+      }
+      aov_out
+    }
+
+    odd_level_e2_residual <- function(formula2_chr, data_no_factor) {
+      e2_key <- paste0(
+        "e2|", formula2_chr, "|", nrow(data_no_factor), "|",
+        paste(names(data_no_factor), collapse = ",")
+      )
+      cached <- .ems_pooled_mem_env[[e2_key]]
+      if (!is.null(cached)) return(cached)
+      unique.out <- suppressWarnings(
+        stats::lm(formula = stats::as.formula(formula2_chr), data = data_no_factor, singular.ok = TRUE)
+      )
+      e2 <- stats::anova(unique.out)["Residuals", , drop = FALSE]
+      e2$`Mean Sq` <- e2$`Sum Sq` / e2$Df
+      e2 <- e2[c(2, 1, 4, 5, 3)]
+      .ems_pooled_mem_env[[e2_key]] <- e2
+      e2
+    }
 
     # -------------------------------------------------------------------------
     # ANOVA Notes (ported concept from monolithic)
@@ -129,6 +267,30 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
     emm_model <- reactiveVal(NULL)
     model_mean_est <- reactiveVal(NULL)
 
+    #' Grand-mean lm when the ANOVA has no significant fixed effects (coefficient table / export).
+    #' @keywords internal
+    fit_intercept_only_mean_model <- function(data, data_col) {
+      resp <- names(data)[as.integer(data_col)[1L]]
+      if (length(resp) < 1L || !nzchar(resp) || !resp %in% names(data)) {
+        return(NULL)
+      }
+      stats::lm(stats::as.formula(paste(resp, "~ 1")), data = data)
+    }
+
+    reset_multifactor_worker_state <- function() {
+      aov_model(NULL)
+      emm_model(NULL)
+      model_mean_est(NULL)
+      reset_anova_note()
+      clear_ems_pooled_mem()
+    }
+
+    if (!is.null(data_invalidation_trigger)) {
+      observeEvent(data_invalidation_trigger(), {
+        reset_multifactor_worker_state()
+      }, ignoreInit = TRUE)
+    }
+
     # Data prepared for graphing (factors as factor, dispersion column substituted if requested)
     analysis_data <- reactive({
       inputs_vals <- core_inputs()
@@ -142,6 +304,10 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       disp <- isTRUE(inputs_vals$ems_disp)
       disp_type <- as.numeric(inputs_vals$ems_disp_type)
+      disp_factors <- tryCatch(
+        dispersion_cell_factors(factors_names, pooled_effects = pool_for_core(inputs_vals), available_effects = all_effects()),
+        error = function(e) factors_names
+      )
 
       # Make factors factors
       data[, factors_id] <- lapply(data[, factors_id], factor)
@@ -149,16 +315,17 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       # Optional dispersion transformation (monolithic semantics)
       if (disp) {
         formula_str <- paste(names(data)[data_col], "~", paste(factors_names, collapse = "*"))
+        formula_str_disp <- paste(names(data)[data_col], "~", paste(disp_factors, collapse = "*"))
         if (disp_type == 1) {
-          data$ADA <- compute.group.dispersion.ADA(formula(formula_str), data = data)
+          data$ADA <- compute.group.dispersion.ADA(formula(formula_str_disp), data = data)
           colnames(data)[colnames(data) == "ADA"] <- paste0(names(data)[data_col], "_ADA")
           data_col <- ncol(data)
         } else if (disp_type == 2) {
-          data$ADM <- compute.group.dispersion.ADM(formula(formula_str), data = data)
+          data$ADM <- compute.group.dispersion.ADM(formula(formula_str_disp), data = data)
           colnames(data)[colnames(data) == "ADM"] <- paste0(names(data)[data_col], "_ADM")
           data_col <- ncol(data)
         } else if (disp_type == 3) {
-          data$ADMn1 <- compute.group.dispersion.ADMn1(formula(formula_str), data = data)
+          data$ADMn1 <- compute.group.dispersion.ADMn1(formula(formula_str_disp), data = data)
           colnames(data)[colnames(data) == "ADMn1"] <- paste0(names(data)[data_col], "_ADMn1")
           data_col <- ncol(data)
         }
@@ -182,7 +349,9 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       factors_id <- as.numeric(inputs_vals$factors_ems)
       data_id <- as.numeric(inputs_vals$data_ems)
-      req(factors_id, data_id)
+      req(length(factors_id) >= 1L, length(data_id) == 1L)
+      req(all(factors_id >= 1L & factors_id <= ncol(data)))
+      req(data_id >= 1L && data_id <= ncol(data))
 
       factors_names <- names(data)[factors_id]
       response_name <- names(data)[data_id]
@@ -204,99 +373,53 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       inputs_vals <- core_inputs()
       req(info, inputs_vals)
 
-      data <- info$data
       factors_id <- info$factors_id
       factors_names <- info$factors_names
-      data_id <- info$data_id
       mixed_nest <- isTRUE(inputs_vals$ems_show_mixed_nest)
 
       if (length(factors_id) < 2) return(NULL)
 
-      # Build full factorial formula string (used to derive model.id list)
-      form_str <- paste(names(data)[data_id], "~", paste(factors_names, collapse = "*"))
-
-      type <- matrix("F", nrow = length(factors_id))
-      rownames(type) <- factors_names
-
-      nested <- NULL
-      level <- NULL
-      if (mixed_nest) {
-        nested <- rep("", length(factors_id))  # Initialize as vector of empty strings only when mixed_nest is TRUE
-        for (i in seq_along(factors_id)) {
-          # Requires coordinator to generate f_r_factor{i} and nest_factor{i}
-          req(inputs_vals[[paste0("f_r_factor", i)]])
-          type[i] <- inputs_vals[[paste0("f_r_factor", i)]]
-          nest <- inputs_vals[[paste0("nest_factor", i)]]
-          if (is.null(nest)) {
-            nested[i] <- ""
-          } else {
-            # checkboxGroupInput returns a character vector
-            # When assigning vector to single element, R pastes with spaces
-            # But nested processing expects "*" separator, so we need to paste with "*"
-            if (length(nest) > 1) {
-              nested[i] <- paste(nest, collapse = "*")
-            } else {
-              nested[i] <- nest
-            }
-          }
-        }
-      }
-
-      # Derive model.id using the same approach as monolithic EMSaov code-path
-      formula.t <- as.character(formula(form_str))
-      Y.name <- formula.t[2]
-      data.n <- strsplit(formula.t[3], " \\+ ")[[1]]
-      if (data.n[1] == ".") {
-        var.list <- colnames(data)[colnames(data) != Y.name]
-      } else {
-        temp1 <- unlist(sapply(data.n, strsplit, " "))
-        var.list <- unique(temp1[temp1 != " " & temp1 != "*" & temp1 != ""])
-      }
-      if (!is.null(level)) {
-        sort.id <- sort.list(level)
-        nested <- nested[sort.id]
-        level <- level[sort.id]
-        var.list <- var.list[sort.id]
-      }
-      if (!is.null(nested) && ifelse(length(nested) != 0, sum(!is.na(nested)), 0) != 0) {
-        nested <- lapply(nested, function(x) {
-          xx <- strsplit(x, split = "\\*")[[1]]
-          temp <- NULL
-          for (i in seq_along(xx)) temp <- c(temp, which(var.list == xx[i]))
-          if (length(temp) == 0) NA else temp
-        })
-      } else {
-        nested <- as.list(rep(NA, length(var.list)))
-      }
-
-      # Ensure factors are factors for consistent design construction
-      data2 <- data[, c(var.list, Y.name)]
-      for (i in var.list) data2[, i] <- factor(data2[, i])
-
-      n <- length(var.list)
-      design.M1 <- NULL
-      for (i in seq_len(n)) {
-        design.M1 <- rbind(design.M1, design.M1)
-        temp1 <- rep(c("", var.list[i]), each = 2^(i - 1))
-        design.M1 <- cbind(design.M1, temp1)
-      }
-      design.M1 <- design.M1[-1, , drop = FALSE]
-
-      model.id <- c(apply(design.M1, 1, function(x) paste(paste(x[x != ""], collapse = ":"))))
-      model.id <- str_sort(model.id)
-      model.id <- model.id[order(str_count(model.id, ":"))]
-      model.id
+      nested_chr <- build_mf_nested_chr(factors_names, inputs_vals, mixed_nest)
+      ems_design_effect_ids(factors_names, nested_chr)
     })
 
-    # -------------------------------------------------------------------------
-    # aov_out(): compute ANOVA table (balanced EMS path or unbalanced alternatives)
-    # Ported from monolithic aov_out reactive.
-    # -------------------------------------------------------------------------
-    aov_out <- reactive({
-      inputs_vals <- core_inputs()
-      info <- factors_info()
-      req(inputs_vals, info)
+    #' Pooled / excluded effects in the same naming space as all_effects() and rownames(aov_out).
+    pool_for_core <- function(inputs_vals) {
+      pv <- inputs_vals$ems_pool
+      if (is.null(pv) || length(pv) < 1L) return(character(0))
+      inf <- factors_info()
+      req(inf, inputs_vals)
+      dat <- filtered_data()
+      req(dat)
+      ae <- all_effects()
+      req(ae)
+      normalize_ems_pool_input(pv, ae, dat, inf$factors_id)
+    }
 
+    #' Pooled / excluded effects: Set Up exclusions plus Results-tab applied pooling (\code{ems_pool}).
+    pool_for_effective <- function(inputs_vals) {
+      pool_for_core(inputs_vals)
+    }
+
+    #' Set Up exclusions (monolithic \code{input$ems_pool}) — live picker, not Results draft/applied store.
+    pool_for_setup <- function(inputs_vals) {
+      pv <- inputs_vals$ems_pool_setup
+      if (is.null(pv) || length(pv) < 1L) return(character(0))
+      inf <- factors_info()
+      req(inf, inputs_vals)
+      dat <- filtered_data()
+      req(dat)
+      ae <- all_effects()
+      req(ae)
+      normalize_ems_pool_input(pv, ae, dat, inf$factors_id)
+    }
+
+    # -------------------------------------------------------------------------
+    # Unpooled ANOVA table (balanced or unbalanced). When assign_aov_model is FALSE,
+    # skip caching lm() and skip anova_note updates (used for means-only table while
+    # Results tab is in dispersion mode — Loss tab needs mean-significance separately).
+    # -------------------------------------------------------------------------
+    multifactor_unpooled_aov_core <- function(inputs_vals, info, assign_aov_model = TRUE) {
       data <- info$data
       factors_id <- info$factors_id
       factors_names <- info$factors_names
@@ -309,6 +432,14 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       mixed_nest <- isTRUE(inputs_vals$ems_show_mixed_nest)
 
       req(data, factors_id, data_id, conf, R)
+      req(nrow(data) > 0L)
+
+      pool_for_disp <- normalize_ems_pool_input(
+        if (is.null(inputs_vals$ems_pool_setup)) character(0) else inputs_vals$ems_pool_setup,
+        all_effects(),
+        filtered_data(),
+        factors_id
+      )
 
       backup_opts <- options()
       options(contrasts = c("contr.sum", "contr.poly"))
@@ -317,49 +448,46 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       # Factor types (fixed/random) and nesting vector
       type <- matrix("F", nrow = length(factors_id))
       rownames(type) <- factors_names
-      nested <- NULL
+      nested <- build_mf_nested_chr(factors_names, inputs_vals, mixed_nest)
       if (mixed_nest) {
-        nested <- rep("", length(factors_id))  # Initialize as vector of empty strings only when mixed_nest is TRUE
         for (i in seq_along(factors_id)) {
-          req(inputs_vals[[paste0("f_r_factor", i)]])
-          type[i] <- inputs_vals[[paste0("f_r_factor", i)]]
-          nest <- inputs_vals[[paste0("nest_factor", i)]]
-          if (is.null(nest)) {
-            nested[i] <- ""
-          } else {
-            # checkboxGroupInput returns a character vector
-            # When assigning vector to single element, R pastes with spaces
-            # But nested processing expects "*" separator, so we need to paste with "*"
-            if (length(nest) > 1) {
-              nested[i] <- paste(nest, collapse = "*")
-            } else {
-              nested[i] <- nest
-            }
-          }
+          fr <- inputs_vals[[paste0("f_r_factor", i)]]
+          if (is.null(fr) || !nzchar(as.character(fr)[1])) fr <- "F"
+          type[i] <- as.character(fr)[1]
         }
       }
 
-      # Base factorial model
+      # Base factorial model (means ANOVA uses all selected factors on RHS).
       formula_str <- paste(names(data)[data_id], "~", paste(factors_names, collapse = "*"))
 
-      # Check minimum per-cell sample size (needed for dispersion computations)
-      count_per_cell <- data %>%
-        group_by(across(all_of(factors_names))) %>%
-        summarize(count = n(), .groups = "drop")
-      min_count <- min(count_per_cell$count)
+      disp_factors <- factors_names
+      if (disp) {
+        disp_factors <- tryCatch(
+          dispersion_cell_factors(
+            factors_names,
+            pooled_effects = pool_for_effective(inputs_vals),
+            available_effects = all_effects()
+          ),
+          error = function(e) factors_names
+        )
+      }
+      # Monolithic unpooled path: attach dispersion using active-model cell factors.
+      formula_str_disp <- paste(names(data)[data_id], "~", paste(disp_factors, collapse = "*"))
 
       if (disp) {
-        if (min_count < 3) return(NULL) # monolithic returns NULL; coordinator shows message later
+        cell_rep <- factorial_cell_replication(data, disp_factors)
+        min_count <- cell_rep$min_count
+        if (is.na(min_count) || min_count < 3) return(NULL) # monolithic returns NULL; coordinator shows message later
         if (disp_type == 1) {
-          data$ADA <- compute.group.dispersion.ADA(formula(formula_str), data = data)
+          data$ADA <- compute.group.dispersion.ADA(formula(formula_str_disp), data = data)
           colnames(data)[colnames(data) == "ADA"] <- paste0(names(data)[data_id], "_ADA")
           formula_str <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADA"), formula_str)
         } else if (disp_type == 2) {
-          data$ADM <- compute.group.dispersion.ADM(formula(formula_str), data = data)
+          data$ADM <- compute.group.dispersion.ADM(formula(formula_str_disp), data = data)
           colnames(data)[colnames(data) == "ADM"] <- paste0(names(data)[data_id], "_ADM")
           formula_str <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADM"), formula_str)
         } else if (disp_type == 3) {
-          data$ADMn1 <- compute.group.dispersion.ADMn1(formula(formula_str), data = data)
+          data$ADMn1 <- compute.group.dispersion.ADMn1(formula(formula_str_disp), data = data)
           colnames(data)[colnames(data) == "ADMn1"] <- paste0(names(data)[data_id], "_ADMn1")
           formula_str <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADMn1"), formula_str)
         }
@@ -384,7 +512,9 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         )
 
         # Cache fitted model for downstream use
-        aov_model(attr(result, "aov_model"))
+        if (assign_aov_model) {
+          aov_model(attr(result, "aov_model"))
+        }
 
         # Normalize/sort like monolithic
         result$Df <- as.numeric(result$Df)
@@ -398,7 +528,9 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       }
 
       # Unbalanced: restrictions and selected analysis approach
-      anova_note(isolate(add_comment(anova_note(), "Unbalanced design")))
+      if (assign_aov_model) {
+        anova_note(isolate(add_comment(anova_note(), "Unbalanced design")))
+      }
       if ("R" %in% type) {
         return("stats4ROI can't calculate unbalanced mixed or random effects models")
       }
@@ -410,7 +542,9 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       }
 
       if (as.numeric(unbal) == 1) {
-        anova_note(isolate(add_comment(anova_note(), ", Unweighted analysis")))
+        if (assign_aov_model) {
+          anova_note(isolate(add_comment(anova_note(), ", Unweighted analysis")))
+        }
         # Unweighted approach (ported)
         agg <- do.call(
           data.frame,
@@ -431,7 +565,9 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
         # Fit on aggregated means, but keep full-data lm for downstream model use
         model_agg <- lm(formula = formula(formula_str), data = agg)
-        aov_model(lm(formula = formula(formula_str), data = data))
+        if (assign_aov_model) {
+          aov_model(lm(formula = formula(formula_str), data = data))
+        }
 
         temp <- suppressWarnings(anova(model_agg))
         temp$`F value` <- temp$`Mean Sq` / aet
@@ -447,9 +583,11 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       }
 
       if (as.numeric(unbal) == 2) {
-        anova_note(isolate(add_comment(anova_note(), ", Orthogonal design odd levels (reduced model)")))
+        if (assign_aov_model) {
+          anova_note(isolate(add_comment(anova_note(), ", Orthogonal design odd levels (reduced model)")))
+        }
         # Fractional/odd-level factorial: pass reduced formula to ems_pooled() (monolithic contract)
-        effects <- setdiff(all_effects(), inputs_vals$ems_pool)
+        effects <- setdiff(all_effects(), pool_for_disp)
         effects <- sub(":", "*", effects)
         effects <- paste(effects, collapse = "+")
         new_formula <- paste(names(data)[data_id], "~", effects)
@@ -457,9 +595,13 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       }
 
       # Weighted analysis (uses car::Anova in monolithic)
-      anova_note(isolate(add_comment(anova_note(), ", Weighted analysis")))
+      if (assign_aov_model) {
+        anova_note(isolate(add_comment(anova_note(), ", Weighted analysis")))
+      }
       aov_mod <- lm(formula = formula(formula_str), data = data)
-      aov_model(aov_mod)
+      if (assign_aov_model) {
+        aov_model(aov_mod)
+      }
       # car is not imported globally; caller must ensure dependency installed (handled later)
       aov_tab <- as.data.frame(car::Anova(aov_mod, type = 3))
       aov_tab <- aov_tab[order(rownames(aov_tab)), ]
@@ -469,6 +611,51 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       aov_tab$MS <- aov_tab$`Sum Sq` / aov_tab$Df
       names(aov_tab) <- c("SS", "Df", "Fvalue", "Pvalue", "MS")
       aov_tab
+    }
+
+    # -------------------------------------------------------------------------
+    # aov_out(): compute ANOVA table (balanced EMS path or unbalanced alternatives)
+    # Ported from monolithic aov_out reactive.
+    # -------------------------------------------------------------------------
+    aov_out <- reactive({
+      inputs_vals <- core_inputs()
+      info <- factors_info()
+      req(inputs_vals, info)
+      multifactor_unpooled_aov_core(inputs_vals, info, assign_aov_model = TRUE)
+    })
+
+    # Unpooled means ANOVA (original response), used by Loss / readiness UI.
+    #
+    # When Results is on Means, `aov_out()` already computed this table with
+    # assign_aov_model = TRUE — repeating multifactor_unpooled_aov_core here doubled
+    # lm/car::Anova cost (visible as ~2× ANOVA delay). Delegate in that case.
+    # When Results is on Dispersion, still run means separately with
+    # assign_aov_model = FALSE so we do not clobber the active dispersion fit
+    # in aov_model() / ANOVA notes while building loss/significance for the raw response.
+    aov_out_means <- reactive({
+      inputs_vals <- core_inputs()
+      info <- factors_info()
+      req(inputs_vals, info)
+      if (!isTRUE(inputs_vals$ems_disp)) {
+        return(aov_out())
+      }
+      iv <- inputs_vals
+      iv$ems_disp <- FALSE
+      multifactor_unpooled_aov_core(iv, info, assign_aov_model = FALSE)
+    })
+
+    # Unpooled dispersion ANOVA (ADA/ADM/ADMn1 response), independent of Results Means/Dispersion toggle.
+    # Symmetric delegation when Results is already on Dispersion — avoids duplicating `aov_out()`.
+    aov_out_dispersion <- reactive({
+      inputs_vals <- core_inputs()
+      info <- factors_info()
+      req(inputs_vals, info)
+      if (isTRUE(inputs_vals$ems_disp)) {
+        return(aov_out())
+      }
+      iv <- inputs_vals
+      iv$ems_disp <- TRUE
+      multifactor_unpooled_aov_core(iv, info, assign_aov_model = FALSE)
     })
 
     # -------------------------------------------------------------------------
@@ -478,19 +665,34 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       inputs_vals <- core_inputs()
       req(inputs_vals)
 
-      pool_vars <- inputs_vals$ems_pool
-      if (is.null(pool_vars)) pool_vars <- character(0)
-
       info <- factors_info()
       req(info)
+      pool_vars <- pool_for_effective(inputs_vals)
+      # Applied model pool (Set Up + Results); do not reuse after PooledANOVA row filtering.
+      model_pool_vars <- pool_vars
+
       data <- info$data
       factors_id <- info$factors_id
       factors_names <- info$factors_names
       data_id <- info$data_id
       conf <- inputs_vals$ems_conf
-      disp <- isTRUE(inputs_vals$ems_disp)
+      force_disp <- isTRUE(.ems_pooled_force_disp())
+      force_means <- isTRUE(.ems_pooled_force_means())
+      disp <- if (force_means) FALSE else (isTRUE(inputs_vals$ems_disp) || force_disp)
       disp_type <- as.numeric(inputs_vals$ems_disp_type)
       primary_dummy <- inputs_vals$ems_primary_col
+      disp_pool_effects <- pool_for_effective(inputs_vals)
+      ae_for_disp <- tryCatch(all_effects(), error = function(e) character(0))
+
+      memo_key <- build_ems_pooled_memo_key(inputs_vals, info, pool_vars, force_disp, force_means)
+      if (identical(memo_key, .ems_pooled_mem_env$key) && is.data.frame(.ems_pooled_mem_env$result)) {
+        if (!is.null(.ems_pooled_mem_env$note)) anova_note(.ems_pooled_mem_env$note)
+        out <- .ems_pooled_mem_env$result
+        if (is.null(attr(out, "anova_note", exact = FALSE))) {
+          attr(out, "anova_note") <- report_commentary(.ems_pooled_mem_env$note)
+        }
+        return(out)
+      }
 
       reset_anova_note()
 
@@ -498,10 +700,12 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       options(contrasts = c("contr.sum", "contr.poly"))
       on.exit(options(backup_opts), add = TRUE)
 
-      count_per_cell <- data %>%
-        group_by(across(all_of(factors_names))) %>%
-        summarize(count = n(), .groups = "drop")
-      min_count <- min(count_per_cell$count)
+      disp_factors <- tryCatch(
+        dispersion_cell_factors(factors_names, pooled_effects = model_pool_vars, available_effects = all_effects()),
+        error = function(e) factors_names
+      )
+      cell_rep <- factorial_cell_replication(data, disp_factors)
+      min_count <- cell_rep$min_count
 
       EMSflag <- balance_test(factors_names = factors_names, data = data) # nolint
 
@@ -538,24 +742,28 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         formula2 <- paste(names(data)[data_id], "~", paste(factors_names, collapse = "*"))
 
         if (disp) {
-          if (min_count < 3) {
+          if (is.na(min_count) || min_count < 3) {
             return(NULL)
           }
+          raw_resp <- names(data)[data_id]
+          disp_form <- mf_dispersion_model_grouping_formula(
+            raw_resp, factors_names, model_pool_vars, all_effects()
+          )
           if (disp_type == 1L) {
-            data$ADA <- compute.group.dispersion.ADA(formula(formula), data = data)
-            colnames(data)[colnames(data) == "ADA"] <- paste0(names(data)[data_id], "_ADA")
-            formula <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADA"), formula, fixed = TRUE)
-            formula2 <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADA"), formula2, fixed = TRUE)
+            data$ADA <- compute.group.dispersion.ADA(formula(disp_form$formula_chr), data = data)
+            colnames(data)[colnames(data) == "ADA"] <- paste0(raw_resp, "_ADA")
+            formula <- sub(raw_resp, paste0(raw_resp, "_ADA"), formula, fixed = TRUE)
+            formula2 <- sub(raw_resp, paste0(raw_resp, "_ADA"), formula2, fixed = TRUE)
           } else if (disp_type == 2L) {
-            data$ADM <- compute.group.dispersion.ADM(formula(formula), data = data)
-            colnames(data)[colnames(data) == "ADM"] <- paste0(names(data)[data_id], "_ADM")
-            formula <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADM"), formula, fixed = TRUE)
-            formula2 <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADM"), formula2, fixed = TRUE)
+            data$ADM <- compute.group.dispersion.ADM(formula(disp_form$formula_chr), data = data)
+            colnames(data)[colnames(data) == "ADM"] <- paste0(raw_resp, "_ADM")
+            formula <- sub(raw_resp, paste0(raw_resp, "_ADM"), formula, fixed = TRUE)
+            formula2 <- sub(raw_resp, paste0(raw_resp, "_ADM"), formula2, fixed = TRUE)
           } else if (disp_type == 3L) {
-            data$ADMn1 <- compute.group.dispersion.ADMn1(formula(formula), data = data)
-            colnames(data)[colnames(data) == "ADMn1"] <- paste0(names(data)[data_id], "_ADMn1")
-            formula <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADMn1"), formula, fixed = TRUE)
-            formula2 <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADMn1"), formula2, fixed = TRUE)
+            data$ADMn1 <- compute.group.dispersion.ADMn1(formula(disp_form$formula_chr), data = data)
+            colnames(data)[colnames(data) == "ADMn1"] <- paste0(raw_resp, "_ADMn1")
+            formula <- sub(raw_resp, paste0(raw_resp, "_ADMn1"), formula, fixed = TRUE)
+            formula2 <- sub(raw_resp, paste0(raw_resp, "_ADMn1"), formula2, fixed = TRUE)
           }
         }
 
@@ -587,7 +795,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
           aov_out <- aov_out[order(rownames(aov_out)), ]
           aov_out <- aov_out[order(str_count(string = row.names(aov_out), ":"), str_count(string = row.names(aov_out), ":")), ]
           aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Residuals")), ]
-          return(aov_out)
+          return(finish_ems_pooled(aov_out, memo_key))
         }
 
         if (unbal == 2L) {
@@ -599,9 +807,17 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
               "fewer than two levels in the current data (after filtering)."
             ))
           }
-          lm_effects <- safe_lm(formula, data, "odd-level ANOVA (reduced model)")
-          if (is.null(lm_effects)) {
-            return("Unable to fit odd-level ANOVA: linear model could not be constructed (check factor levels).")
+          lm_effects <- tryCatch(
+            stats::lm(formula = stats::as.formula(formula), data = data),
+            error = function(e) {
+              return(paste0(
+                "Unable to fit odd-level ANOVA: linear model could not be constructed (",
+                conditionMessage(e), ")."
+              ))
+            }
+          )
+          if (is.character(lm_effects) && length(lm_effects) == 1L) {
+            return(lm_effects)
           }
           aov_lm_effects <- suppressWarnings(car::Anova(lm_effects, type = 3, singular.ok = TRUE))
           aov_model(lm_effects)
@@ -617,20 +833,15 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
           aov_lm_w_dummy_col <- NULL
           if (dummy_col) {
             formula_w_dummy_col <- paste(formula, "+", paste(dummy_col_names, collapse = "+"))
-            if (!validate_lm_predictors(data, formula_w_dummy_col)) {
-              anova_note(isolate(add_comment(
-                anova_note(),
-                ", dummy-column terms omitted: one or more predictors lack two or more factor levels"
-              )))
+            lm_w_dummy_col <- tryCatch(
+              stats::lm(formula = stats::as.formula(formula_w_dummy_col), data = data),
+              error = function(e) NULL
+            )
+            if (is.null(lm_w_dummy_col)) {
               dummy_col <- FALSE
             } else {
-              lm_w_dummy_col <- safe_lm(formula_w_dummy_col, data, "dummy-column odd-level ANOVA")
-              if (is.null(lm_w_dummy_col)) {
-                dummy_col <- FALSE
-              } else {
-                aov_lm_w_dummy_col <- suppressWarnings(car::Anova(lm_w_dummy_col, type = 3, singular.ok = TRUE))
-                aov_lm_w_dummy_col$`Mean Sq` <- aov_lm_w_dummy_col$`Sum Sq` / aov_lm_w_dummy_col$Df
-              }
+              aov_lm_w_dummy_col <- suppressWarnings(car::Anova(lm_w_dummy_col, type = 3, singular.ok = TRUE))
+              aov_lm_w_dummy_col$`Mean Sq` <- aov_lm_w_dummy_col$`Sum Sq` / aov_lm_w_dummy_col$Df
             }
           }
 
@@ -661,41 +872,22 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
               aov_lm_effects <- aov_lm_effects[c(1, 2, 5, 3, 4)]
             }
           } else {
+            # Monolithic: unique SS (e2) from full factorial on raw filtered data (not factor-coerced).
             data_no_factor <- filtered_data()
-            names(data_no_factor) <- make.names(names(data_no_factor))
-            data_id_nm <- make.names(names(data)[data_id])
-            fac_nm <- make.names(factors_names)
             if (disp) {
               data_no_factor <- cbind(data_no_factor, data[, ncol(data), drop = FALSE])
               names(data_no_factor)[ncol(data_no_factor)] <- names(data)[ncol(data)]
             }
-            formula2_unique <- paste(data_id_nm, "~", paste(fac_nm, collapse = "*"))
-            if (!validate_lm_predictors(data_no_factor, formula2_unique)) {
-              return(paste0(
-                "Unable to compute unique-SS error term: one or more factors have only one level ",
-                "in the data used for replication (e<sub>2</sub>)."
-              ))
-            }
-            unique.out <- safe_lm(formula2_unique, data_no_factor, "unique-SS (e2) lm")
-            if (is.null(unique.out)) {
-              return("Unable to compute unique-SS error term (linear model failed).")
-            }
-            e2 <- stats::anova(unique.out)["Residuals", , drop = FALSE]
-            e2$`Mean Sq` <- e2$`Sum Sq` / e2$Df
-            e2 <- e2[c(2, 1, 4, 5, 3)]
+            e2 <- odd_level_e2_residual(formula2, data_no_factor)
 
             if (dummy_col) {
-              e1 <- aov_lm_w_dummy_col["Residuals", , drop = FALSE]
-              e1$`Sum Sq` <- e1$`Sum Sq` - e2$`Sum Sq`
-              e1$Df <- e1$Df - e2$Df
+              e1 <- aov_lm_w_dummy_col["Residuals", , drop = FALSE] - e2
               dum_SS <- sum(aov_lm_w_dummy_col[dummy_col_names, "Sum Sq", drop = TRUE])
               dum_df <- sum(aov_lm_w_dummy_col[dummy_col_names, "Df", drop = TRUE])
               e1$`Sum Sq` <- e1$`Sum Sq` + dum_SS
               e1$Df <- e1$Df + dum_df
             } else {
-              e1 <- e_tot
-              e1$`Sum Sq` <- e_tot$`Sum Sq` - e2$`Sum Sq`
-              e1$Df <- e_tot$Df - e2$Df
+              e1 <- e_tot - e2
             }
             e1$`Mean Sq` <- e1$`Sum Sq` / e1$Df
 
@@ -747,7 +939,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
           aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Within Cells")), ]
           aov_out <- aov_out[order(str_count(string = row.names(aov_out), pattern = "Residuals")), ]
           names(aov_out) <- c("SS", "Df", "MS", "Fvalue", "Pvalue")
-          return(aov_out)
+          return(finish_ems_pooled(aov_out, memo_key))
         }
 
         if (unbal == 3L) {
@@ -760,7 +952,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
           aov_out <- aov_out[!rownames(aov_out) %in% "(Intercept)", ]
           aov_out$MS <- aov_out$`Sum Sq` / aov_out$Df
           names(aov_out) <- c("SS", "Df", "Fvalue", "Pvalue", "MS")
-          return(aov_out)
+          return(finish_ems_pooled(aov_out, memo_key))
         }
 
         return(NULL)
@@ -768,17 +960,30 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       # Balanced design: PooledANOVA path (monolithic L30609+)
       anova_note(isolate(add_comment(anova_note(), "Balanced design")))
-      if (disp && min_count < 2) {
+      if (disp && (is.na(min_count) || min_count < 3)) {
         return(NULL)
       }
 
-      aov_out_l <- aov_out()
-      req(aov_out_l)
+      aov_out_l <- if (isTRUE(disp)) {
+        iv <- inputs_vals
+        iv$ems_disp <- TRUE
+        multifactor_unpooled_aov_core(iv, info, assign_aov_model = TRUE)
+      } else {
+        aov_out()
+      }
+      if (is.null(aov_out_l)) {
+        return(NULL)
+      }
       if (is.character(aov_out_l) && length(aov_out_l) == 1) {
         return(aov_out_l)
       }
       if (!is.data.frame(aov_out_l)) {
         return(aov_out_l)
+      }
+
+      # No applied exclusions left to pool — return the working (unpooled) table.
+      if (length(pool_vars) < 1L) {
+        return(finish_ems_pooled(aov_out_l, memo_key))
       }
 
       aov_out_original <- aov_out_l
@@ -810,8 +1015,12 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         test_pool$Pvalue <- as.numeric(test_pool$Pvalue)
       }
 
-      if (any(is.na(test_pool[-nrow(test_pool), ]$SS))) {
-        # Pooled has returned NAs somewhere not in residuals, use lm to get reduced model
+      use_reduced_refit <- any(is.na(test_pool[-nrow(test_pool), "SS", drop = FALSE])) ||
+        (isTRUE(disp) && length(model_pool_vars) > 0L)
+
+      if (use_reduced_refit) {
+        # Pooled has returned NAs somewhere not in residuals, or dispersion pooling
+        # requires a reduced-model refit on the active ADM/ADA response (monolithic path).
         anova_note(isolate(add_comment(anova_note(), ", ANOVA based on reduced model")))
 
         # Get data and factor information
@@ -822,50 +1031,86 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         factors_names <- info$factors_names
         data_id <- info$data_id
 
-        disp <- isTRUE(inputs_vals$ems_disp)
         disp_type <- as.numeric(inputs_vals$ems_disp_type)
 
         # Convert factors to factor class
-        data[, factors_names] <- lapply(data[, factors_id], factor)
+        if (length(factors_names) >= 1L) {
+          data[, factors_names] <- lapply(data[, factors_id], factor)
+        }
 
         # Build reduced model formula by removing pooled variables
         # Line 30651-30656 in monolithic
-        # Note: row.names(aov_out_original) may contain interaction terms with ":" that need to be split
-        # The monolithic app uses strsplit with " " which works because rownames are space-separated
         temp <- unlist(strsplit(row.names(aov_out_original), " "))
         temp <- temp[!temp %in% pool_vars]
         temp <- temp[!temp %in% "Residuals"]
-        # Remove empty strings that might result from splitting
         temp <- temp[temp != ""]
-        formula_str <- paste(temp, collapse = " + ")
-        formula_str <- gsub(pattern = ":", replacement = "*", x = formula_str)
-        formula_str <- paste0(names(data)[data_id], " ~ ", formula_str)
+        rhs_reduced <- paste(temp, collapse = " + ")
+        rhs_reduced <- gsub(":", "*", rhs_reduced, fixed = TRUE)
+        raw_resp <- names(data)[data_id]
+        formula_str <- paste0(raw_resp, " ~ ", rhs_reduced)
 
-        # Handle dispersion transformation if needed
-        if (disp) {
-          if (disp_type == 1) {
-            data$ADA <- compute.group.dispersion.ADA(formula(formula_str), data = data)
-            colnames(data)[colnames(data) == "ADA"] <- paste0(names(data)[data_id], "_ADA")
-            formula_str <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADA"), formula_str)
-          } else if (disp_type == 2) {
-            data$ADM <- compute.group.dispersion.ADM(formula(formula_str), data = data)
-            colnames(data)[colnames(data) == "ADM"] <- paste0(names(data)[data_id], "_ADM")
-            formula_str <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADM"), formula_str)
-          } else if (disp_type == 3) {
-            data$ADMn1 <- compute.group.dispersion.ADMn1(formula(formula_str), data = data)
-            colnames(data)[colnames(data) == "ADMn1"] <- paste0(names(data)[data_id], "_ADMn1")
-            formula_str <- sub(names(data)[data_id], paste0(names(data)[data_id], "_ADMn1"), formula_str)
+        # Recompute within-cell dispersion for the active (pooled) model, then refit ANOVA.
+        if (isTRUE(disp)) {
+          if (is.na(min_count) || min_count < 3L) {
+            return(NULL)
           }
+          disp_form <- mf_dispersion_model_grouping_formula(
+            raw_resp, factors_names, model_pool_vars, ae_for_disp
+          )
+          prep <- mf_dispersion_prepare_data_formula(
+            data = data,
+            response_id = data_id,
+            disp_type_id = disp_type,
+            formula_chr = disp_form$formula_chr,
+            disp_active = TRUE
+          )
+          data <- prep$data
+          if (!mf_dispersion_response_usable(data[[prep$response]])) {
+            return(NULL)
+          }
+          formula_str <- paste0(prep$response, " ~ ", rhs_reduced)
         }
 
         # Fit reduced model with lm()
         options(contrasts = c("contr.sum","contr.poly"))
         aov_mod <- lm(formula = formula(formula_str), data = data)
+        if (isTRUE(disp)) {
+          fit_resp <- all.vars(stats::formula(aov_mod))[1L]
+          if (!mf_is_dispersion_response_name(fit_resp)) {
+            disp_form <- mf_dispersion_model_grouping_formula(
+              raw_resp, factors_names, model_pool_vars, ae_for_disp
+            )
+            prep <- mf_dispersion_prepare_data_formula(
+              data = info$data,
+              response_id = data_id,
+              disp_type_id = disp_type,
+              formula_chr = disp_form$formula_chr,
+              disp_active = TRUE
+            )
+            data <- prep$data
+            if (!mf_dispersion_response_usable(data[[prep$response]])) {
+              return(NULL)
+            }
+            if (length(factors_names) >= 1L) {
+              data[, factors_names] <- lapply(data[, factors_id], factor)
+            }
+            formula_str <- paste0(prep$response, " ~ ", rhs_reduced)
+            aov_mod <- lm(formula = formula(formula_str), data = data)
+          }
+        }
         aov_model(aov_mod) # Cache for downstream use
 
         # Get count_per_cell for unreplicated check
+        cell_factors <- if (disp) {
+          tryCatch(
+            dispersion_cell_factors(factors_names, pooled_effects = disp_pool_effects, available_effects = ae_for_disp),
+            error = function(e) factors_names
+          )
+        } else {
+          factors_names
+        }
         count_per_cell <- data %>%
-          group_by(across(all_of(factors_names))) %>%
+          group_by(across(all_of(cell_factors))) %>%
           summarize(count = n(), .groups = "drop")
 
         # Divert from Anova if unreplicated (line 30679-30686 in monolithic)
@@ -880,6 +1125,13 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
           aov_out_reduced <- aov_out_reduced[c(2, 1, 3, 4)]
         } else {
           # If at least a few replicates, use Anova(type=3)
+          if (isTRUE(disp)) {
+            resp_nm <- all.vars(stats::formula(aov_mod))[1L]
+            y <- aov_mod$model[[resp_nm]]
+            if (!mf_dispersion_response_usable(y)) {
+              return(NULL)
+            }
+          }
           aov_out_reduced <- suppressWarnings(car::Anova(aov_mod, type = 3, singular.ok = TRUE))
           aov_out_reduced <- as.data.frame(aov_out_reduced)
           # Remove (Intercept) if present (matching monolithic line 30603)
@@ -951,13 +1203,32 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       # Balanced dummy-column e1/e2 (monolithic L30733-30786)
       if (isTruthy(primary_dummy)) {
-        formula_bal <- paste(
-          names(data)[data_id], "~",
-          paste(
-            row.names(aov_out)[!row.names(aov_out) %in% c("Residuals", "(Intercept)")],
-            collapse = "+"
+        info <- factors_info()
+        req(info)
+        data <- info$data
+        factors_id <- info$factors_id
+        factors_names <- info$factors_names
+        data_id <- info$data_id
+        if (length(factors_names) >= 1L) {
+          data[, factors_names] <- lapply(data[, factors_id], factor)
+        }
+        rhs_terms <- row.names(aov_out)[!row.names(aov_out) %in% c("Residuals", "(Intercept)")]
+        rhs_str <- paste(rhs_terms, collapse = "+")
+        formula_bal <- paste0(names(data)[data_id], " ~ ", rhs_str)
+        if (isTRUE(disp)) {
+          disp_form <- mf_dispersion_model_grouping_formula(
+            names(data)[data_id], factors_names, model_pool_vars, all_effects()
           )
-        )
+          prep <- mf_dispersion_prepare_data_formula(
+            data = data,
+            response_id = data_id,
+            disp_type_id = disp_type,
+            formula_chr = disp_form$formula_chr,
+            disp_active = TRUE
+          )
+          data <- prep$data
+          formula_bal <- paste0(prep$response, " ~ ", rhs_str)
+        }
         agg <- do.call(
           data.frame,
           aggregate(stats::as.formula(formula_bal), data = data, FUN = function(x) c(n = length(x), sum = sum(x), mean = mean(x)))
@@ -1034,7 +1305,19 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         }
       }
 
-      aov_out
+      finish_ems_pooled(aov_out, memo_key)
+    })
+
+    ems_pooled_dispersion <- reactive({
+      .ems_pooled_force_disp(TRUE)
+      on.exit(.ems_pooled_force_disp(FALSE), add = TRUE)
+      ems_pooled()
+    })
+
+    ems_pooled_means <- reactive({
+      .ems_pooled_force_means(TRUE)
+      on.exit(.ems_pooled_force_means(FALSE), add = TRUE)
+      ems_pooled()
     })
 
     # -------------------------------------------------------------------------
@@ -1046,7 +1329,24 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       data <- filtered_data()
       req(inputs_vals, data)
 
-      pool <- inputs_vals$ems_pool
+      pool <- pool_for_setup(inputs_vals)
+      ae <- all_effects()
+      req(ae)
+
+      # All-fixed designs: effect types come from Set Up exclusions only (no ANOVA refit).
+      if (!isTRUE(inputs_vals$ems_show_mixed_nest)) {
+        active <- setdiff(ae, pool)
+        if (length(active) < 1L) return(NULL)
+        effects_f_r <- data.frame(
+          effect = active,
+          type = "F",
+          type_code = 1L,
+          stringsAsFactors = FALSE,
+          row.names = active
+        )
+        return(effects_f_r)
+      }
+
       ao <- aov_out()
       use_pooled <- (!is.null(pool) && length(pool) > 0) ||
         (is.character(ao) && length(ao) == 1L && !grepl("can't calculate", ao, fixed = TRUE) && grepl("~", ao, fixed = TRUE))
@@ -1071,11 +1371,17 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       effects_f_r$type <- rep("F", nrow(effects_f_r))
       effects_f_r$type_code <- 1
 
-      fac_names <- names(data)[as.numeric(factors_sel)]
+      fac_names <- make.names(names(data)[as.numeric(factors_sel)])
       if (isTRUE(inputs_vals$ems_show_mixed_nest)) {
         for (i in seq_len(n_factors)) {
-          effects_f_r[which(gsub("\\(.*?\\)", "", effects_f_r$effect) == fac_names[i]), ]$type <- inputs_vals[[paste0("f_r_factor", i)]]
-          if (effects_f_r$type[i] == "R") effects_f_r$type_code[i] <- 0
+          fr <- inputs_vals[[paste0("f_r_factor", i)]]
+          if (is.null(fr) || !nzchar(as.character(fr)[1])) fr <- "F"
+          fr <- as.character(fr)[1]
+          idx_main <- which(gsub("\\(.*?\\)", "", effects_f_r$effect) == fac_names[i])
+          if (length(idx_main) >= 1L) {
+            effects_f_r$type[idx_main] <- fr
+            if (fr == "R") effects_f_r$type_code[idx_main] <- 0
+          }
         }
         if (n_factors == nrow(effects_f_r)) return(effects_f_r)
 
@@ -1091,6 +1397,21 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       }
 
       effects_f_r
+    })
+
+    factor_types <- reactive({
+      info <- factors_info()
+      inputs_vals <- core_inputs()
+      req(info, inputs_vals)
+      multifactor_factor_types_from_inputs(
+        factor_names = info$factors_names,
+        inputs_vals = inputs_vals,
+        n_factors = length(info$factors_id)
+      )
+    })
+
+    has_fixed_factors <- reactive({
+      length(factor_types()$fixed) > 0L
     })
 
     # -------------------------------------------------------------------------
@@ -1119,17 +1440,16 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       req(data, data_col, factor_col, conf)
       data[, factor_col] <- lapply(data[, factor_col], factor)
 
-      # If any random effects are selected, this plot is not shown in monolithic
-      if (isTRUE(inputs_vals$ems_show_mixed_nest)) {
-        for (i in seq_along(factor_col)) {
-          if (identical(inputs_vals[[paste0("f_r_factor", i)]], "R")) {
-            return(message_plot("This plot can't display random effects.\nExamine the interaction plots below"))
-          }
-        }
-      }
+      eff_tbl <- eff_types()
+      factor_types <- multifactor_factor_types_from_inputs(
+        factor_names = names(data)[factor_col],
+        inputs_vals = inputs_vals,
+        n_factors = length(factor_col)
+      )
+      mixed_random_present <- length(factor_types$random) > 0L
 
-      # Determine which ANOVA table to use
-      pool <- inputs_vals$ems_pool
+      # Pooled ANOVA when any means pooling is applied (Set Up + Results), matching commit/registry.
+      pool <- pool_for_effective(inputs_vals)
       aov_out_l <- if (!is.null(pool) && length(pool) > 0) ems_pooled() else aov_out()
       req(aov_out_l)
       if (!is.data.frame(aov_out_l)) {
@@ -1139,14 +1459,39 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         aov_out_l <- aov_out_l[!(row.names(aov_out_l) %in% "(Intercept)"), ]
       }
 
-      # Significant effects
+      # Significant effects (fixed only in mixed models; lm EMMs marginalize over omitted random factors)
       sig_effects <- rownames(aov_out_l[aov_out_l$Pvalue <= (1 - conf), , drop = FALSE])
       sig_effects <- sig_effects[sig_effects != "NA"]
+      sig_effects <- multifactor_filter_fixed_anova_effects(
+        sig_effects,
+        eff_tbl = eff_tbl,
+        random_factor_names = factor_types$random
+      )
       if (length(sig_effects) == 0) {
-        return(message_plot("No significant effects to plot."))
+        set_intercept_only <- function(msg) {
+          m0 <- fit_intercept_only_mean_model(data, data_col)
+          if (!is.null(m0)) model_mean_est(m0)
+          message_plot(msg)
+        }
+        if (mixed_random_present && length(factor_types$fixed) == 0L) {
+          return(set_intercept_only(
+            "No fixed effects to plot.\nAll model factors are random.\nGrand-mean (intercept-only) coefficients are shown when enabled."
+          ))
+        }
+        if (mixed_random_present) {
+          return(set_intercept_only(
+            paste0(
+              "No significant fixed effects to plot.\nSee random interaction plots below.",
+              "\nGrand-mean (intercept-only) coefficients are shown when enabled."
+            )
+          ))
+        }
+        return(set_intercept_only(
+          "No significant effects to plot.\nGrand-mean (intercept-only) coefficients are shown when enabled."
+        ))
       }
 
-      # Build reduced model using only significant effects (+ required main effects)
+      # Build reduced model using only significant fixed effects (+ required main effects)
       interaction_factors <- grep(":", sig_effects, value = TRUE)
       individual_factors <- unique(unlist(strsplit(interaction_factors, ":")))
       filtered_factors <- individual_factors
@@ -1157,13 +1502,24 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       rhs_parts <- character(0)
       if (length(filtered_factors) > 0) rhs_parts <- c(rhs_parts, filtered_factors)
       if (length(all_sig_interactions) > 0) {
-        rhs_parts <- c(rhs_parts, gsub(pattern = ":", replacement = "*", x = all_sig_interactions))
+        rhs_parts <- c(rhs_parts, vapply(all_sig_interactions, anova_effect_to_formula_term, character(1)))
       }
-      if (length(sig_main) > 0) rhs_parts <- c(rhs_parts, sig_main)
+      if (length(sig_main) > 0) {
+        rhs_parts <- c(rhs_parts, vapply(sig_main, anova_effect_to_formula_term, character(1)))
+      }
+      rhs_parts <- unique(rhs_parts)
       if (length(rhs_parts) == 0) {
-        return(message_plot("No valid effects for reduced model."))
+        m0 <- fit_intercept_only_mean_model(data, data_col)
+        if (!is.null(m0)) model_mean_est(m0)
+        return(message_plot(
+          "No valid effects for reduced model.\nGrand-mean (intercept-only) coefficients are shown when enabled."
+        ))
       }
       form_str <- paste(names(data)[data_col], "~", paste(rhs_parts, collapse = "+"))
+      formula_vars <- all.vars(stats::as.formula(form_str))
+      if (!all(formula_vars %in% names(data))) {
+        return(message_plot("Significant effects reference columns not in the current data.\nReselect factors on the Set Up tab."))
+      }
 
       # Use sum-to-zero contrasts for coefficient estimates
       # MUST set options BEFORE converting factors to factors, so they use the correct contrasts
@@ -1173,23 +1529,17 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       # Convert factors to character first (to clear any existing contrasts), then back to factor
       # Then EXPLICITLY set contrast attributes to ensure sum-to-zero contrasts are used
-      if (length(sig_main) > 0) {
-        factors_to_convert <- c(filtered_factors, sig_main)
-        data[factors_to_convert] <- lapply(data[factors_to_convert], as.character)
-        data[factors_to_convert] <- lapply(data[factors_to_convert], factor)
-        
+      factor_cols_to_convert <- unique(unlist(lapply(
+        c(filtered_factors, sig_main),
+        parse_anova_effect_factors
+      )))
+      factor_cols_to_convert <- intersect(factor_cols_to_convert, names(data))
+      if (length(factor_cols_to_convert) > 0) {
+        data[factor_cols_to_convert] <- lapply(data[factor_cols_to_convert], as.character)
+        data[factor_cols_to_convert] <- lapply(data[factor_cols_to_convert], factor)
+
         # EXPLICITLY set contrast attributes to sum-to-zero
-        for (f in factors_to_convert) {
-          if (is.factor(data[[f]])) {
-            contrasts(data[[f]]) <- "contr.sum"
-          }
-        }
-      } else if (length(filtered_factors) > 0) {
-        data[filtered_factors] <- lapply(data[filtered_factors], as.character)
-        data[filtered_factors] <- lapply(data[filtered_factors], factor)
-        
-        # EXPLICITLY set contrast attributes to sum-to-zero
-        for (f in filtered_factors) {
+        for (f in factor_cols_to_convert) {
           if (is.factor(data[[f]])) {
             contrasts(data[[f]]) <- "contr.sum"
           }
@@ -1201,6 +1551,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       # Split significant effects into main effects and two-way interactions for plotting
       main_effects <- sig_effects[!grepl(":", sig_effects)]
+      main_effects <- main_effects[!vapply(main_effects, is_nested_anova_effect, logical(1))]
       two_way_interactions <- sig_effects[grepl("^[^:]*:[^:]*$", sig_effects)]
       higher <- sig_effects[str_detect(sig_effects, ".*:.*:.*")]
       higher_present <- length(higher) > 0
@@ -1212,6 +1563,9 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       }
 
       if (length(main_effects) == 0 && length(two_way_interactions) == 0) {
+        if (any(vapply(sig_effects, is_nested_anova_effect, logical(1)))) {
+          return(message_plot("Significant nested effects are shown in the Nested Effects section below."))
+        }
         return(message_plot("This graph cannot plot three-way or higher interactions.\nCheck interaction plots below."))
       }
 
@@ -1220,9 +1574,10 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       if (length(main_effects) > 0) {
         for (i in main_effects) {
-          plot_temp <- emmeans::emmip(model, formula(paste("~", i)), engine = "ggplot")
+          plot_factor <- anova_effect_plot_factor(i)
+          plot_temp <- emmeans::emmip(model, formula(anova_effect_to_emmeans_rhs(i)), engine = "ggplot")
           main_data <- ggplot_build(plot_temp)$data[[1]]
-          main_data$x <- paste(i, "=", levels(plot_temp[["data"]][[i]])[main_data$x])
+          main_data$x <- paste(i, "=", levels(plot_temp[["data"]][[plot_factor]])[main_data$x])
           main_data$group <- NA
           main_data$PANEL <- PANEL
           PANEL <- PANEL + 1
@@ -1292,12 +1647,285 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         ylab(names(data)[data_col]) +
         theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
         ggtitle(title) +
-        labs(subtitle = "Based on a reduced model using only significant effects")
+        labs(subtitle = if (mixed_random_present) {
+          "Reduced model: significant fixed effects only (averaged over random factors)"
+        } else {
+          "Based on a reduced model using only significant effects"
+        })
 
       if (isTruthy(inputs_vals$ems_target)) {
         p <- p + geom_hline(yintercept = as.numeric(inputs_vals$ems_target), color = pal[2], linetype = 2)
       }
       p
+    })
+
+    # -------------------------------------------------------------------------
+    # Significant nested fixed effects (Graphs tab)
+    # -------------------------------------------------------------------------
+    significant_nested_effects <- reactive({
+      inputs_vals <- core_inputs()
+      req(inputs_vals)
+      if (!isTRUE(inputs_vals$ems_show_mixed_nest)) {
+        return(character(0))
+      }
+
+      conf <- inputs_vals$ems_conf
+      pool <- inputs_vals$ems_pool
+      aov_out_l <- if (!is.null(pool) && length(pool) > 0) ems_pooled() else aov_out()
+      req(aov_out_l)
+      if (!is.data.frame(aov_out_l)) {
+        return(character(0))
+      }
+
+      sig_effects <- rownames(aov_out_l[aov_out_l$Pvalue <= (1 - conf), , drop = FALSE])
+      sig_effects <- sig_effects[sig_effects != "NA"]
+      sig_effects <- sig_effects[!sig_effects %in% c("Residuals", "Residual", "(Intercept)", "Within Cells")]
+      nested_effects <- sig_effects[vapply(sig_effects, is_nested_anova_effect, logical(1))]
+      if (length(nested_effects) == 0) {
+        return(character(0))
+      }
+
+      eff_tbl <- eff_types()
+      if (is.null(eff_tbl)) {
+        return(nested_effects)
+      }
+
+      nested_effects[vapply(nested_effects, function(eff) {
+        if (!(eff %in% rownames(eff_tbl))) {
+          return(TRUE)
+        }
+        identical(eff_tbl[eff, "type"], "F")
+      }, logical(1))]
+    })
+
+    significant_nested_random_effects <- reactive({
+      inputs_vals <- core_inputs()
+      req(inputs_vals)
+      if (!isTRUE(inputs_vals$ems_show_mixed_nest)) {
+        return(character(0))
+      }
+
+      conf <- inputs_vals$ems_conf
+      pool <- inputs_vals$ems_pool
+      aov_out_l <- if (!is.null(pool) && length(pool) > 0) ems_pooled() else aov_out()
+      req(aov_out_l, is.data.frame(aov_out_l))
+
+      sig_effects <- rownames(aov_out_l[aov_out_l$Pvalue <= (1 - conf), , drop = FALSE])
+      sig_effects <- sig_effects[sig_effects != "NA"]
+      sig_effects <- sig_effects[!sig_effects %in% c("Residuals", "Residual", "(Intercept)", "Within Cells")]
+      nested_effects <- sig_effects[vapply(sig_effects, is_nested_anova_effect, logical(1))]
+      if (length(nested_effects) == 0) {
+        return(character(0))
+      }
+
+      eff_tbl <- eff_types()
+      req(eff_tbl)
+
+      nested_effects[vapply(nested_effects, function(eff) {
+        (eff %in% rownames(eff_tbl)) && identical(eff_tbl[eff, "type"], "R")
+      }, logical(1))]
+    })
+
+    nested_stratum_table_data <- reactive({
+      inputs_vals <- core_inputs()
+      prepared <- analysis_data()
+      effects <- significant_nested_effects()
+      req(inputs_vals, prepared)
+      if (length(effects) == 0) {
+        return(NULL)
+      }
+
+      pool <- inputs_vals$ems_pool
+      aov_out_l <- if (!is.null(pool) && length(pool) > 0) ems_pooled() else aov_out()
+      req(aov_out_l, is.data.frame(aov_out_l))
+
+      data <- prepared$data
+      data_col <- prepared$response_col
+      conf <- inputs_vals$ems_conf
+      R <- inputs_vals$ems_dec
+      residual_row <- anova_residual_row(aov_out_l)
+      ms_den <- as.numeric(aov_out_l[residual_row, "MS"])
+      df_den <- as.numeric(aov_out_l[residual_row, "Df"])
+
+      table_parts <- vector("list", length(effects))
+      footnotes <- character(0)
+
+      for (i in seq_along(effects)) {
+        eff <- effects[[i]]
+        tbl <- compute_nested_stratum_tests(
+          effect_name = eff,
+          data = data,
+          response_col = data_col,
+          aov_out_l = aov_out_l,
+          conf = conf
+        )
+        if (!is.null(tbl)) {
+          table_parts[[i]] <- tbl
+          footnotes <- c(
+            footnotes,
+            paste0(
+              "Within-stratum tests for ", eff,
+              " use one-way SS/MS holding parents constant, with denominator MS = ",
+              lolcat::round.object(ms_den, R),
+              " (df = ", df_den, ") from the full nested ANOVA."
+            )
+          )
+        }
+      }
+
+      table_parts <- table_parts[!vapply(table_parts, is.null, logical(1))]
+      if (length(table_parts) == 0) {
+        return(NULL)
+      }
+
+      out <- do.call(rbind, table_parts)
+      rownames(out) <- NULL
+      attr(out, "footnotes") <- unique(footnotes)
+      out
+    })
+
+    nested_effect_plot <- function(effect_name) {
+      inputs_vals <- core_inputs()
+      prepared <- analysis_data()
+      req(inputs_vals, prepared, effect_name)
+
+      message_plot <- function(msg) {
+        ggplot() +
+          theme_void() +
+          annotate("text", x = 0, y = 0, label = msg, size = 5) +
+          xlim(-1, 1) +
+          ylim(-1, 1)
+      }
+
+      parsed <- parse_nested_effect(effect_name)
+      if (is.null(parsed)) {
+        return(message_plot("Invalid nested effect."))
+      }
+
+      eff_tbl <- eff_types()
+      if (!is.null(eff_tbl) && effect_name %in% rownames(eff_tbl) && identical(eff_tbl[effect_name, "type"], "R")) {
+        return(message_plot(paste0(
+          "Random nested effect ", effect_name, " is not shown here.\n",
+          "See the ANOVA table (ICC) and interaction plots below."
+        )))
+      }
+
+      data <- prepared$data
+      data_col <- prepared$response_col
+      response_name <- prepared$response_name
+      conf <- inputs_vals$ems_conf
+      target <- inputs_vals$ems_target
+      R <- inputs_vals$ems_dec
+
+      pool <- inputs_vals$ems_pool
+      aov_out_l <- if (!is.null(pool) && length(pool) > 0) ems_pooled() else aov_out()
+      req(aov_out_l, is.data.frame(aov_out_l), effect_name %in% rownames(aov_out_l))
+
+      panel_count <- nested_effect_panel_count(data, effect_name)
+      if (panel_count > 48) {
+        return(message_plot("Too many parent panels to display graphically.\nSee the nested stratum table below."))
+      }
+
+      model <- aov_model()
+      req(model)
+
+      pal <- reactive_color_palette()
+      if (is.null(pal) || length(pal) < 4) pal <- palette.colors(8)
+
+      overall_f <- lolcat::round.object(as.numeric(aov_out_l[effect_name, "Fvalue"]), R)
+      overall_p <- lolcat::round.object(as.numeric(aov_out_l[effect_name, "Pvalue"]), R)
+      title_text <- paste0("Nested effect: ", nested_effect_title(effect_name), " — Estimated marginal means")
+      subtitle_text <- paste0(
+        "Overall ANOVA: ", effect_name, " — F = ", overall_f,
+        ", p = ", overall_p, " (EMS table at ", conf * 100, "% confidence)"
+      )
+      caption_text <- paste0(
+        "Each panel shows ", parsed$child, " within one parent combination. ",
+        "Overall ", effect_name, " tests variation of ", parsed$child, " across all parent strata."
+      )
+
+      if (panel_count > 24) {
+        child <- parsed$child
+        parents <- parsed$parents
+        combos <- nested_parent_combinations(data, parents)
+        combos$stratum <- apply(combos, 1, function(row_idx) {
+          nested_stratum_label(child, combos[row_idx, , drop = FALSE], parents)
+        })
+
+        df <- data
+        df$stratum <- apply(seq_len(nrow(df)), 1, function(row_idx) {
+          parent_row <- df[row_idx, parents, drop = FALSE]
+          nested_stratum_label(child, parent_row, parents)
+        })
+        df$x_num <- as.numeric(factor(df[[child]]))
+
+        p <- ggplot(
+          df,
+          aes(
+            x = .data$x_num,
+            y = .data[[response_name]],
+            group = .data$stratum,
+            color = .data$stratum
+          )
+        ) +
+          scale_color_manual(values = pal[-1]) +
+          scale_x_continuous(
+            breaks = seq_along(levels(factor(df[[child]]))),
+            labels = levels(factor(df[[child]]))
+          ) +
+          stat_summary(fun = mean, geom = "line", linewidth = 1.5) +
+          stat_summary(fun = mean, geom = "point", size = 4) +
+          xlab(paste0(parsed$child, " level")) +
+          ylab(response_name) +
+          ggtitle(title_text) +
+          labs(subtitle = subtitle_text, caption = paste(caption_text, "Profile plot shown because parent panel count exceeds 24.")) +
+          theme(
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            legend.title = element_blank()
+          )
+      } else {
+        emm_rhs <- nested_effect_emmeans_rhs(effect_name)
+        plot_temp <- emmeans::emmip(model, formula(emm_rhs), engine = "ggplot")
+        p <- plot_temp +
+          ggtitle(title_text) +
+          labs(
+            subtitle = subtitle_text,
+            caption = caption_text,
+            x = paste0(parsed$child, " level"),
+            y = response_name
+          ) +
+          theme(
+            axis.text.x = element_text(angle = 45, hjust = 1),
+            strip.text = element_text(size = rel(1.1))
+          )
+      }
+
+      if (isTruthy(target)) {
+        p <- p + geom_hline(yintercept = as.numeric(target), color = pal[2], linetype = 2)
+      }
+      p
+    }
+
+    nested_effect_plot_height_one <- function(effect_name) {
+      prepared <- analysis_data()
+      req(prepared, effect_name)
+      panels <- nested_effect_panel_count(prepared$data, effect_name)
+      if (panels > 24) {
+        400L
+      } else {
+        as.integer(400 * ceiling(max(panels, 1L) / 3))
+      }
+    }
+
+    nested_effects_plot_height <- reactive({
+      effects <- significant_nested_effects()
+      prepared <- analysis_data()
+      req(prepared)
+      if (length(effects) == 0) {
+        return(400)
+      }
+      heights <- vapply(effects, nested_effect_plot_height_one, integer(1))
+      sum(heights)
     })
 
     # Main effects boxplots (Graphs tab)
@@ -1309,8 +1937,23 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       data <- prepared$data
       data_col_name <- prepared$response_name
       factors <- prepared$factors_names
+      factor_types <- multifactor_factor_types_from_inputs(
+        factor_names = factors,
+        inputs_vals = inputs_vals,
+        n_factors = length(factors)
+      )
+      if (length(factor_types$fixed) > 0L) {
+        factors <- intersect(factors, factor_types$fixed)
+      }
       target <- inputs_vals$ems_target
       disp <- isTRUE(inputs_vals$ems_disp)
+      if (length(factors) < 1L) {
+        return(
+          ggplot2::ggplot() +
+            ggplot2::theme_void() +
+            ggplot2::ggtitle("No fixed factors for main-effects boxplots.")
+        )
+      }
       req(data, data_col_name, factors)
 
       me_title <- if (disp) "Main Effects - Dispersion" else "Main Effects - Means"
@@ -1352,6 +1995,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       prepared <- analysis_data()
       inputs_vals <- core_inputs()
       req(prepared, inputs_vals)
+      pooled_active <- length(pool_for_setup(inputs_vals)) > 0L
 
       data <- prepared$data
       ycol <- prepared$response_name
@@ -1379,7 +2023,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
         if (is_random) {
           # Match monolithic random-effects interaction display (density + ICC annotation)
-          aov_l <- if (!is.null(inputs_vals$ems_pool) && length(inputs_vals$ems_pool) > 0) ems_pooled() else aov_out()
+          aov_l <- if (pooled_active) ems_pooled() else aov_out()
           req(aov_l)
           if (!is.data.frame(aov_l)) return(NULL)
 
@@ -1469,7 +2113,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         c <- factors[3]
 
         if (is_random) {
-          aov_l <- if (!is.null(inputs_vals$ems_pool) && length(inputs_vals$ems_pool) > 0) ems_pooled() else aov_out()
+          aov_l <- if (pooled_active) ems_pooled() else aov_out()
           req(aov_l)
           if (!is.data.frame(aov_l)) return(NULL)
 
@@ -1557,7 +2201,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         }
       }
 
-      if (isTruthy(target)) {
+      if (isTruthy(target) && !is_random) {
         p <- p + geom_hline(yintercept = as.numeric(target), color = pal[2], linetype = 2)
       }
       p
@@ -1589,6 +2233,12 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       conf <- core_vals$ems_conf
       ph_test <- as.numeric(ph_vals$ems_ph_select)
       ph_effects <- ph_vals$ems_ph_effects
+      ft_ph <- factor_types()
+      ph_effects <- multifactor_filter_fixed_anova_effects(
+        as.character(ph_effects),
+        eff_tbl = eff_types(),
+        random_factor_names = if (!is.null(ft_ph)) ft_ph$random else character(0)
+      )
       plot_options <- ph_vals$ems_ph_plot_options
       font_size <- as.numeric(ph_vals$ph_font_size)
       target <- core_vals$ems_target
@@ -1598,7 +2248,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         return(message_plot("Select a post-hoc test to generate the contrast plot."))
       }
       if (!isTruthy(ph_effects) || length(ph_effects) < 1) {
-        return(message_plot("Select at least one effect for post-hoc to generate the contrast plot."))
+        return(message_plot("Select at least one fixed effect for post-hoc to generate the contrast plot."))
       }
       req(conf, font_size)
       ph_effect <- ph_effects[[1]]
@@ -1614,9 +2264,11 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       )[ph_test]
       adjust_method <- c("tukey", "bonferroni", "holm", "tukey", "bonferroni", "holm")[ph_test]
 
+      pool_ph <- pool_for_core(core_vals)
+
       # Build model formula (respect pooling by excluding pooled effects)
-      if (isTruthy(core_vals$ems_pool)) {
-        effects <- setdiff(all_effects(), core_vals$ems_pool)
+      if (length(pool_ph) > 0L) {
+        effects <- setdiff(all_effects(), pool_ph)
         gls_formula <- formula(paste(
           response_name,
           "~",
@@ -1638,7 +2290,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         }
         model <- do.call(nlme::gls, list(gls_formula, data = data, weights = nlme::varIdent(form = ~1 | group)))
       } else {
-        model <- if (isTruthy(core_vals$ems_pool)) {
+        model <- if (length(pool_ph) > 0L) {
           lm(gls_formula, data = data, singular.ok = TRUE)
         } else {
           aov_model()
@@ -1694,14 +2346,29 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
 
       conf <- core_vals$ems_conf
       effects_4_ph <- ph_vals$ems_ph_effects
+      ft_ph <- factor_types()
+      effects_4_ph <- multifactor_filter_fixed_anova_effects(
+        as.character(effects_4_ph),
+        eff_tbl = eff_types(),
+        random_factor_names = if (!is.null(ft_ph)) ft_ph$random else character(0)
+      )
       ph_test <- as.numeric(ph_vals$ems_ph_select)
       req(data, conf, effects_4_ph, ph_test)
+      if (length(effects_4_ph) < 1L) {
+        return(DT::datatable(
+          matrix("No fixed effects selected for post-hoc.", nrow = 1),
+          options = list(dom = "t", paging = FALSE),
+          rownames = FALSE
+        ))
+      }
 
       adjust_method <- c("tukey", "bonferroni", "holm", "tukey", "bonferroni", "holm")[ph_test]
 
+      pool_ph_dt <- pool_for_core(core_vals)
+
       # Build model formula (respect pooling)
-      if (isTruthy(core_vals$ems_pool)) {
-        effects <- setdiff(all_effects(), core_vals$ems_pool)
+      if (length(pool_ph_dt) > 0L) {
+        effects <- setdiff(all_effects(), pool_ph_dt)
         gls_formula <- formula(paste(
           response_name,
           "~",
@@ -1725,7 +2392,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         }
         model <- do.call(nlme::gls, list(gls_formula, data = data, weights = nlme::varIdent(form = ~1 | group)))
       } else {
-        model <- if (isTruthy(core_vals$ems_pool)) {
+        model <- if (length(pool_ph_dt) > 0L) {
           lm(gls_formula, data = data, singular.ok = TRUE)
         } else {
           aov_model()
@@ -1792,17 +2459,39 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
     list(
       all_effects = all_effects,
       aov_out = aov_out,
+      aov_out_means = aov_out_means,
+      aov_out_dispersion = aov_out_dispersion,
       ems_pooled = ems_pooled,
+      ems_pooled_means = ems_pooled_means,
+      ems_pooled_dispersion = ems_pooled_dispersion,
       eff_types = eff_types,
+      factor_types = factor_types,
+      has_fixed_factors = has_fixed_factors,
       anova_notes = reactive(report_commentary(anova_note())),
       ems_sig_effects_plot = ems_sig_effects_plot,
+      significant_nested_effects = significant_nested_effects,
+      significant_nested_random_effects = significant_nested_random_effects,
+      nested_stratum_table_data = nested_stratum_table_data,
+      nested_effect_plot = nested_effect_plot,
+      nested_effect_plot_height_one = nested_effect_plot_height_one,
+      nested_effects_plot_height = nested_effects_plot_height,
       ems_main_effects_plot = ems_main_effects_plot,
       interaction_plot = interaction_plot,
       posthoc_plot = posthoc_plot,
       posthoc_out_dt = posthoc_out_dt,
       aov_model = reactive(aov_model()),
       emm_model = reactive(emm_model()),
-      model_mean_est = reactive(model_mean_est())
+      model_mean_est = reactive(model_mean_est()),
+      factorial_cell_summary = reactive({
+        info <- factors_info()
+        inputs_vals <- core_inputs()
+        req(info, inputs_vals)
+        disp_factors <- tryCatch(
+          dispersion_cell_factors(info$factors_names, pooled_effects = pool_for_core(inputs_vals), available_effects = all_effects()),
+          error = function(e) info$factors_names
+        )
+        factorial_cell_replication(info$data, disp_factors)
+      })
     )
   })
 }

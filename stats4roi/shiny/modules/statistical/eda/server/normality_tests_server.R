@@ -130,115 +130,41 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
         # Process data for normality testing
         
         if (auto == TRUE) {
-          # Auto mode - use intelligent test selection based on sample size
-          # Process each column individually to avoid NA-related naming conflicts
+          col_specs <- normality_column_specs_list(norm_dat)
           results_list <- list()
-          for (i in 1:ncol(norm_dat)) {
-            col_name <- names(norm_dat)[i]
-            col_data <- norm_dat[, i, drop = FALSE]
+          for (k in seq_along(col_specs)) {
+            spec <- col_specs[[k]]
+            col_name <- spec$name
+            col_data <- spec$data
             
             tryCatch({
-              # Determine sample size for this column (excluding NAs)
-              n_valid <- sum(!is.na(col_data))
-              
-              # Use intelligent test selection based on sample size
+              n_valid <- sum(!is.na(spec$x))
               if (n_valid <= 25) {
-                # Small sample: use Anderson-Darling and Shapiro-Wilk
-                col_result <- summary.all.variables(data = col_data, stat.sd = T, stat.ad.test = 2, stat.sw.test = 2)
+                col_result <- summary.all.variables(
+                  data = col_data,
+                  stat.sd = TRUE,
+                  stat.ad.test = 2,
+                  stat.sw.test = 2
+                )
               } else {
-                # Large sample: use Skewness and Kurtosis tests
-                col_result <- summary.all.variables(data = col_data, stat.sd = T, stat.skew.test = 2, stat.kurt.test = 2)
+                col_result <- summary.all.variables(
+                  data = col_data,
+                  stat.sd = TRUE,
+                  stat.skew.test = 2,
+                  stat.kurt.test = 2
+                )
               }
-              
-              results_list[[i]] <- col_result
+              results_list[[k]] <- col_result
             }, error = function(e) {
-              # Create a row with error info for this column
-              results_list[[i]] <<- data.frame(
+              results_list[[k]] <<- data.frame(
                 Variable = col_name,
-                n = sum(!is.na(col_data)),
+                n = sum(!is.na(spec$x)),
                 Error = paste("Could not process:", e$message)
               )
             })
           }
           
-          # Combine results with dynamic column structure based on tests actually performed
-          if (length(results_list) > 0) {
-            # First pass: determine which test columns are actually used
-            used_test_columns <- character(0)
-            used_statistic_columns <- character(0)
-            
-            for (i in 1:length(results_list)) {
-              result <- results_list[[i]]
-              if (!is.null(result) && nrow(result) > 0) {
-                # Check which test p-value columns are present in this result
-                test_cols <- c("adtest.p", "swtest.p", "g3test.p", "g4test.p")
-                present_test_cols <- test_cols[test_cols %in% names(result)]
-                used_test_columns <- unique(c(used_test_columns, present_test_cols))
-                
-                # Check which test statistic columns are present in this result
-                stat_cols <- c("adtest.AA", "swtest.W", "g3.skewness", "g4.kurtosis")
-                present_stat_cols <- stat_cols[stat_cols %in% names(result)]
-                used_statistic_columns <- unique(c(used_statistic_columns, present_stat_cols))
-              }
-            }
-            
-            # Create standardized results for each column with only relevant test columns
-            standardized_results <- list()
-            
-            for (i in 1:length(results_list)) {
-              col_name <- names(norm_dat)[i]
-              result <- results_list[[i]]
-              
-              # Start with base columns
-              std_row <- data.frame(
-                Variable = col_name,
-                n = if ("n" %in% names(result)) result$n[1] else sum(!is.na(norm_dat[,i])),
-                missing = if ("missing" %in% names(result)) result$missing[1] else sum(is.na(norm_dat[,i])),
-                mean = if ("mean" %in% names(result)) result$mean[1] else NA,
-                sd = if ("sd" %in% names(result)) result$sd[1] else NA
-              )
-              
-              # Add test columns in the specified order: statistic then p-value
-              # Anderson-Darling: adtest.AA, adtest.p
-              if ("adtest.AA" %in% used_statistic_columns) {
-                std_row[["adtest.AA"]] <- if ("adtest.AA" %in% names(result)) result[["adtest.AA"]][1] else NA
-              }
-              if ("adtest.p" %in% used_test_columns) {
-                std_row[["adtest.p"]] <- if ("adtest.p" %in% names(result)) result[["adtest.p"]][1] else NA
-              }
-              
-              # Shapiro-Wilk: swtest.W, swtest.p
-              if ("swtest.W" %in% used_statistic_columns) {
-                std_row[["swtest.W"]] <- if ("swtest.W" %in% names(result)) result[["swtest.W"]][1] else NA
-              }
-              if ("swtest.p" %in% used_test_columns) {
-                std_row[["swtest.p"]] <- if ("swtest.p" %in% names(result)) result[["swtest.p"]][1] else NA
-              }
-              
-              # Skewness: g3.skewness, g3test.p
-              if ("g3.skewness" %in% used_statistic_columns) {
-                std_row[["g3.skewness"]] <- if ("g3.skewness" %in% names(result)) result[["g3.skewness"]][1] else NA
-              }
-              if ("g3test.p" %in% used_test_columns) {
-                std_row[["g3test.p"]] <- if ("g3test.p" %in% names(result)) result[["g3test.p"]][1] else NA
-              }
-              
-              # Kurtosis: g4.kurtosis, g4test.p
-              if ("g4.kurtosis" %in% used_statistic_columns) {
-                std_row[["g4.kurtosis"]] <- if ("g4.kurtosis" %in% names(result)) result[["g4.kurtosis"]][1] else NA
-              }
-              if ("g4test.p" %in% used_test_columns) {
-                std_row[["g4test.p"]] <- if ("g4test.p" %in% names(result)) result[["g4test.p"]][1] else NA
-              }
-              
-              standardized_results[[i]] <- std_row
-            }
-            
-            # Combine the standardized results (all have the same structure now)
-            output <- do.call(rbind, standardized_results)
-          } else {
-            output <- data.frame(Message = "No data to process")
-          }
+          output <- normality_standardize_column_results(results_list, col_specs)
         } else {
           # Manual mode - use selected tests
           if (is.null(test) || length(test) == 0) {
@@ -246,124 +172,32 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
           }
           
           # Build test selection string (following original app logic)
-          test_sel <- paste(test, collapse = ",")
+          test_sel <- build_normality_test_selection(test)
           
-          # Only add =0 for tests that are NOT already selected
-          if (!grepl("stat.ad.test=2", test_sel)) {
-            test_sel <- c(test_sel, ",stat.ad.test=0")
-            test_sel <- paste(test_sel, collapse = "")
-          }
-          if (!grepl("stat.sw.test=2", test_sel)) {
-            test_sel <- c(test_sel, ",stat.sw.test=0")
-            test_sel <- paste(test_sel, collapse = "")
-          }
-          if (!grepl("stat.skew.test=2", test_sel)) {
-            test_sel <- c(test_sel, ",stat.skew.test=0")
-            test_sel <- paste(test_sel, collapse = "")
-          }
-          if (!grepl("stat.kurt.test=2", test_sel)) {
-            test_sel <- c(test_sel, ",stat.kurt.test=0")
-            test_sel <- paste(test_sel, collapse = "")
-          }
-          
-          # Process each column individually to avoid NA-related naming conflicts
+          col_specs <- normality_column_specs_list(norm_dat)
           results_list <- list()
-          for (i in 1:ncol(norm_dat)) {
-            col_name <- names(norm_dat)[i]
-            col_data <- norm_dat[, i, drop = FALSE]
+          for (k in seq_along(col_specs)) {
+            spec <- col_specs[[k]]
+            col_name <- spec$name
+            col_data <- spec$data
             
             tryCatch({
-              # Use original app's manual mode parameters for normality tests
-              col_result <- eval(parse(text = paste("summary.all.variables(data = col_data, stat.sd = T,", test_sel, ")")))
-              results_list[[i]] <- col_result
+              col_result <- eval(parse(text = paste(
+                "summary.all.variables(data = col_data, stat.sd = T,",
+                test_sel,
+                ")"
+              )))
+              results_list[[k]] <- col_result
             }, error = function(e) {
-              # Create a row with error info for this column
-              results_list[[i]] <<- data.frame(
+              results_list[[k]] <<- data.frame(
                 Variable = col_name,
-                n = sum(!is.na(col_data)),
+                n = sum(!is.na(spec$x)),
                 Error = paste("Could not process:", e$message)
               )
             })
           }
           
-          # Combine results with dynamic column structure based on tests actually performed
-          if (length(results_list) > 0) {
-            # First pass: determine which test columns are actually used
-            used_test_columns <- character(0)
-            used_statistic_columns <- character(0)
-            
-            for (i in 1:length(results_list)) {
-              result <- results_list[[i]]
-              if (!is.null(result) && nrow(result) > 0) {
-                # Check which test p-value columns are present in this result
-                test_cols <- c("adtest.p", "swtest.p", "g3test.p", "g4test.p")
-                present_test_cols <- test_cols[test_cols %in% names(result)]
-                used_test_columns <- unique(c(used_test_columns, present_test_cols))
-                
-                # Check which test statistic columns are present in this result
-                stat_cols <- c("adtest.AA", "swtest.W", "g3.skewness", "g4.kurtosis")
-                present_stat_cols <- stat_cols[stat_cols %in% names(result)]
-                used_statistic_columns <- unique(c(used_statistic_columns, present_stat_cols))
-              }
-            }
-            
-            # Create standardized results for each column with only relevant test columns
-            standardized_results <- list()
-            
-            for (i in 1:length(results_list)) {
-              col_name <- names(norm_dat)[i]
-              result <- results_list[[i]]
-              
-              # Start with base columns
-              std_row <- data.frame(
-                Variable = col_name,
-                n = if ("n" %in% names(result)) result$n[1] else sum(!is.na(norm_dat[,i])),
-                missing = if ("missing" %in% names(result)) result$missing[1] else sum(is.na(norm_dat[,i])),
-                mean = if ("mean" %in% names(result)) result$mean[1] else NA,
-                sd = if ("sd" %in% names(result)) result$sd[1] else NA
-              )
-              
-              # Add test columns in the specified order: statistic then p-value
-              # Anderson-Darling: adtest.AA, adtest.p
-              if ("adtest.AA" %in% used_statistic_columns) {
-                std_row[["adtest.AA"]] <- if ("adtest.AA" %in% names(result)) result[["adtest.AA"]][1] else NA
-              }
-              if ("adtest.p" %in% used_test_columns) {
-                std_row[["adtest.p"]] <- if ("adtest.p" %in% names(result)) result[["adtest.p"]][1] else NA
-              }
-              
-              # Shapiro-Wilk: swtest.W, swtest.p
-              if ("swtest.W" %in% used_statistic_columns) {
-                std_row[["swtest.W"]] <- if ("swtest.W" %in% names(result)) result[["swtest.W"]][1] else NA
-              }
-              if ("swtest.p" %in% used_test_columns) {
-                std_row[["swtest.p"]] <- if ("swtest.p" %in% names(result)) result[["swtest.p"]][1] else NA
-              }
-              
-              # Skewness: g3.skewness, g3test.p
-              if ("g3.skewness" %in% used_statistic_columns) {
-                std_row[["g3.skewness"]] <- if ("g3.skewness" %in% names(result)) result[["g3.skewness"]][1] else NA
-              }
-              if ("g3test.p" %in% used_test_columns) {
-                std_row[["g3test.p"]] <- if ("g3test.p" %in% names(result)) result[["g3test.p"]][1] else NA
-              }
-              
-              # Kurtosis: g4.kurtosis, g4test.p
-              if ("g4.kurtosis" %in% used_statistic_columns) {
-                std_row[["g4.kurtosis"]] <- if ("g4.kurtosis" %in% names(result)) result[["g4.kurtosis"]][1] else NA
-              }
-              if ("g4test.p" %in% used_test_columns) {
-                std_row[["g4test.p"]] <- if ("g4test.p" %in% names(result)) result[["g4test.p"]][1] else NA
-              }
-              
-              standardized_results[[i]] <- std_row
-            }
-            
-            # Combine the standardized results (all have the same structure now)
-            output <- do.call(rbind, standardized_results)
-          } else {
-            output <- data.frame(Message = "No data to process")
-          }
+          output <- normality_standardize_column_results(results_list, col_specs)
         }
         } else if (data_type == 2) {
           # Factor analysis - use summary.continuous with formula (following original app logic)
@@ -385,11 +219,11 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
           indep_names <- paste(indep, collapse = "+")
           model_text <- formula(paste(dep_name, " ~ ", indep_names))
           
+          group_cols <- make.names(indep)
+          
           if (auto == TRUE) {
-            # Auto mode - use default statistics
             output <- summary.continuous(fx = model_text, data = data, stat.sd = T)
           } else {
-            # Manual mode - use selected tests
             if (is.null(test) || length(test) == 0) {
               return(list(
                 data = data.frame(Message = "Please select normality tests"),
@@ -398,27 +232,23 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
               ))
             }
             
-            # Build test selection string
-            test_sel <- paste(test, collapse = ",")
-            if (!grepl("stat.ad.test=2", test_sel)) {
-              test_sel <- c(test_sel, ",stat.ad.test=0")
-              test_sel <- paste(test_sel, collapse = "")
-            }
-            if (!grepl("stat.sw.test=2", test_sel)) {
-              test_sel <- c(test_sel, ",stat.sw.test=0")
-              test_sel <- paste(test_sel, collapse = "")
-            }
-            if (!grepl("stat.skew.test=2", test_sel)) {
-              test_sel <- c(test_sel, ",stat.skew.test=0")
-              test_sel <- paste(test_sel, collapse = "")
-            }
-            if (!grepl("stat.kurt.test=2", test_sel)) {
-              test_sel <- c(test_sel, ",stat.kurt.test=0")
-              test_sel <- paste(test_sel, collapse = "")
-            }
+            test_sel <- build_normality_test_selection(test)
             
-            output <- eval(parse(text = paste("summary.continuous(fx=model_text, data = data, stat.sd = T,", test_sel, ")")))
+            output <- eval(parse(text = paste(
+              "summary.continuous(fx=model_text, data = data, stat.sd = T,",
+              test_sel,
+              ")"
+            )))
           }
+          
+          output <- prepend_normality_factor_all_row(
+            output,
+            data,
+            dep_name,
+            group_cols,
+            auto,
+            test
+          )
         } else {
           output <- data.frame()
         }

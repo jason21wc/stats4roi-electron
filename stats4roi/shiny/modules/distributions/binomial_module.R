@@ -303,6 +303,8 @@ create_binomial_server <- function(id, color_palette) {
         p_at_r_l <- bi_table$p.at.x[r_l + 1]
         p_at_r_u <- bi_table$p.at.x[r_u + 1]
         p_and_below_l <- bi_table$eq.and.below[r_l + 1]
+        p_and_above_l <- bi_table$eq.and.above[r_l + 1]
+        p_and_below_u <- bi_table$eq.and.below[r_u + 1]
         p_and_above_u <- bi_table$eq.and.above[r_u + 1]
         p_between <- 1 - p_and_below_l - p_and_above_u
         p_tails <- p_and_below_l + p_and_above_u
@@ -314,11 +316,11 @@ create_binomial_server <- function(id, color_palette) {
           "<tr>",
           "<td style='padding: 5px;'>p(", r_l, ") = ", ro(p_at_r_l, R), "</td>",
           "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(p_and_below_l, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(p_and_above_u, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(p_and_above_l, R), "</td>",
           "</tr>",
           "<tr>",
           "<td style='padding: 5px;'>p(", r_u, ") = ", ro(p_at_r_u, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_u, " and below) = ", ro(p_and_below_l, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_u, " and below) = ", ro(p_and_below_u, R), "</td>",
           "<td style='padding: 5px;'>p(", r_u, " and above) = ", ro(p_and_above_u, R), "</td>",
           "</tr>",
           "<tr>",

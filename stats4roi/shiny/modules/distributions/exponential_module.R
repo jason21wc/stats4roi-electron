@@ -149,15 +149,15 @@ create_exponential_server <- function(id, color_palette) {
         geom_line(color = colors()$col_plot_line, linewidth = 1)
       
       if (tails_exp == 1) {
-        if (interest == 1) { # draw lower tail
-          data_l <- data.frame(x = X_min:X, pdf = dexp(x = X_min:X, rate = 1/mu))
-          pl <- pl +
-            geom_area(data = data_l, aes(x = x, y = pdf), fill = colors()$col_fill_highlight, color = colors()$col_plot_line, alpha = 0.7)
-        }
-        if (interest == 2) { # draw upper tail
+        if (interest == 1) { # Above: area above point of interest
           data_u <- data.frame(x = X:max_exp, pdf = dexp(x = X:max_exp, rate = 1/mu))
           pl <- pl +
             geom_area(data = data_u, aes(x = x, y = pdf), fill = colors()$col_fill_highlight, color = colors()$col_plot_line, alpha = 0.7)
+        }
+        if (interest == 2) { # Below: area below point of interest
+          data_l <- data.frame(x = X_min:X, pdf = dexp(x = X_min:X, rate = 1/mu))
+          pl <- pl +
+            geom_area(data = data_l, aes(x = x, y = pdf), fill = colors()$col_fill_highlight, color = colors()$col_plot_line, alpha = 0.7)
         }
       }
       

@@ -50,16 +50,19 @@ create_means_dispersion_ui <- function(ns) {
           hr(),
           h3("Enter Statistics and Parameters"),
           fluidRow(
-            column(3, tags$div(id = "inline1", class = "inline", uiOutput(ns("mdUI1")))),
-            column(3, tags$div(id = "inline1", class = "inline", uiOutput(ns("mdUI2"))))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("mdUI1")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("mdUI2"))))
           ),
           fluidRow(
-            column(3, tags$div(id = "inline1", class = "inline", uiOutput(ns("mdUI3")))),
-            column(3, tags$div(id = "inline1", class = "inline", uiOutput(ns("mdUI4"))))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("mdUI3")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("mdUI4"))))
           ),
           fluidRow(
-            column(3, tags$div(id = "inline1", class = "inline", uiOutput(ns("mdUI5")))),
-            column(3, tags$div(id = "inline1", class = "inline", uiOutput(ns("mdUI6"))))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("mdUI5")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("mdUI6"))))
           ),
           br(),
           h4("Results"),
@@ -81,14 +84,16 @@ create_means_dispersion_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_md"), "'] == 1"),
-            uiOutput(ns("data_choice_column"))
+            uiOutput(ns("data_choice_column")),
+            uiOutput(ns("ots_md_group_assignment"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_md"), "'] == 2"),
             uiOutput(ns("data_choice_ref")),
             uiOutput(ns("data_choice_data")),
             uiOutput(ns("data_choice_g1")),
-            uiOutput(ns("data_choice_g2"))
+            uiOutput(ns("data_choice_g2")),
+            uiOutput(ns("ots_md_group_assignment"))
           ),
           uiOutput(ns("md_data_test_selection")),
           uiOutput(ns("md_t_dep")),
@@ -121,16 +126,19 @@ create_means_dispersion_ui <- function(ns) {
             )
           ),
           fluidRow(
-            column(6, tags$div(id = "inline1", class = "inline", uiOutput(ns("md_data_UI1")))),
-            column(6, tags$div(id = "inline1", class = "inline", uiOutput(ns("md_data_UI2"))))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("md_data_UI1")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("md_data_UI2"))))
           ),
           fluidRow(
-            column(6, tags$div(id = "inline1", class = "inline", uiOutput(ns("md_data_UI3")))),
-            column(6, tags$div(id = "inline1", class = "inline", uiOutput(ns("md_data_UI4"))))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("md_data_UI3")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("md_data_UI4"))))
           ),
           fluidRow(
-            column(6, tags$div(id = "inline1", class = "inline", uiOutput(ns("md_data_UI5")))),
-            column(6, tags$div(id = "inline1", class = "inline", uiOutput(ns("md_data_UI6"))))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("md_data_UI5")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("md_data_UI6"))))
           ),
           br(),
           h4("Results"),

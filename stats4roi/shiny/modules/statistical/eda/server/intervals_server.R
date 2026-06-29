@@ -4,6 +4,8 @@
 # Server logic for intervals analysis tab
 # Part of EDA module - handles confidence and credible interval calculations
 
+source("modules/statistical/eda/utils/interval_plot_helpers.R")
+
 # Import required functions from lolcat package
 ro <- round.object
 
@@ -13,7 +15,7 @@ pop.sd <- function(x) {
   sd(x) * sqrt((n - 1) / n)
 }
 
-create_intervals_server <- function(id, data_source, data_type_reactive, input_values) {
+create_intervals_server <- function(id, data_source, data_type_reactive, input_values, reactive_color_palette) {
   moduleServer(id, function(input, output, session) {
     
     # =========================================================================
@@ -60,6 +62,66 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
       info <- input_vals$ci_info
       if (is.null(info) || is.na(info)) return(FALSE)
       info
+    })
+
+    ci_show_plot <- reactive({
+      input_vals <- input_values()
+      show <- input_vals$ci_show_plot
+      if (is.null(show)) return(FALSE)
+      isTRUE(show)
+    })
+
+    ci_plot_param <- reactive({
+      input_vals <- input_values()
+      param <- input_vals$ci_plot_param
+      if (is.null(param) || !param %in% c("Mean", "SD")) return("Mean")
+      param
+    })
+
+    ci_plot_width <- reactive({
+      input_vals <- input_values()
+      width_val <- input_vals$ci_plot_width
+      if (is.null(width_val)) return(400)
+      width_val
+    })
+
+    ci_plot_height <- reactive({
+      input_vals <- input_values()
+      height_val <- input_vals$ci_plot_height
+      if (is.null(height_val)) return(400)
+      height_val
+    })
+
+    ci_font_size <- reactive({
+      input_vals <- input_values()
+      size <- input_vals$ci_font_size
+      if (is.null(size) || is.na(size)) return(11)
+      as.numeric(size)
+    })
+
+    ci_plot_title <- reactive({
+      input_vals <- input_values()
+      title <- input_vals$ci_plot_title
+      if (is.null(title) || title == "") return(NA_character_)
+      title
+    })
+
+    ci_plot_xlab <- reactive({
+      input_vals <- input_values()
+      xlab <- input_vals$ci_plot_xlab
+      if (is.null(xlab) || xlab == "") return(NA_character_)
+      xlab
+    })
+
+    ci_plot_ylab <- reactive({
+      input_vals <- input_values()
+      ylab <- input_vals$ci_plot_ylab
+      if (is.null(ylab) || ylab == "") return(NA_character_)
+      ylab
+    })
+
+    color_palette <- reactive({
+      reactive_color_palette()
     })
     
     # =========================================================================
@@ -143,6 +205,26 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
             SD_U = unname(stdev_u)
           )
           
+          if (needs_pooled_all_row(length(UI1))) {
+            pooled_x <- pool_numeric_vector(data[UI1])
+            tryCatch({
+              t_out <- t.test.onesample(x = pooled_x, conf.level = conf)
+              all_row <- data.frame(
+                Column = POOLED_ALL_LABEL,
+                n = 1 + t_out[["estimate"]][["df"]],
+                Mean_L = t_out[["conf.int"]][1],
+                Mean = t_out[["estimate"]][["sample.mean"]],
+                Mean_U = t_out[["conf.int"]][2],
+                SD_L = t_out[["estimate"]][["sd.lowerci"]],
+                SD = t_out[["estimate"]][["sd"]],
+                SD_U = t_out[["estimate"]][["sd.upperci"]]
+              )
+              output <- prepend_rows_top(all_row, output)
+            }, error = function(e) {
+              warning("Error in pooled confidence interval: ", e$message)
+            })
+          }
+          
         } else {
           # Bayesian credible intervals
           num_col <- ncol(data[UI1])
@@ -187,6 +269,36 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
               output$SD_U[i] <<- NA
             })
           }
+          
+          if (needs_pooled_all_row(num_col)) {
+            tryCatch({
+              pooled_x <- pool_numeric_vector(data[UI1])
+              subdata <- data.frame(x = pooled_x)
+              output$n <- c(NA, output$n)
+              output$Mean_L <- c(NA, output$Mean_L)
+              output$Mean <- c(NA, output$Mean)
+              output$Mean_U <- c(NA, output$Mean_U)
+              output$SD_L <- c(NA, output$SD_L)
+              output$SD <- c(NA, output$SD)
+              output$SD_U <- c(NA, output$SD_U)
+              output$Column <- c(POOLED_ALL_LABEL, output$Column)
+              
+              boot_mean <- bayesboot(subdata[[1]], weighted.mean, use.weights = TRUE)
+              boot_sd <- bayesboot(subdata[[1]], pop.sd)
+              ci_mean <- ci(boot_mean, method = b_int_type, ci = conf)
+              ci_std <- ci(boot_sd, method = b_int_type, ci = conf)
+              
+              output$n[1] <- nrow(subdata)
+              output$Mean_L[1] <- ci_mean$CI_low
+              output$Mean[1] <- mean(boot_mean$V1)
+              output$Mean_U[1] <- ci_mean$CI_high
+              output$SD_L[1] <- ci_std$CI_low
+              output$SD[1] <- mean(boot_sd$V1)
+              output$SD_U[1] <- ci_std$CI_high
+            }, error = function(e) {
+              warning("Error in pooled credible interval: ", e$message)
+            })
+          }
         }
         
       } else if (data_type == 2) {
@@ -195,9 +307,12 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
           return(data.frame())
         }
         
-        # Get column names for formula (following descriptives pattern)
-        selected_data_cols <- as.numeric(selections$eda_UI2)
-        dep_name <- colnames(data)[selected_data_cols[as.numeric(data_col)]]
+        dep_info <- resolve_factor_dependent_column(data, data_col, selections$eda_UI2)
+        dep_name <- dep_info$dep_name
+        dep_col_index <- dep_info$dep_col_index
+        if (is.null(dep_name) || is.na(dep_col_index)) {
+          return(data.frame())
+        }
         indep <- colnames(data)[as.numeric(unlist(strsplit(x = as.character(selections$eda_UI1), split = "\\s+")))]
         indep_names <- paste(indep, collapse = "+")
         model_text <- formula(paste(dep_name, " ~ ", indep_names))
@@ -211,7 +326,7 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
               # Safer factor filtering using Reduce and Map instead of eval(parse)
               filter_condition <- Reduce(`&`, Map(function(col, val) data[[col]] == val, colnames(combos), combos[i, ]))
               subdata <- data[filter_condition, ]
-              t_out <- t.test.onesample(subdata[[as.numeric(data_col)]], conf.level = conf)
+              t_out <- t.test.onesample(subdata[[dep_name]], conf.level = conf)
               
               output$CI_low[i] <- t_out[["conf.int"]][1]
               output$CI_high[i] <- t_out[["conf.int"]][2]
@@ -238,7 +353,7 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
               # Safer factor filtering using Reduce and Map instead of eval(parse)
               filter_condition <- Reduce(`&`, Map(function(col, val) data[[col]] == val, colnames(combos), combos[i, ]))
               subdata <- data[filter_condition, ]
-              subdata <- data.frame(na.omit(subdata[[as.numeric(data_col)]]))
+              subdata <- data.frame(na.omit(subdata[[dep_name]]))
               
               if (nrow(subdata) > 0) {
                 output$n[i] <- nrow(subdata)
@@ -276,6 +391,49 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
           }
         }
         
+        if (needs_pooled_all_row(nrow(output))) {
+          pooled_x <- na.omit(data[[dep_name]])
+          all_row <- output[1, , drop = FALSE]
+          all_row[1, ] <- NA
+          all_row <- label_factor_group_row(all_row, colnames(combos))
+          
+          if (int_type == 1) {
+            tryCatch({
+              t_out <- t.test.onesample(pooled_x, conf.level = conf)
+              all_row$n <- 1 + t_out[["estimate"]][["df"]]
+              all_row$CI_low <- t_out[["conf.int"]][1]
+              all_row$Mean <- t_out[["estimate"]][["sample.mean"]]
+              all_row$CI_high <- t_out[["conf.int"]][2]
+              all_row$SD <- t_out[["estimate"]][["sd"]]
+              all_row$SD_low <- t_out[["estimate"]][["sd.lowerci"]]
+              all_row$SD_high <- t_out[["estimate"]][["sd.upperci"]]
+              output <- prepend_rows_top(all_row, output)
+            }, error = function(e) {
+              warning("Error in pooled factor confidence interval: ", e$message)
+            })
+          } else {
+            tryCatch({
+              subdata <- data.frame(x = pooled_x)
+              if (length(pooled_x) > 0) {
+                boot_mean <- bayesboot(subdata[[1]], weighted.mean, use.weights = TRUE)
+                boot_sd <- bayesboot(subdata[[1]], pop.sd)
+                ci_mean <- ci(boot_mean, method = b_int_type, ci = conf)
+                ci_std <- ci(boot_sd, method = b_int_type, ci = conf)
+                all_row$n <- length(pooled_x)
+                all_row$CI_low <- ci_mean$CI_low
+                all_row$Mean <- mean(boot_mean$V1)
+                all_row$CI_high <- ci_mean$CI_high
+                all_row$SD_low <- ci_std$CI_low
+                all_row$SD <- mean(boot_sd$V1)
+                all_row$SD_high <- ci_std$CI_high
+                output <- prepend_rows_top(all_row, output)
+              }
+            }, error = function(e) {
+              warning("Error in pooled factor credible interval: ", e$message)
+            })
+          }
+        }
+        
       } else {
         return(data.frame())
       }
@@ -284,13 +442,134 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
       output <- ro(output, R)
       output
     })
+
+    ci_plot <- reactive({
+      tryCatch({
+        if (!ci_show_plot()) {
+          return(NULL)
+        }
+
+        table_data <- intervals_data()
+        data_type <- data_type_reactive()
+        plot_df <- prepare_interval_plot_data(table_data, data_type, ci_plot_param())
+        if (is.null(plot_df)) {
+          return(NULL)
+        }
+
+        selections <- input_values()
+        param <- ci_plot_param()
+        conf <- conf_ci()
+        int_type <- interval_type()
+        b_int_type <- interval_b_type()
+        palette <- color_palette()
+        font_size <- ci_font_size()
+
+        if (int_type == 1) {
+          base_title <- paste0(
+            100 * conf,
+            "% Confidence Intervals - Assuming Normality, limits based on the t distribution"
+          )
+        } else {
+          base_title <- paste0(
+            "Bayesian Bootstrap ",
+            100 * conf,
+            "% Credible Intervals - ",
+            b_int_type,
+            " Method"
+          )
+        }
+
+        plot_title <- if (isTruthy(ci_plot_title())) {
+          ci_plot_title()
+        } else {
+          paste0(base_title, " (", param, ")")
+        }
+        title_info <- format_interval_plot_title(
+          plot_title,
+          ci_plot_width(),
+          font_size = font_size
+        )
+
+        if (isTruthy(ci_plot_xlab())) {
+          xlab <- ci_plot_xlab()
+        } else if (data_type == 1) {
+          xlab <- "Column"
+        } else {
+          indep <- colnames(data_source())[as.numeric(unlist(strsplit(
+            x = as.character(selections$eda_UI1),
+            split = "\\s+"
+          )))]
+          xlab <- paste(indep, collapse = ", ")
+        }
+
+        if (isTruthy(ci_plot_ylab())) {
+          ylab <- ci_plot_ylab()
+        } else if (data_type == 2 && !is.null(data_list_for_ci())) {
+          data <- data_source()
+          dep_info <- resolve_factor_dependent_column(
+            data,
+            data_list_for_ci(),
+            selections$eda_UI2
+          )
+          ylab <- if (!is.null(dep_info$dep_name)) dep_info$dep_name else param
+        } else {
+          ylab <- param
+        }
+
+        ggplot(plot_df, aes(x = x_pos, y = estimate)) +
+          geom_linerange(
+            aes(ymin = ci_low, ymax = ci_high),
+            linewidth = 1.2,
+            color = palette[2]
+          ) +
+          geom_point(size = 5, color = palette[1]) +
+          scale_x_continuous(
+            breaks = plot_df$x_pos,
+            labels = as.character(plot_df$group),
+            limits = c(min(plot_df$x_pos) - 0.5, max(plot_df$x_pos) + 0.5)
+          ) +
+          theme_gray(base_size = font_size) +
+          theme(
+            plot.title.position = "plot",
+            plot.title = element_text(hjust = 0.5, lineheight = 1.05),
+            plot.margin = margin(
+              t = title_info$top_margin_pt,
+              r = 10,
+              b = 10,
+              l = 10,
+              unit = "pt"
+            ),
+            axis.text.x = element_text(angle = 45, hjust = 1)
+          ) +
+          labs(title = title_info$title, x = xlab, y = ylab)
+      }, error = function(e) {
+        ggplot() +
+          annotate("text", x = 0.5, y = 0.5, label = paste("Error:", e$message), size = 5) +
+          theme_void()
+      })
+    })
+
+    ci_plot_hover_data <- reactive({
+      if (!ci_show_plot()) {
+        return(NULL)
+      }
+
+      table_data <- intervals_data()
+      data_type <- data_type_reactive()
+      plot_df <- prepare_interval_plot_data(table_data, data_type, ci_plot_param())
+      prepare_interval_plot_hover_data(plot_df, ci_plot_param())
+    })
     
     # =========================================================================
     # RETURN REACTIVE FUNCTIONS
     # =========================================================================
     
     return(list(
-      intervals_data = intervals_data
+      intervals_data = intervals_data,
+      ci_plot = ci_plot,
+      ci_plot_width = ci_plot_width,
+      ci_plot_height = ci_plot_height,
+      ci_plot_hover_data = ci_plot_hover_data
     ))
   })
 }

@@ -111,13 +111,31 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
         # Add column names using cbind (matching original app line 18462)
         output <- cbind(Data = names(data)[UI1], output)
         
+        if (needs_pooled_all_row(len)) {
+          pooled_x <- pool_numeric_vector(data[UI1])
+          if (distr == 1) {
+            all_nt <- natural.tolerance.normal(x = pooled_x)
+          } else if (distr == 2) {
+            all_nt <- natural.tolerance.exp.low(x = pooled_x)
+          } else {
+            all_nt <- natural.tolerance.exp(x = pooled_x)
+          }
+          all_row <- cbind(Data = POOLED_ALL_LABEL, all_nt)
+          output <- prepend_rows_top(all_row, output)
+        }
+        
       } else if (data_type == 2) {
         # Factor analysis - matching original app lines 18465-18491
         req(data_col)
-        UI2 <- as.numeric(UI2)  # Convert UI2 to numeric for column selection
-        dep_name <- colnames(data)[as.numeric(data_col)]  # from data and data_col, one dependent data selected
+        UI2 <- as.numeric(UI2)
+        dep_info <- resolve_factor_dependent_column(data, data_col, UI2)
+        dep_name <- dep_info$dep_name
+        if (is.null(dep_name)) {
+          return(data.frame())
+        }
         indep <- colnames(data)[as.numeric(unlist(strsplit(x = as.character(UI1), split = "\\s+")))]
-        indep_names <- paste(indep, collapse = "+")  # need to put pluses between for equation
+        group_cols <- make.names(indep)
+        indep_names <- paste(indep, collapse = "+")
         req(dep_name)
         req(indep_names)
         model_text <- formula(paste(dep_name, " ~ ", indep_names))
@@ -134,6 +152,27 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
           sum_out <- summary.continuous(fx = model_text, data = na.omit(data[c(UI1, UI2)]))
           output <- natural.tolerance.exp.simple(rate = 1/(sum_out$mean), low = 0)
           output <- cbind(sum_out[c(1, 2, 3)], output)
+        }
+        
+        if (needs_pooled_all_row(nrow(output))) {
+          pooled_x <- na.omit(data[[dep_name]])
+          if (distr == 1) {
+            all_nt <- natural.tolerance.normal(x = pooled_x)
+          } else if (distr == 2) {
+            all_nt <- natural.tolerance.exp.low(x = pooled_x)
+          } else {
+            all_nt <- natural.tolerance.exp(x = pooled_x)
+          }
+          all_row <- output[1, , drop = FALSE]
+          all_row[1, ] <- NA
+          all_row <- label_factor_group_row(all_row, group_cols)
+          all_row$n <- length(pooled_x)
+          for (col in names(all_nt)) {
+            if (col %in% names(all_row)) {
+              all_row[[col]] <- all_nt[[col]]
+            }
+          }
+          output <- prepend_rows_top(all_row, output)
         }
       } else {
         return(data.frame())

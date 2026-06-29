@@ -53,6 +53,13 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
       mult
     })
     
+    combine_data_choice <- reactive({
+      input_vals <- input_values()
+      combine <- input_vals$combine_data_choice
+      if (is.null(combine)) return(FALSE)
+      combine
+    })
+    
     hist_bins <- reactive({
       input_vals <- input_values()
       bins <- input_vals$hist_bins
@@ -202,9 +209,11 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
       if (type == 3) return(NULL)  # No frequency table for density plots
       
       mult_data_val <- mult_data_choice()
+      combine_data_val <- combine_data_choice()
       bins <- hist_bins()
       if (is.na(bins)) bins <- 15
       if (is.null(mult_data_val)) mult_data_val <- TRUE
+      if (is.null(combine_data_val)) combine_data_val <- FALSE
       bin_w <- hist_bin_w()
       if (!isTruthy(bin_w)) bin_w <- NULL
       center <- hist_center()
@@ -241,12 +250,9 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           # Get factor column names
           factor_names <- colnames(data)[as.numeric(UI1)]
           
-          # Create grouping variable from factors (same as boxplots server)
-          if (length(factor_names) == 1) {
-            group_var <- data[, factor_names[1]]
-          } else {
-            group_var <- interaction(data[, factor_names], sep = ", ")
-          }
+          # Always use interaction (monolithic/boxplots pattern) for discrete factor levels
+          factor_cols <- data[, factor_names, drop = FALSE]
+          group_var <- interaction(factor_cols, sep = ", ")
           
           # Create plot data directly (same as boxplots server)
           plot_data <- data.frame(
@@ -279,14 +285,16 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
         
         if (type == 1) {
           p <- p + geom_histogram(binwidth = bin_w, bins = bins, center = center)
+          if (combine_data_val) {
+            # Pooled histogram — no facets
+          } else if (mult_data_val) {
+            p <- p + facet_wrap(facets = vars(ID))
+          } else {
+            p <- p + facet_wrap(facets = vars(ID), scales = "free")
+          }
         } else if (type == 2) {
-          p <- p + geom_freqpoly(binwidth = bin_w, bins = bins, center = center)
-        }
-        
-        if (mult_data_val) {
-          p <- p + facet_wrap(facets = vars(ID))
-        } else {
-          p <- p + facet_wrap(facets = vars(ID), scales = "free")
+          p <- p + geom_freqpoly(aes(color = ID), binwidth = bin_w, bins = bins, center = center)
+          # Frequency polygons: overlaid on one chart (no facets)
         }
         
         # Extract bin information
@@ -352,9 +360,11 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
       hist_target_val <- hist_target()
       hist_USL_val <- hist_USL()
       mult_data_val <- mult_data_choice()
+      combine_data_val <- combine_data_choice()
       bins <- hist_bins()
       if (is.na(bins)) bins <- 15
       if (is.null(mult_data_val)) mult_data_val <- TRUE
+      if (is.null(combine_data_val)) combine_data_val <- FALSE
       extend <- hist_extend_d()
       bin_w <- hist_bin_w()
       if (!isTruthy(bin_w)) bin_w <- NULL
@@ -404,12 +414,9 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           # Get factor column names
           factor_names <- colnames(data)[as.numeric(UI1)]
           
-          # Create grouping variable from factors (same as boxplots server)
-          if (length(factor_names) == 1) {
-            group_var <- data[, factor_names[1]]
-          } else {
-            group_var <- interaction(data[, factor_names], sep = ", ")
-          }
+          # Always use interaction (monolithic/boxplots pattern) for discrete factor levels
+          factor_cols <- data[, factor_names, drop = FALSE]
+          group_var <- interaction(factor_cols, sep = ", ")
           
           # Create plot data directly (same as boxplots server)
           plot_data <- data.frame(
@@ -489,18 +496,23 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
         } else if (type == 3) {
           # Density
           if (extend) {
-            # Generate base R density
-            dense_dat <- by(data = plot_data$Data, INDICES = plot_data$ID, 
-                          FUN = density, bw = "sj")
-            # Format for ggplot
-            newplot_dat <- data.frame("ID" = NA, "x" = NA, "y" = NA)
-            for (name in names(dense_dat)) {
-              temp <- merge(name, dense_dat[[name]][["x"]])
-              names(temp) <- c("ID", "x")
-              temp <- cbind(temp, y = dense_dat[[name]][["y"]])
-              newplot_dat <- rbind(newplot_dat, temp)
+            if (combine_data_val) {
+              dense_dat <- density(plot_data$Data, bw = "sj")
+              newplot_dat <- data.frame(x = dense_dat$x, y = dense_dat$y)
+            } else {
+              # Generate base R density per ID
+              dense_dat <- by(data = plot_data$Data, INDICES = plot_data$ID, 
+                            FUN = density, bw = "sj")
+              # Format for ggplot
+              newplot_dat <- data.frame("ID" = NA, "x" = NA, "y" = NA)
+              for (name in names(dense_dat)) {
+                temp <- merge(name, dense_dat[[name]][["x"]])
+                names(temp) <- c("ID", "x")
+                temp <- cbind(temp, y = dense_dat[[name]][["y"]])
+                newplot_dat <- rbind(newplot_dat, temp)
+              }
+              newplot_dat <- na.omit(newplot_dat)
             }
-            newplot_dat <- na.omit(newplot_dat)
             
             p <- p +
               geom_area(data = newplot_dat, aes(x = x, y = y, fill = "Data"), 
@@ -554,18 +566,23 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           }
         }
         
-        # Handle multiple data choice (facet wrapping)
-        if (mult_data_val) {
-          if (type != 2) {
-            p <- p + facet_wrap(facets = vars(ID))
-          }
-          # For frequency polygon, keep on same chart
+        # Facets: frequency polygon stays on one chart; hist/KDE facet or pool
+        if (type == 2) {
+          # Overlaid frequency polygons — no facets
+        } else if (combine_data_val) {
+          # Pooled histogram or KDE — no facets
+        } else if (mult_data_val) {
+          p <- p + facet_wrap(facets = vars(ID))
         } else {
           p <- p + facet_wrap(facets = vars(ID), scales = "free")
         }
         
         # Add sample size labels, title, and styling
-        temp_n <- count(plot_data, ID)
+        if (combine_data_val && type != 2) {
+          temp_n <- data.frame(n = nrow(plot_data))
+        } else {
+          temp_n <- count(plot_data, ID)
+        }
         p <- p +
           ggtitle(comboname) +
           geom_label(data = temp_n, aes(x = -Inf, y = Inf, label = paste0("n = ", n)), 
@@ -613,6 +630,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
       hist_extend_d = hist_extend_d,
       hist_rug = hist_rug,
       mult_data_choice = mult_data_choice,
+      combine_data_choice = combine_data_choice,
       hist_freq_dist = hist_freq_dist,
       hist_title = hist_title,
       hist_x_lab = hist_x_lab,

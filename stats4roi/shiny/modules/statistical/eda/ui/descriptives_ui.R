@@ -14,6 +14,7 @@ create_descriptives_ui <- function(ns) {
           step = 1,
           width = "75px"
         ),
+        quantile_type_picker_input(ns, "desc_quantile_type"),
         uiOutput(ns("desc_data_list")),
         pickerInput(
           inputId = ns("desc_stats"),
@@ -29,6 +30,7 @@ create_descriptives_ui <- function(ns) {
             Measures_of_Location = c(
               "Mean" = "stat.mean=T",
               "Median" = "stat.median=T",
+              "Mode (most frequent)" = "stat.sample.mode=T",
               "True Mode" = "stat.true.mode=T"
             ),
             Measures_of_Spread = c(
@@ -64,7 +66,7 @@ create_descriptives_ui <- function(ns) {
         textOutput(ns("desc_test_output")),
         br(),
         DTOutput(ns("desc_out")),
-        HTML("<br><br>Quantiles are calculated using Type 6 <a href='https://www.rdocumentation.org/packages/stats/versions/3.4.3/topics/quantile'>Learn more here.</a>")
+        quantile_type_help_output(ns, "desc_quantile_type_help")
       )
     )
   )

@@ -29,14 +29,108 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
       input_values()
     })
     
-    # Note: UI rendering is done in coordinator, not worker
-    # Workers should only return reactive functions with business logic
+    analysis_frame <- reactive({
+      inputs_vals <- inputs()
+      data <- filtered_data()
+      req(data, inputs_vals)
+      
+      data_col <- as.numeric(inputs_vals$ow_data)
+      factor_ow <- as.numeric(inputs_vals$ow_factor)
+      type <- inputs_vals$type_ow
+      req(data_col, factor_ow, type)
+      
+      build_oneway_analysis_frame(
+        data = data,
+        data_col = data_col,
+        factor_col = factor_ow,
+        analysis_disp = inputs_vals$ow_disp_analysis,
+        disp_type_id = inputs_vals$ow_disp_type,
+        type_ow = type
+      )
+    })
+
+    pairwise_posthoc_result <- reactive({
+      inputs_vals <- inputs()
+      frame <- analysis_frame()
+      req(inputs_vals, frame, isTRUE(frame$ok))
+
+      type <- inputs_vals$type_ow
+      ph_type <- as.numeric(inputs_vals$ow_ph_type)
+      conf <- inputs_vals$conf_ow
+      req(type, ph_type)
+
+      if (!(type %in% c(1, 4)) || !(ph_type %in% c(1, 2))) {
+        return(NULL)
+      }
+
+      work <- frame$data
+      form <- stats::as.formula(".response ~ .factor")
+      oneway <- aov(formula = form, data = work)
+      sum_aov <- summary(oneway)
+      dfw <- sum_aov[[1]][["Df"]][2]
+      msw <- sum_aov[[1]][["Mean Sq"]][2]
+
+      agg <- ow_oneway_aggregate_stats(work)
+      cell_means <- agg$cell_means
+      cell_n <- agg$cell_n
+      cell_var <- agg$cell_var
+
+      if (ph_type == 1) {
+        ph_test_results <- contrasts.tukey.kgroups.simple(
+          group.label = agg$group_labels,
+          group.mean = cell_means,
+          group.sample.size = cell_n,
+          conf.level.familywise = conf,
+          mean.squared.error = msw,
+          df.mean.squared.error = dfw
+        )
+        procedure_label <- "Tukey HSD homogeneous subsets"
+      } else {
+        ph_test_results <- contrasts.games.howell.kgroups.simple(
+          group.label = agg$group_labels,
+          group.mean = cell_means,
+          group.variance = cell_var,
+          group.sample.size = as.vector(cell_n),
+          conf.level.familywise = conf,
+          mean.squared.error = NA
+        )
+        procedure_label <- "Games-Howell homogeneous subsets"
+      }
+
+      pmats <- oneway_pairwise_pmatrix_compute(
+        group_labels = agg$group_labels,
+        group_means = cell_means,
+        group_n = cell_n,
+        group_var = cell_var,
+        ph_type = as.integer(ph_type),
+        conf.level.familywise = conf,
+        msw = msw,
+        dfw = dfw
+      )
+
+      list(
+        ph_test_results = ph_test_results,
+        list.tests = ph_test_results$list.tests,
+        matrix.decision = ph_test_results$matrix.decision,
+        matrix.p.value = pmats$matrix.p.value,
+        msw = msw,
+        dfw = dfw,
+        agg = agg,
+        frame = frame,
+        ph_type = ph_type,
+        procedure_label = procedure_label
+      )
+    })
     
     # Post-hoc table output
     posthoc_table <- reactive({
       inputs_vals <- inputs()
-      data <- filtered_data()
-      req(data, inputs_vals)
+      frame <- analysis_frame()
+      req(inputs_vals, frame)
+      
+      if (!isTRUE(frame$ok)) {
+        return(NULL)
+      }
       
       conf <- inputs_vals$conf_ow
       R <- inputs_vals$decimal_ow_ph
@@ -45,78 +139,42 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
       
       req(type, ph_type)
       
-      # Make names valid
-      names(data) <- make.names(names(data))
-      
-      data_col <- as.numeric(inputs_vals$ow_data)
-      factor_ow <- as.numeric(inputs_vals$ow_factor)
-      req(data_col, factor_ow)
-      
-      form <- as.formula(paste(names(data)[data_col], " ~ ", "as.factor(", names(data)[factor_ow], ")"))
-      oneway <- aov(formula = form, data = data)
-      sum_aov <- summary(oneway)
-      
-      sse <- sum_aov[[1]][["Sum Sq"]][1]
-      ssw <- sum_aov[[1]][["Sum Sq"]][2]
-      dfe <- sum_aov[[1]][["Df"]][1]
-      dfw <- sum_aov[[1]][["Df"]][2]
-      mse <- sum_aov[[1]][["Mean Sq"]][1]
-      msw <- sum_aov[[1]][["Mean Sq"]][2]
-      sst <- sse + ssw
-      dft <- dfe + dfw
-      
-      sum_stats <- as.data.frame(as.matrix(aggregate(data[data_col], by = data[factor_ow], FUN = function(x) c(mean(x), n = length(x), var = var(x)))))
-      cell_means <- as.numeric(as.vector(as.matrix(sum_stats[paste(names(data)[data_col], ".", sep = "")])))
-      cell_n <- as.numeric(as.vector(as.matrix(sum_stats[paste(names(data)[data_col], ".n", sep = "")])))
-      cell_var <- as.numeric(as.vector(as.matrix(sum_stats[paste(names(data)[data_col], ".var", sep = "")])))
-      
+      ph_suffix <- oneway_posthoc_table_suffix(frame$analysis, frame$disp_metric)
+      pw <- pairwise_posthoc_result()
+
       if (type == 1 || type == 4) {  # fixed
-        req(ph_type)
-        if (ph_type == 1) {
-          ph_test_results <- contrasts.tukey.kgroups.simple(
-            group.label = sum_stats[[1]],
-            group.mean = cell_means,
-            group.sample.size = cell_n,
-            conf.level.familywise = conf,
-            mean.squared.error = msw,
-            df.mean.squared.error = dfw
-          )
-          output <- ph_test_results[["matrix.decision"]]
-          # Round data before creating DT object
-          output <- ro(output, R)
-          output <- DT::datatable(output,
-            caption = "Tukey's HSD",
-            options = list(
-              columnDefs = list(list(className = "dt-center", targets = "_all")),
-              dom = "t",
-              paging = FALSE
-            ),
-            class = "cell-border stripe"
-          )
+        req(ph_type, pw)
+        output <- pw$matrix.decision
+        output <- ro(output, R)
+        caption <- if (ph_type == 1) {
+          paste0("Tukey's HSD", ph_suffix)
+        } else {
+          paste0("Games & Howell", ph_suffix)
         }
-        
-        if (ph_type == 2) {
-          ph_test_results <- contrasts.games.howell.kgroups.simple(
-            group.label = sum_stats[[1]],
-            group.mean = cell_means,
-            group.variance = cell_var,
-            group.sample.size = as.vector(as.matrix(cell_n)),
-            conf.level.familywise = conf,
-            mean.squared.error = NA
-          )  # PHAST version
-          output <- ph_test_results[["matrix.decision"]]
-          # Round data before creating DT object
-          output <- ro(output, R)
-          output <- DT::datatable(output,
-            caption = "Games & Howell",
-            options = list(columnDefs = list(list(className = "dt-center", targets = "_all")), dom = "t", paging = FALSE),
-            class = "cell-border stripe"
-          )
-        }
+        output <- DT::datatable(
+          output,
+          caption = caption,
+          options = list(
+            columnDefs = list(list(className = "dt-center", targets = "_all")),
+            dom = "t",
+            paging = FALSE
+          ),
+          class = "cell-border stripe"
+        )
       }  # end fixed
       
       if (type == 2) {  # random
-        table_aov <- as.data.frame(table(data[factor_ow]))
+        work <- frame$data
+        form <- stats::as.formula(".response ~ .factor")
+        oneway <- aov(formula = form, data = work)
+        sum_aov <- summary(oneway)
+        sse <- sum_aov[[1]][["Sum Sq"]][1]
+        ssw <- sum_aov[[1]][["Sum Sq"]][2]
+        dfe <- sum_aov[[1]][["Df"]][1]
+        dfw <- sum_aov[[1]][["Df"]][2]
+        mse <- sum_aov[[1]][["Mean Sq"]][1]
+        msw <- sum_aov[[1]][["Mean Sq"]][2]
+        table_aov <- as.data.frame(table(work$.factor))
         table_aov <- cbind(table_aov, table_aov[2]^2)
         J <- nrow(table_aov)
         sum_n <- colSums(table_aov[2])
@@ -135,7 +193,7 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
         lci <- 100 * (thetal / (1 + thetal))
         uci <- 100 * (thetau / (1 + thetau))
         
-        title <- "Random Effect Importance"
+        title <- paste0("Random Effect Importance", ph_suffix)
         first_col <- c("Treatment Variance", "Within Variance", "Total Variance", "Interclass Correlation", paste("ICC ", 100 * conf, "% Confidence Interval"))
         second_col <- as.vector(c(ro(bcv, R), ro(msw, R), ro(bcv + msw, R), paste(ro(ICC, R), "%"), paste(ro(lci, R), "%")))
         third_col <- c("", "", "", "", paste(ro(uci, R), "%"))
@@ -151,13 +209,24 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
         )
       }  # end random
       
-      if (type == 3) {  # all pair-wise MWU
+      if (type == 3) {  # all pair-wise MWU (means only)
+        work <- frame$data
+        form <- stats::as.formula(".response ~ .factor")
+        oneway <- aov(formula = form, data = work)
+        sum_aov <- summary(oneway)
+        dfe <- sum_aov[[1]][["Df"]][1]
         combos <- factorial(dfe + 1) / (factorial(2) * factorial(dfe - 1))
-        table_aov <- as.data.frame(table(data[factor_ow]))
+        table_aov <- as.data.frame(table(work$.factor))
         table_aov <- cbind(table_aov, table_aov[2]^2)
         J <- nrow(table_aov)
-        form <- as.formula(paste(names(data)[data_col], " ~ ", names(data)[factor_ow]))
-        mwu <- median.test.twosample.independent.mann.whitney.fx(fx = form, data = data)
+        kw_df <- data.frame(
+          work$.response,
+          work$.factor,
+          stringsAsFactors = FALSE
+        )
+        names(kw_df) <- c(frame$response_label, frame$factor_label)
+        form_kw <- stats::as.formula(paste(frame$response_label, "~", frame$factor_label))
+        mwu <- median.test.twosample.independent.mann.whitney.fx(fx = form_kw, data = kw_df)
         full_out <- NULL
         for (i in seq(1:combos)) {
           if (mwu[[i]][[5]] * combos > 1) {
@@ -168,8 +237,8 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
           full_out <- c(full_out, mwu[i])
         }
         output <- matrix("", J, J)
-        rownames(output) <- unique(data[[factor_ow]])
-        colnames(output) <- unique(data[[factor_ow]])
+        rownames(output) <- levels(work$.factor)
+        colnames(output) <- levels(work$.factor)
         loop <- 0
         for (i in seq(from = 1, to = (J - 1))) {
           for (j in seq(from = (i + 1), to = J)) {
@@ -178,7 +247,10 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
             output[j, i] <- ifelse(full_out[[loop]][[5]] < (1 - conf), "Reject", "")
           }
         }
-        title <- "Kruskal-Wallis post-hoc: Wilcoxon-Mann-Whitney U using Bonferroni-Dunn (p-value multiplied by # comparisons). Compare stated p-value to desired familywise alpha."
+        title <- paste0(
+          "Kruskal-Wallis post-hoc: Wilcoxon-Mann-Whitney U using Bonferroni-Dunn (p-value multiplied by # comparisons). Compare stated p-value to desired familywise alpha.",
+          ph_suffix
+        )
         # Convert to data frame and round before creating DT object
         output <- as.data.frame(output)
         output <- DT::datatable(output,
@@ -195,10 +267,9 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
     # Post-hoc details output
     posthoc_details <- reactive({
       inputs_vals <- inputs()
-      data <- filtered_data()
-      req(data, inputs_vals)
+      frame <- analysis_frame()
+      req(inputs_vals, frame, isTRUE(frame$ok))
       
-      conf <- inputs_vals$conf_ow
       R <- inputs_vals$decimal_ow_ph
       type <- inputs_vals$type_ow
       ph_type <- as.numeric(inputs_vals$ow_ph_type)
@@ -206,69 +277,32 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
       
       req(ph_details == TRUE)
       
-      # Make names valid
-      names(data) <- make.names(names(data))
-      
-      data_col <- as.numeric(inputs_vals$ow_data)
-      factor_ow <- as.numeric(inputs_vals$ow_factor)
-      req(data_col, factor_ow)
-      
-      # Common anova info
-      form <- as.formula(paste(names(data)[data_col], " ~ ", "as.factor(", names(data)[factor_ow], ")"))
-      oneway <- aov(formula = form, data = data)
-      sum_aov <- summary(oneway)
-      
-      sse <- sum_aov[[1]][["Sum Sq"]][1]
-      ssw <- sum_aov[[1]][["Sum Sq"]][2]
-      dfe <- sum_aov[[1]][["Df"]][1]
-      dfw <- sum_aov[[1]][["Df"]][2]
-      mse <- sum_aov[[1]][["Mean Sq"]][1]
-      msw <- sum_aov[[1]][["Mean Sq"]][2]
-      sst <- sse + ssw
-      dft <- dfe + dfw
-      
-      combos <- factorial(dfe + 1) / (factorial(2) * factorial(dfe - 1))
-      
-      sum_stats <- as.data.frame(as.matrix(aggregate(data[data_col], by = data[factor_ow], FUN = function(x) c(mean(x), n = length(x), var = var(x)))))
-      cell_means <- as.numeric(as.vector(as.matrix(sum_stats[paste(names(data)[data_col], ".", sep = "")])))
-      cell_n <- as.numeric(as.vector(as.matrix(sum_stats[paste(names(data)[data_col], ".n", sep = "")])))
-      cell_var <- as.numeric(as.vector(as.matrix(sum_stats[paste(names(data)[data_col], ".var", sep = "")])))
-      
       if (type == 1 || type == 4) {
-        if (ph_type == 1) {
-          ph_test_results <- contrasts.tukey.kgroups.simple(
-            group.mean = cell_means,
-            group.sample.size = cell_n,
-            conf.level.familywise = conf,
-            mean.squared.error = msw,
-            df.mean.squared.error = dfw
-          )
-          output <- NULL
-          for (n in seq(1:combos)) {
-            output <- c(output, ph_test_results$list.tests[n])
-          }
-        }
-        if (ph_type == 2) {
-          ph_test_results <- contrasts.games.howell.kgroups.simple(
-            group.mean = cell_means,
-            group.variance = cell_var,
-            group.sample.size = as.vector(as.matrix(cell_n)),
-            conf.level.familywise = conf,
-            mean.squared.error = NA
-          )
-          output <- NULL
-          for (n in seq(1:combos)) {
-            output <- c(output, ph_test_results$list.tests[n])
-          }
+        pw <- pairwise_posthoc_result()
+        req(pw)
+        output <- NULL
+        for (n in seq_along(pw$list.tests)) {
+          output <- c(output, pw$list.tests[n])
         }
         output
       } else if (type == 2) {  # random
         output <- "p-values multiplied by the number of combinations in order to maintain the family-wise alpha at your selected value"
         output
       } else if (type == 3) {  # Kruskal-Wallis
-        # Use formula without as.factor for K-W
-        form <- as.formula(paste(names(data)[data_col], " ~ ", names(data)[factor_ow]))
-        mwu <- median.test.twosample.independent.mann.whitney.fx(fx = form, data = data)
+        work <- frame$data
+        form <- stats::as.formula(".response ~ .factor")
+        oneway <- aov(formula = form, data = work)
+        sum_aov <- summary(oneway)
+        dfe <- sum_aov[[1]][["Df"]][1]
+        combos <- factorial(dfe + 1) / (factorial(2) * factorial(dfe - 1))
+        kw_df <- data.frame(
+          work$.response,
+          work$.factor,
+          stringsAsFactors = FALSE
+        )
+        names(kw_df) <- c(frame$response_label, frame$factor_label)
+        form_kw <- stats::as.formula(paste(frame$response_label, "~", frame$factor_label))
+        mwu <- median.test.twosample.independent.mann.whitney.fx(fx = form_kw, data = kw_df)
         output <- NULL
         for (n in seq(1:combos)) {
           if (mwu[[n]][[5]] * combos > 1) {
@@ -287,8 +321,8 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
     # Post-hoc plot
     posthoc_plot <- reactive({
       inputs_vals <- inputs()
-      data <- filtered_data()
-      req(data, inputs_vals)
+      frame <- analysis_frame()
+      req(inputs_vals, frame, isTRUE(frame$ok))
       
       conf <- inputs_vals$conf_ow
       R <- inputs_vals$decimal_ow_ph
@@ -299,12 +333,13 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
       
       req(type)
       
-      # Make names valid
-      names(data) <- make.names(names(data))
-      
-      data_col <- as.numeric(inputs_vals$ow_data)
-      factor_ow <- as.numeric(inputs_vals$ow_factor)
-      req(data_col, factor_ow)
+      work <- frame$data
+      plot_df <- data.frame(
+        x = work$.factor,
+        y = work$.response,
+        stringsAsFactors = FALSE
+      )
+      ph_labels <- oneway_posthoc_plot_labels(frame$analysis, frame$disp_metric)
       
       cols <- colors()
       col_fill <- unname(cols$col_fill)
@@ -313,9 +348,9 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
       
       if (type == 1 || type == 4) {  # fixed
         req(plot_type)
-        p <- ggplot(data = data, aes(x = .data[[names(data)[factor_ow]]], y = .data[[names(data)[data_col]]], group = .data[[names(data)[factor_ow]]])) +
+        p <- ggplot(data = plot_df, aes(x = .data$x, y = .data$y, group = .data$x)) +
           stat_summary(fun = "mean", geom = "point", size = 4) +
-          labs(caption = "Points are means")
+          labs(title = ph_labels$title, caption = ph_labels$caption_points)
         if (lines == TRUE) {  # add lines
           p <- p + stat_summary(fun = mean, geom = "line", aes(group = 1))
         }
@@ -328,9 +363,9 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
       }  # end fixed
       
       if (type == 2) {  # random
-        form <- as.formula(paste(names(data)[data_col], " ~ ", "as.factor(", names(data)[factor_ow], ")"))
+        form <- stats::as.formula(".response ~ .factor")
         
-        oneway <- aov(formula = form, data = data)
+        oneway <- aov(formula = form, data = work)
         sum_aov <- summary(oneway)
         
         sse <- sum_aov[[1]][["Sum Sq"]][1]
@@ -342,7 +377,7 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
         sst <- sse + ssw
         dft <- dfe + dfw
         
-        table_aov <- as.data.frame(table(data[factor_ow]))
+        table_aov <- as.data.frame(table(work$.factor))
         table_aov <- cbind(table_aov, table_aov[2]^2)
         J <- nrow(table_aov)
         sum_n <- colSums(table_aov[2])
@@ -353,7 +388,7 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
         bcv <- max(0, bcv)
         ICC <- 100 * bcv / (bcv + msw)
         
-        pop_mean <- mean(data[[data_col]])
+        pop_mean <- mean(work$.response)
         limits <- data.frame(x = c(pop_mean - 2 * bcv^.5 - 3 * msw^.5, pop_mean, pop_mean + 2 * bcv^.5 + 3 * msw^.5))
         colors_plot <- c("Population of Means" = as.character(full_palette[5]), "Unexplained Variability" = as.character(full_palette[3]), "Unexplained Variability" = as.character(full_palette[3]))
         effect_line <- c("95.45% Confidence Interval of Effect" = as.character(full_palette[8]))
@@ -389,15 +424,15 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
             inherit.aes = FALSE
           ) +
           scale_color_manual(values = effect_line, labels = function(x) str_wrap(x, width = 10)) +
-          labs(title = "Random Effects Post-Hoc", fill = " ", color = " ") +
+          labs(title = ph_labels$title, fill = " ", color = " ") +
           theme(legend.position = "bottom")
       }  # end random
       
-      if (type == 3) {  # kruskal-wallis - use medians
+      if (type == 3) {  # kruskal-wallis - use medians (means analysis only)
         req(plot_type)
-        p <- ggplot(data = data, aes(x = .data[[names(data)[factor_ow]]], y = .data[[names(data)[data_col]]], group = .data[[names(data)[factor_ow]]])) +
+        p <- ggplot(data = plot_df, aes(x = .data$x, y = .data$y, group = .data$x)) +
           stat_summary(fun = "median", geom = "point", size = 4) +
-          labs(caption = "Points are medians")
+          labs(title = ph_labels$title, caption = "Points are medians")
         if (lines == TRUE) {  # add lines
           p <- p + stat_summary(fun = median, geom = "line", aes(group = 1))
         }
@@ -417,6 +452,53 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
       
       p
     })
+
+    posthoc_homogeneous_subsets <- reactive({
+      inputs_vals <- inputs()
+      req(isTRUE(inputs_vals$ow_ph_homogeneous))
+
+      pw <- pairwise_posthoc_result()
+      req(pw)
+
+      R <- inputs_vals$decimal_ow_ph
+      conf <- inputs_vals$conf_ow
+      alpha <- 1 - conf
+      ph_suffix <- oneway_posthoc_table_suffix(pw$frame$analysis, pw$frame$disp_metric)
+      factor_label <- pw$frame$factor_label
+      if (!nzchar(factor_label)) {
+        factor_label <- "Group"
+      }
+
+      grid <- oneway_homogeneous_subsets_grid(
+        means = pw$agg$cell_means,
+        sample_sizes = pw$agg$cell_n,
+        labels = pw$agg$group_labels,
+        p_matrix = pw$matrix.p.value,
+        alpha = alpha,
+        mse = pw$msw,
+        df_error = pw$dfw,
+        factor_label = factor_label,
+        digits = R
+      )
+      req(grid)
+
+      foot <- paste0(
+        "Means for groups in homogeneous subsets are displayed. ",
+        "Based on observed means."
+      )
+      if (as.integer(pw$ph_type)[1L] == 1L) {
+        foot <- paste0(
+          foot,
+          " Mean Square(Error) = ",
+          ow_hsg_format_num(pw$msw, R),
+          "."
+        )
+      } else {
+        foot <- paste0(foot, ".")
+      }
+      caption <- paste0(pw$procedure_label, ph_suffix, ". ", foot)
+      oneway_homogeneous_subsets_datatable(grid, caption, factor_label = factor_label)
+    })
     
     # Render outputs
     output$ow_ph_out_tab <- renderDataTable({
@@ -433,7 +515,8 @@ create_oneway_posthoc_worker <- function(id, filtered_data, input_values, reacti
     list(
       posthoc_table = posthoc_table,
       posthoc_plot = posthoc_plot,
-      posthoc_details = posthoc_details
+      posthoc_details = posthoc_details,
+      posthoc_homogeneous_subsets = posthoc_homogeneous_subsets
     )
   })
 }

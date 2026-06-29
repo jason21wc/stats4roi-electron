@@ -56,23 +56,29 @@ create_sample_size_power_ui_internal <- function(ns) {
           )
         )
       ),
-      tags$div(
-        id = "inline1",
-        class = "inline",
-        fluidRow(
-          column(6, numericInput(
-            inputId = ns("s_size_alpha"),
-            label = withMathJax("$$\\alpha:{ }$$"),
-            value = 0.05,
-            min = 0,
-            max = 1,
-            step = 0.05,
-            width = "150px"
-          )),
-          column(6,
-            conditionalPanel(
-              condition = "input.sample_size_mode == 2",
-              ns = ns,
+      fluidRow(
+        column(
+          3,
+          tags$div(
+            class = "inline sample-size-param",
+            numericInput(
+              inputId = ns("s_size_alpha"),
+              label = withMathJax("$$\\alpha:{ }$$"),
+              value = 0.05,
+              min = 0,
+              max = 1,
+              step = 0.05,
+              width = "150px"
+            )
+          )
+        ),
+        column(
+          3,
+          conditionalPanel(
+            condition = "input.sample_size_mode == 2",
+            ns = ns,
+            tags$div(
+              class = "inline sample-size-param",
               numericInput(
                 inputId = ns("s_size_sigfig"),
                 label = "CI Width SigFigs",
@@ -84,15 +90,20 @@ create_sample_size_power_ui_internal <- function(ns) {
               )
             )
           )
-        ),
-        fluidRow(
-          column(6,
+        )
+      ),
+      fluidRow(
+        class = "sample-size-input-row",
+        column(
+          6,
+          conditionalPanel(
+            condition = "input.sample_size_mode == 1",
+            ns = ns,
             conditionalPanel(
-              condition = "input.sample_size_mode == 1",
+              condition = "input.power_s == 0",
               ns = ns,
-              conditionalPanel(
-                condition = "input.power_s == 0",
-                ns = ns,
+              tags$div(
+                class = "inline sample-size-param",
                 numericInput(
                   inputId = ns("s_size_beta"),
                   label = withMathJax("$$\\beta:{ }$$"),
@@ -102,10 +113,13 @@ create_sample_size_power_ui_internal <- function(ns) {
                   step = 0.05,
                   width = "150px"
                 )
-              ),
-              conditionalPanel(
-                condition = "input.power_s == 1",
-                ns = ns,
+              )
+            ),
+            conditionalPanel(
+              condition = "input.power_s == 1",
+              ns = ns,
+              tags$div(
+                class = "inline sample-size-param",
                 numericInput(
                   inputId = ns("s_size_n"),
                   label = withMathJax("$$n:{ }$$"),
@@ -116,18 +130,57 @@ create_sample_size_power_ui_internal <- function(ns) {
                 )
               )
             )
-          ),
-          column(3, uiOutput(ns("s_sizeUI3")))
+          )
         ),
-        fluidRow(
-          column(6, uiOutput(ns("s_sizeUI1"))),
-          column(6, uiOutput(ns("s_sizeUI4")))
-        ),
-        fluidRow(
-          column(6, uiOutput(ns("s_sizeUI2")))
+        column(
+          6,
+          tags$div(class = "inline sample-size-param", uiOutput(ns("s_sizeUI3")))
         )
       ),
-      htmlOutput(ns("pretty_ssize"))
+      fluidRow(
+        class = "sample-size-input-row",
+        column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("s_sizeUI1")))),
+        column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("s_sizeUI4"))))
+      ),
+      fluidRow(
+        column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("s_sizeUI2"))))
+      ),
+      htmlOutput(ns("pretty_ssize")),
+      conditionalPanel(
+        condition = "input.sample_size_mode == 1 && input.power_s == 1",
+        ns = ns,
+        checkboxInput(
+          inputId = ns("power_curve"),
+          label = "Power Curve",
+          value = FALSE
+        ),
+        conditionalPanel(
+          condition = "input.power_curve == 1",
+          ns = ns,
+          fluidRow(
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("power_curve_start_input")))),
+            column(
+              6,
+              tags$div(
+                class = "inline sample-size-param",
+                numericInput(
+                  inputId = ns("power_curve_interval"),
+                  label = "Interval",
+                  value = 0.05,
+                  min = 0,
+                  step = 0.01,
+                  width = "150px"
+                )
+              )
+            )
+          ),
+          uiOutput(ns("power_curve_notice")),
+          plotOutput(ns("power_curve_plot"), height = "400px"),
+          br(),
+          tableOutput(ns("power_curve_table"))
+        )
+      )
     )
   )
 }

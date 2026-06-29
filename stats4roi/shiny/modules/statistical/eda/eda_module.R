@@ -16,6 +16,14 @@ library(bayestestR)
 source("modules/config/global_config.R")
 source("modules/config/global_data_invalidation.R")
 
+# Shared EDA table helpers
+source("modules/statistical/eda/utils/pooled_all_row.R")
+source("modules/statistical/eda/utils/quantile_types.R")
+source("modules/statistical/eda/ui/quantile_type_ui.R")
+source("modules/statistical/eda/utils/interval_plot_helpers.R")
+source("modules/statistical/eda/utils/data_invalidation_helpers.R")
+source("modules/statistical/eda/utils/eda_helpers.R")
+
 # Source sub-module UI components
 source("modules/statistical/eda/ui/data_setup_ui.R")
 source("modules/statistical/eda/ui/descriptives_ui.R")
@@ -195,19 +203,24 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     ns <- session$ns
     
     # =========================================================================
+    # DATA INVALIDATION (new data load clears data-driven UI and stale outputs)
+    # =========================================================================
+    eda_data_trigger <- create_data_invalidation_trigger(filtered_data)
+    
+    # Read input$ inside the reactive (not at call time) so values refresh after invalidation
+    eda_worker_inputs <- function(builder) {
+      reactive({
+        eda_data_trigger()
+        builder()
+      })
+    }
+    
+    # =========================================================================
     # REGISTER MODULE WITH GLOBAL DATA INVALIDATION SYSTEM
     # =========================================================================
     register_module("eda_module", 
-      ui_reset = function(session) {
-        # Reset all EDA UI elements to defaults
-        updatePickerInput(session, "eda_UI1", selected = character(0))
-        updatePickerInput(session, "eda_UI2", selected = character(0))
-        updateRadioButtons(session, "eda_data_type", selected = 1)
-        updateNumericInput(session, "conf_eda", value = 0.95)
-        updateNumericInput(session, "decimals_desc", value = 5)
-        updateNumericInput(session, "decimals_desc2", value = 5)
-        updateSwitchInput(session, "auto_norm", value = TRUE)
-        updateSwitchInput(session, "auto_desc", value = TRUE)
+      ui_reset = function() {
+        reset_eda_data_driven_ui(session)
       },
       validation = function(data, selections) {
         # Validate EDA selections
@@ -294,6 +307,7 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     # PROCESSED DATA REACTIVE (following distribution testing pattern)
     # =========================================================================
     eda_data <- reactive({
+      eda_data_trigger()
       data <- filtered_data()
       req(data)
       
@@ -326,11 +340,11 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     # =========================================================================
     # DATA PREVIEW TABLE (rendered in coordinator)
     # =========================================================================
-    output$eda_selected_data <- renderDataTable({
-      output <- eda_data()
-      req(output)
-      
-      DT::datatable(output, options = list(lengthMenu = c(5, 10, 50)))
+    output$eda_selected_data <- renderDT({
+      eda_data_trigger()
+      preview_data <- eda_data()
+      req(preview_data)
+      eda_datatable(preview_data, options = list(lengthMenu = c(5, 10, 50)))
     })
     
     # =========================================================================
@@ -341,32 +355,29 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     descriptives_result <- create_descriptives_server("descriptives", 
       reactive(filtered_data()), 
       eda_data_type, 
-      reactive({
-        list(
-          eda_UI1 = input$eda_UI1,
-          eda_UI2 = input$eda_UI2,
-          desc_stats = input$desc_stats,
-          decimals_desc2 = input$decimals_desc2,
-          data_list_for_desc = input$data_list_for_desc
-        )
-      })
+      eda_worker_inputs(function() list(
+        eda_UI1 = input$eda_UI1,
+        eda_UI2 = input$eda_UI2,
+        desc_stats = input$desc_stats,
+        desc_quantile_type = input$desc_quantile_type,
+        decimals_desc2 = input$decimals_desc2,
+        data_list_for_desc = input$data_list_for_desc
+      ))
     )
     
     # Normality tests worker
     normality_tests_result <- create_normality_tests_server("normality_tests", 
       reactive(filtered_data()), 
       eda_data_type, 
-      reactive({
-        list(
-          eda_UI1 = input$eda_UI1,
-          eda_UI2 = input$eda_UI2,
-          decimals_desc = input$decimals_desc,
-          conf_eda = input$conf_eda,
-          auto_norm = input$auto_norm,
-          norm_test = input$norm_test,
-          data_list_for_eda = input$data_list_for_eda
-        )
-      })
+      eda_worker_inputs(function() list(
+        eda_UI1 = input$eda_UI1,
+        eda_UI2 = input$eda_UI2,
+        decimals_desc = input$decimals_desc,
+        conf_eda = input$conf_eda,
+        auto_norm = input$auto_norm,
+        norm_test = input$norm_test,
+        data_list_for_eda = input$data_list_for_eda
+      ))
     )
     
     # Boxplots worker
@@ -374,32 +385,21 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
       eda_data, 
       filtered_data, 
       eda_data_type, 
-      reactive({
-        width_val <- if (is.null(input$box_width)) 400 else input$box_width
-        height_val <- if (is.null(input$box_height)) 400 else input$box_height
-        
-        # Handle conditional data_list_for_box (architectural compliance)
-        data_list_for_box <- NULL
-        if (input$eda_data_type == 2) {  # Factor analysis
-          data_list_for_box <- input$data_list_for_box
-        }
-        
-        list(
-          eda_UI1 = input$eda_UI1,
-          eda_UI2 = input$eda_UI2,
-          data_list_for_box = data_list_for_box,
-          box_width = width_val,
-          box_height = height_val,
-          box_violin = input$box_violin,
-          notch_box = input$notch_box,
-          box_title = input$box_title,
-          box_xlab = input$box_xlab,
-          box_ylab = input$box_ylab,
-          box_big = input$box_big,
-          box_outliers = input$box_outliers,
-          box_jitter = input$box_jitter
-        )
-      }), 
+      eda_worker_inputs(function() list(
+        eda_UI1 = input$eda_UI1,
+        eda_UI2 = input$eda_UI2,
+        data_list_for_box = if (as.integer(input$eda_data_type) == 2L) input$data_list_for_box else NULL,
+        box_width = if (is.null(input$box_width)) 400 else input$box_width,
+        box_height = if (is.null(input$box_height)) 400 else input$box_height,
+        box_violin = input$box_violin,
+        notch_box = input$notch_box,
+        box_title = input$box_title,
+        box_xlab = input$box_xlab,
+        box_ylab = input$box_ylab,
+        box_big = input$box_big,
+        box_outliers = input$box_outliers,
+        box_jitter = input$box_jitter
+      )), 
       reactive_color_palette
     )
     
@@ -407,34 +407,33 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     histograms_result <- create_histograms_server("histograms", 
       filtered_data, 
       eda_data_type, 
-      reactive({
-        list(
-          eda_UI1 = input$eda_UI1,
-          eda_UI2 = input$eda_UI2,
-          data_list_for_hist = input$data_list_for_hist,
-          indep_list_hist = input$indep_list_hist,
-          hist_panel_filter = input$hist_panel_filter,
-          hist_width = if (is.null(input$hist_width)) 400 else input$hist_width,
-          hist_height = if (is.null(input$hist_height)) 400 else input$hist_height,
-          hist_type = input$hist_type,
-          norm_curve = input$norm_curve,
-          hist_specs = input$hist_specs,
-          hist_LSL = input$hist_LSL,
-          hist_target = input$hist_target,
-          hist_USL = input$hist_USL,
-          hist_bin_w = input$hist_bin_w,
-          hist_bins = input$hist_bins,
-          hist_center = input$hist_center,
-          hist_extend_d = input$hist_extend_d,
-          hist_rug = input$hist_rug,
-          mult_data_choice = input$mult_data_choice,
-          hist_freq_dist = input$hist_freq_dist,
-          freq_dist_dec = input$freq_dist_dec,
-          hist_title = input$hist_title,
-          hist_x_lab = input$hist_x_lab,
-          hist_big = input$hist_big
-        )
-      }), 
+      eda_worker_inputs(function() list(
+        eda_UI1 = input$eda_UI1,
+        eda_UI2 = input$eda_UI2,
+        data_list_for_hist = input$data_list_for_hist,
+        indep_list_hist = input$indep_list_hist,
+        hist_panel_filter = input$hist_panel_filter,
+        hist_width = if (is.null(input$hist_width)) 400 else input$hist_width,
+        hist_height = if (is.null(input$hist_height)) 400 else input$hist_height,
+        hist_type = input$hist_type,
+        norm_curve = input$norm_curve,
+        hist_specs = input$hist_specs,
+        hist_LSL = input$hist_LSL,
+        hist_target = input$hist_target,
+        hist_USL = input$hist_USL,
+        hist_bin_w = input$hist_bin_w,
+        hist_bins = input$hist_bins,
+        hist_center = input$hist_center,
+        hist_extend_d = input$hist_extend_d,
+        hist_rug = input$hist_rug,
+        mult_data_choice = input$mult_data_choice,
+        combine_data_choice = input$combine_data_choice,
+        hist_freq_dist = input$hist_freq_dist,
+        freq_dist_dec = input$freq_dist_dec,
+        hist_title = input$hist_title,
+        hist_x_lab = input$hist_x_lab,
+        hist_big = input$hist_big
+      )), 
       reactive_color_palette
     )
     
@@ -442,55 +441,57 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     quantiles_result <- create_quantiles_server("quantiles", 
       reactive(filtered_data()), 
       eda_data_type,
-      reactive({
-        list(
-          eda_UI1 = input$eda_UI1,
-          eda_UI2 = input$eda_UI2,
-          decimals_quant = input$decimals_quant,
-          quant_sel = input$quant_sel,
-          quant_cust = input$quant_cust,
-          data_list_for_quant = input$data_list_for_quant
-        )
-      })
+      eda_worker_inputs(function() list(
+        eda_UI1 = input$eda_UI1,
+        eda_UI2 = input$eda_UI2,
+        decimals_quant = input$decimals_quant,
+        quantile_type = input$quantile_type,
+        quant_sel = input$quant_sel,
+        quant_cust = input$quant_cust,
+        data_list_for_quant = input$data_list_for_quant
+      ))
     )
     
     # Intervals worker
     intervals_result <- create_intervals_server("intervals", 
       reactive(filtered_data()), 
       eda_data_type,
-      reactive({
-        list(
-          eda_UI1 = input$eda_UI1,
-          eda_UI2 = input$eda_UI2,
-          conf_ci = input$conf_ci,
-          decimals_ci = input$decimals_ci,
-          interval_type = input$interval_type,
-          interval_b_type = input$interval_b_type,
-          data_list_for_ci = input$data_list_for_ci,
-          ci_info = input$ci_info
-        )
-      })
+      eda_worker_inputs(function() list(
+        eda_UI1 = input$eda_UI1,
+        eda_UI2 = input$eda_UI2,
+        conf_ci = input$conf_ci,
+        decimals_ci = input$decimals_ci,
+        interval_type = input$interval_type,
+        interval_b_type = input$interval_b_type,
+        data_list_for_ci = input$data_list_for_ci,
+        ci_info = input$ci_info,
+        ci_show_plot = input$ci_show_plot,
+        ci_plot_param = input$ci_plot_param,
+        ci_plot_width = if (is.null(input$ci_plot_width)) 400 else input$ci_plot_width,
+        ci_plot_height = if (is.null(input$ci_plot_height)) 400 else input$ci_plot_height,
+        ci_font_size = input$ci_font_size,
+        ci_plot_title = input$ci_plot_title,
+        ci_plot_xlab = input$ci_plot_xlab,
+        ci_plot_ylab = input$ci_plot_ylab
+      )),
+      reactive_color_palette
     )
     
     # Natural tolerance worker (for both Use Data and Enter Statistics tabs)
     natural_tolerance_result <- create_natural_tolerance_server("natural_tolerance", 
       reactive(filtered_data()), 
       eda_data_type,
-      reactive({
-        list(
-          # Data-based inputs (for Use Data tab)
-          eda_UI1 = input$eda_UI1,
-          eda_UI2 = input$eda_UI2,
-          decimals_nt_data = input$decimals_nt_data,
-          dist_nt_data = input$dist_nt_data,
-          data_list_for_nt = input$data_list_for_nt,
-          # Enter Statistics inputs
-          decimals_nt = input$decimals_nt,
-          dist_nt = input$dist_nt,
-          UI1_nt = input$UI1_nt,
-          UI2_nt = input$UI2_nt
-        )
-      })
+      eda_worker_inputs(function() list(
+        eda_UI1 = input$eda_UI1,
+        eda_UI2 = input$eda_UI2,
+        decimals_nt_data = input$decimals_nt_data,
+        dist_nt_data = input$dist_nt_data,
+        data_list_for_nt = input$data_list_for_nt,
+        decimals_nt = input$decimals_nt,
+        dist_nt = input$dist_nt,
+        UI1_nt = input$UI1_nt,
+        UI2_nt = input$UI2_nt
+      ))
     )
     
     # =========================================================================
@@ -527,11 +528,20 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     
     # Descriptives table
     output$desc_out <- renderDT({
+      eda_data_trigger()
       result <- descriptives_result$descriptives_data()
       req(result)
       
-      DT::datatable(result, options = list(paging = FALSE))
+      eda_datatable(result, options = list(paging = FALSE))
     })
+
+    output$desc_quantile_type_help <- render_quantile_type_help(
+      reactive(normalize_quantile_type(input$desc_quantile_type))
+    )
+
+    output$quantile_type_help <- render_quantile_type_help(
+      reactive(normalize_quantile_type(input$quantile_type))
+    )
     
     # Normality tests data list UI
     output$eda_data_list <- renderUI({
@@ -578,11 +588,12 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     
     # Normality tests table
     output$eda_desc_out <- renderDT({
+      eda_data_trigger()
       result <- normality_tests_result$normality_data()
       req(result)
       
       # Create the table
-      table <- DT::datatable(
+      table <- eda_datatable(
         result$data,
         options = list(paging = FALSE)
       )
@@ -649,8 +660,8 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     
     # Boxplots plot
     output$box_plot <- renderPlot({
-      plot_result <- boxplots_result$box_plot()
-      plot_result
+      eda_data_trigger()
+      boxplots_result$box_plot()
     }, width = boxplots_result$box_width, height = boxplots_result$box_height)
     
     # Boxplots download server (in coordinator, following architectural pattern)
@@ -752,40 +763,60 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
       }
     })
     
-    # Multiple data choice UI
+    # Histogram/KDE: combine on one plot + shared x-axis across facets (not for frequency polygon)
     output$mult_data <- renderUI({
-      data <- eda_data()
       data_type <- eda_data_type()
       UI1 <- input$eda_UI1
+      hist_type <- input$hist_type
+      if (is.null(hist_type)) hist_type <- 1
       
+      multiple_series <- FALSE
       if (data_type == 1) {
-        # For column analysis, show if multiple columns selected
-        if (!is.null(UI1) && length(UI1) > 1) {
+        multiple_series <- !is.null(UI1) && length(UI1) > 1
+      } else {
+        indep <- input$indep_list_hist
+        multiple_series <- !is.null(indep) && length(indep) > 1
+      }
+      
+      if (!multiple_series || as.numeric(hist_type) == 2) {
+        return(NULL)
+      }
+      
+      tagList(
+        checkboxInput(
+          inputId = ns("combine_data_choice"),
+          label = "Combine all selected data on one plot",
+          value = FALSE
+        ),
+        conditionalPanel(
+          condition = "input.combine_data_choice == false",
+          ns = ns,
           checkboxInput(
             inputId = ns("mult_data_choice"),
-            label = "Multiple Data on One Axis",
+            label = "Same x-axis on all facet panels",
             value = TRUE
           )
-        }
-      } else {
-        # For factor analysis, always show
-        checkboxInput(
-          inputId = ns("mult_data_choice"),
-          label = "Multiple Data on One Axis",
-          value = TRUE
         )
-      }
+      )
     })
     
     
     # Histograms plot
     output$hist_plot <- renderPlot({
+      eda_data_trigger()
       plot_result <- histograms_result$hist_plot()
       plot_result
     }, width = histograms_result$hist_width, height = histograms_result$hist_height)
     
     # Histograms panel selector for frequency distribution table
     output$hist_panel_select <- renderUI({
+      if (isTRUE(input$combine_data_choice)) {
+        return(NULL)
+      }
+      if (identical(as.numeric(input$hist_type), 2L)) {
+        return(NULL)
+      }
+      
       # Use original data (filtered_data) for column names, not processed data (eda_data)
       original_data <- filtered_data()
       data_type <- eda_data_type()
@@ -842,9 +873,10 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     
     # Histograms frequency distribution table
     output$hist_freq_table <- renderDT({
+      eda_data_trigger()
       table_result <- histograms_result$hist_freq_table()
       req(table_result)
-      DT::datatable(table_result, options = list(paging = FALSE))
+      eda_datatable(table_result, options = list(paging = FALSE))
     })
     
     # Quantiles data list rendering
@@ -872,9 +904,10 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     
     # Quantiles table
     output$quant_out <- renderDT({
+      eda_data_trigger()
       result <- quantiles_result$quantiles_data()
       req(result)
-      DT::datatable(result, options = list(paging = FALSE))
+      eda_datatable(result, options = list(paging = FALSE))
     })
     
     # Intervals data list rendering
@@ -915,11 +948,87 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
       h4(title)
     })
     
+    # Intervals plot
+    output$ci_plot <- renderPlot({
+      eda_data_trigger()
+      req(input$ci_show_plot)
+      intervals_result$ci_plot()
+    }, width = intervals_result$ci_plot_width, height = intervals_result$ci_plot_height)
+
+    ci_download_width <- reactive({
+      width_val <- intervals_result$ci_plot_width()
+      if (is.null(width_val)) return(400 * 4)
+      width_val * 4
+    })
+
+    ci_download_height <- reactive({
+      height_val <- intervals_result$ci_plot_height()
+      if (is.null(height_val)) return(400 * 4)
+      height_val * 4
+    })
+
+    downloadServer("ciplot", intervals_result$ci_plot,
+                  width = ci_download_width,
+                  height = ci_download_height)
+
+    output$hover_info_ci <- renderUI({
+      req(input$ci_show_plot)
+      R <- input$decimals_ci
+      hover <- input$ci_hover
+      if (is.null(hover)) {
+        return(NULL)
+      }
+
+      hover_data <- isolate(intervals_result$ci_plot_hover_data())
+      req(hover_data)
+
+      point <- nearPoints(
+        df = hover_data,
+        coordinfo = hover,
+        xvar = "x_pos",
+        yvar = "y_hover",
+        threshold = 25,
+        maxpoints = 1
+      )
+      if (nrow(point) == 0) {
+        point <- find_nearest_interval_hover_point(hover_data, hover)
+      }
+      if (is.null(point) || nrow(point) == 0) {
+        return(NULL)
+      }
+
+      left_px <- hover$coords_css$x
+      top_px <- hover$coords_css$y
+      style <- paste0(
+        "position:absolute; z-index:1000; background-color: rgba(245, 245, 245, 0.92); ",
+        "left:", left_px + 12, "px; top:", top_px + 12, "px; ",
+        "padding:6px 10px; border:1px solid #ccc; border-radius:4px; ",
+        "box-shadow:0 1px 4px rgba(0,0,0,0.2); white-space:nowrap;"
+      )
+
+      ro <- get_global_config()$ro
+      param_label <- point$param_label[1]
+
+      div(
+        style = style,
+        HTML(paste0(
+          "<div style='text-align:center; font-weight:bold; margin-bottom:4px;'>",
+          point$group[1],
+          "</div>",
+          "<b>", param_label, ": </b>", ro(point$estimate[1], R), "<br/>",
+          "<b>CI_low: </b>", ro(point$ci_low[1], R), "<br/>",
+          "<b>CI_high: </b>", ro(point$ci_high[1], R)
+        ))
+      )
+    })
+    outputOptions(output, "hover_info_ci", suspendWhenHidden = FALSE)
+
     # Intervals table
     output$ci_out <- renderDT({
+      eda_data_trigger()
       result <- intervals_result$intervals_data()
       req(result)
-      DT::datatable(result, options = list(paging = FALSE))
+      eda_datatable(result, options = list(paging = FALSE))
     })
     
     # About CIs popup
@@ -967,12 +1076,13 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     
     # Natural tolerance output table (Use Data tab) - matching original app lines 18412-18497
     output$nt_out_data <- renderDT({
+      eda_data_trigger()
       result <- natural_tolerance_result$natural_tolerance_data()
       req(result)
       if (nrow(result) == 0) {
-        return(DT::datatable(data.frame(Message = "No data available"), options = list(paging = FALSE)))
+        return(eda_datatable(data.frame(Message = "No data available"), options = list(paging = FALSE)))
       }
-      DT::datatable(result, options = list(paging = FALSE))
+      eda_datatable(result, options = list(paging = FALSE))
     })
     
     # Natural tolerance UI1 (Enter Statistics tab) - matching original app lines 18517-18539
@@ -1026,9 +1136,9 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
       result <- natural_tolerance_result$natural_tolerance_simple()
       req(result)
       if (nrow(result) == 0) {
-        return(DT::datatable(data.frame(Message = "No data available"), options = list(paging = FALSE)))
+        return(eda_datatable(data.frame(Message = "No data available"), options = list(paging = FALSE)))
       }
-      DT::datatable(result, options = list(paging = FALSE))
+      eda_datatable(result, options = list(paging = FALSE))
     })
     
     # =========================================================================

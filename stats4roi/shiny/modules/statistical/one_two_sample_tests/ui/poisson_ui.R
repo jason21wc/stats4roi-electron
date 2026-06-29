@@ -64,11 +64,11 @@ create_poisson_one_two_sample_ui <- function(ns) {
           hr(),
           h3("Enter Statistics and Parameters"),
           fluidRow(
+            class = "sample-size-input-row",
             column(
-              width = 3,
+              width = 6,
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 numericInput(
                   inputId = ns("poi_samp"),
                   label = withMathJax("$$c_{1}:{ }$$"),
@@ -79,8 +79,7 @@ create_poisson_one_two_sample_ui <- function(ns) {
                 )
               ),
               tags$div(
-                id = "inline1",
-                class = "inline",
+                class = "inline sample-size-param",
                 numericInput(
                   inputId = ns("n_samp_poi"),
                   label = withMathJax("$$n_{1}:{ }$$"),
@@ -92,12 +91,11 @@ create_poisson_one_two_sample_ui <- function(ns) {
               )
             ),
             column(
-              width = 3,
+              width = 6,
               conditionalPanel(
                 condition = paste0("input['", ns("one_or_two_poi"), "'] == 1"),
                 tags$div(
-                  id = "inline1",
-                  class = "inline",
+                  class = "inline sample-size-param",
                   numericInput(
                     inputId = ns("poi0"),
                     label = withMathJax("$$\\lambda_{0}:{ }$$"),
@@ -110,8 +108,7 @@ create_poisson_one_two_sample_ui <- function(ns) {
               conditionalPanel(
                 condition = paste0("input['", ns("one_or_two_poi"), "'] == 2"),
                 tags$div(
-                  id = "inline1",
-                  class = "inline",
+                  class = "inline sample-size-param",
                   numericInput(
                     inputId = ns("poi2"),
                     label = withMathJax("$$c_{2}:{ }$$"),
@@ -122,8 +119,7 @@ create_poisson_one_two_sample_ui <- function(ns) {
                   )
                 ),
                 tags$div(
-                  id = "inline1",
-                  class = "inline",
+                  class = "inline sample-size-param",
                   numericInput(
                     inputId = ns("n_samp_poi_2"),
                     label = withMathJax("$$n_{2}:{ }$$"),
@@ -156,14 +152,16 @@ create_poisson_one_two_sample_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_poi"), "'] == 1"),
-            uiOutput(ns("data_choice_column_poi"))
+            uiOutput(ns("data_choice_column_poi")),
+            uiOutput(ns("ots_poi_group_assignment"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_poi"), "'] == 2"),
             uiOutput(ns("data_choice_ref_poi")),
             uiOutput(ns("data_choice_data_poi")),
             uiOutput(ns("data_choice_g1_poi")),
-            uiOutput(ns("data_choice_g2_poi"))
+            uiOutput(ns("data_choice_g2_poi")),
+            uiOutput(ns("ots_poi_group_assignment"))
           ),
           numericInput(
             inputId = ns("conf_poi_data"),
@@ -191,12 +189,14 @@ create_poisson_one_two_sample_ui <- function(ns) {
           hr(),
           h3("Statistics from Data"),
           fluidRow(
-            column(3, uiOutput(ns("poi_test_data_ui1"))),
-            column(3, uiOutput(ns("poi_test_data_ui2")))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("poi_test_data_ui1")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("poi_test_data_ui2"))))
           ),
           fluidRow(
-            column(3, uiOutput(ns("poi_test_data_ui3"))),
-            column(3, uiOutput(ns("poi_test_data_ui4")))
+            class = "sample-size-input-row",
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("poi_test_data_ui3")))),
+            column(6, tags$div(class = "inline sample-size-param", uiOutput(ns("poi_test_data_ui4"))))
           ),
           br(),
           h4("Results"),

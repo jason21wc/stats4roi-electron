@@ -21,6 +21,7 @@ source("modules/config/global_data_invalidation.R")
 # Source UI components
 source("modules/statistical/spc/ui/spc_ui.R")
 source("modules/statistical/spc/ui/spc_limits_ui.R")
+source("modules/statistical/spc/ui/spc_capability_ui.R")
 
 # Source worker modules (stubs initially; implemented in later todos)
 # source("modules/statistical/spc/server/spc_variables_server.R")
@@ -33,6 +34,7 @@ source("modules/statistical/spc/utils/spc_limit_calcs.R")
 
 # Source worker modules
 source("modules/statistical/spc/server/spc_limits_server.R")
+source("modules/statistical/spc/server/spc_capability_server.R")
 
 # =============================================================================
 # COORDINATOR UI FUNCTION
@@ -54,7 +56,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
     # =========================================================================
     register_module(
       module_name = "spc",
-      ui_reset_function = function(session) {
+      ui_reset_function = function() {
         # Reset key SPC inputs when data changes
         updatePickerInput(session, "spc_var_UI1", selected = character(0))
         updatePickerInput(session, "spc_var_UI2", selected = character(0))
@@ -4917,6 +4919,61 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         "<p>If the upper 90% confidence interval for \u03BA is below ",
         withMathJax("$\\kappa_{critical}$"), " the discrete gauge is not capable at ",
         withMathJax("$P_{0}=$"), results$po
+      ))
+    })
+
+    # -------------------------------------------------------------------------
+    # HTML Output Rendering for Capability Calculations
+    # -------------------------------------------------------------------------
+
+    output$capability_calc_out <- renderUI({
+      distribution <- as.numeric(input$cap_dist)
+      study <- as.numeric(input$cap_study)
+      usl <- as.numeric(input$cap_usl)
+      target <- as.numeric(input$cap_target)
+      lsl <- as.numeric(input$cap_lsl)
+      mean_val <- as.numeric(input$cap_mean)
+      sd_val <- as.numeric(input$cap_sd)
+      upl <- as.numeric(input$cap_upl)
+      lpl <- as.numeric(input$cap_lpl)
+      pct_usl <- as.numeric(input$cap_pct_usl)
+      pct_lsl <- as.numeric(input$cap_pct_lsl)
+      R <- input$cap_decimals
+
+      req(distribution, study, mean_val, sd_val, R)
+
+      results <- calculate_capability_measures(
+        distribution = distribution,
+        study = study,
+        usl = usl,
+        target = target,
+        lsl = lsl,
+        mean = mean_val,
+        sd = sd_val,
+        upl = upl,
+        lpl = lpl,
+        pct_usl = pct_usl,
+        pct_lsl = pct_lsl,
+        R = R
+      )
+
+      if (!is.null(results$error)) {
+        return(HTML(paste0("<p>", results$error, "</p>")))
+      }
+
+      HTML(c(
+        paste(
+          "<b>Capability Calculations</b> (",
+          results$distribution_label, ", ",
+          results$study_label, ")"
+        ),
+        "<br><br>",
+        "<u>Capability Measures</u>",
+        "<table>",
+        "<tr><td>C<sub>p</sub> = </td><td style='text-align:left'>", results$cp, "</td></tr>",
+        "<tr><td>C<sub>pk</sub> = </td><td style='text-align:left'>", results$cpk, "</td></tr>",
+        "<tr><td>C<sub>pm</sub> = </td><td style='text-align:left'>", results$cpm, "</td></tr>",
+        "</table>"
       ))
     })
   })

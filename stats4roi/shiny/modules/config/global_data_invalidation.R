@@ -74,9 +74,8 @@ reset_all_data_ui_elements <- function(session, working_data) {
     
     # Only reset UI if the data state has actually changed
     if (is.null(previous_state) || current_state != previous_state) {
-      
-      # Reset all registered modules
-      reset_registered_modules(session)
+      # Reset all registered modules (each ui_reset uses its own module session)
+      reset_registered_modules()
       
       # Switch to data import tab when new data is loaded
       updateTabsetPanel(session, "main_navbar", selected = "Import Data")
@@ -87,8 +86,10 @@ reset_all_data_ui_elements <- function(session, working_data) {
   })
 }
 
-# Reset all registered modules
-reset_registered_modules <- function(session) {
+# Reset all registered modules.
+# Each ui_reset must be a zero-argument function that captures module-local `session`
+# from moduleServer (see eda_module). Do not use function(session) { ... } here.
+reset_registered_modules <- function() {
   # Get registered modules from global config
   config <- get_global_config()
   registered_modules <- config$get_registered_modules()
@@ -98,7 +99,7 @@ reset_registered_modules <- function(session) {
     tryCatch({
       module_info <- module_registry[[module_name]]
       if (!is.null(module_info$ui_reset)) {
-        module_info$ui_reset(session)
+        module_info$ui_reset()
       }
     }, error = function(e) {
       cat("Error resetting module", module_name, ":", e$message, "\n")
@@ -106,32 +107,13 @@ reset_registered_modules <- function(session) {
   }
 }
 
-# EDA module UI reset
+# EDA module UI reset (delegates to EDA data-invalidation helpers)
 reset_eda_ui_elements <- function(session) {
-  # Reset EDA data type selection
-  updateRadioButtons(session, "eda_data_type", selected = 1)
-  
-  # Reset EDA column selections (but only if they're not currently being used)
-  # Note: We don't reset these during active use to prevent DT table timing issues
-  # The UI will be re-rendered when data changes anyway
-  # updatePickerInput(session, "eda_UI1", selected = character(0))
-  # updatePickerInput(session, "eda_UI2", selected = character(0))
-  
-  # Reset EDA numeric inputs
-  updateNumericInput(session, "conf_eda", value = 0.95)
-  updateNumericInput(session, "decimals_desc", value = 5)
-  updateNumericInput(session, "decimals_desc2", value = 5)
-  
-  # Reset EDA switches
-  updatePrettySwitch(session, "auto_norm", value = TRUE)
-  updatePrettySwitch(session, "auto_desc", value = TRUE)
-  
-  # Reset EDA checkboxes
-  updateCheckboxInput(session, "data_label", value = TRUE)
-  
-  # Switch to EDA data setup tab
-  updateTabsetPanel(session, "eda_panel", selected = "eda_data_setup")
-  
+  helper_path <- "modules/statistical/eda/utils/data_invalidation_helpers.R"
+  if (file.exists(helper_path)) {
+    source(helper_path, local = FALSE)
+    reset_eda_data_driven_ui(session)
+  }
 }
 
 # Distribution Testing module UI reset
@@ -174,7 +156,11 @@ reset_sample_size_power_ui_elements <- function(session) {
   updateNumericInput(session, "ssp_power", value = 0.8)
   updateNumericInput(session, "ssp_effect_size", value = 0.5)
   updateNumericInput(session, "ssp_n", value = 30)
-  
+
+  # Power curve (module inputs)
+  updateCheckboxInput(session, "power_curve", value = FALSE)
+  updateNumericInput(session, "power_curve_start", value = 0)
+  updateNumericInput(session, "power_curve_interval", value = 0.05)
 }
 
 # Other data-driven modules reset

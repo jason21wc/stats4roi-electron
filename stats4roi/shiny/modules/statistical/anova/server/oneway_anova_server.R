@@ -53,7 +53,6 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
       data <- filtered_data()
       req(data, inputs_vals)
       
-      # Extract values - all from coordinator via input_values
       data_col <- as.numeric(inputs_vals$ow_data)
       factor_ow <- as.numeric(inputs_vals$ow_factor)
       conf <- inputs_vals$conf_ow
@@ -62,16 +61,37 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
       
       req(data_col, factor_ow, conf, R, type)
       
-      # Make names valid
-      names(data) <- make.names(names(data))
+      frame <- build_oneway_analysis_frame(
+        data = data,
+        data_col = data_col,
+        factor_col = factor_ow,
+        analysis_disp = inputs_vals$ow_disp_analysis,
+        disp_type_id = inputs_vals$ow_disp_type,
+        type_ow = type
+      )
+      if (!isTRUE(frame$ok)) {
+        return(HTML(ow_oneway_error_html(frame$message)))
+      }
       
-      form <- as.formula(paste(names(data)[data_col], " ~ ", "as.factor(", names(data)[factor_ow], ")"))
+      work <- frame$data
+      form <- stats::as.formula(".response ~ .factor")
+      resp_label <- frame$response_label
+      factor_label <- frame$factor_label
+      
+      header_block <- paste0(
+        "Dependent Variable: ", resp_label, "<br>",
+        frame$header_suffix
+      )
+      if (!is.null(frame$note) && nzchar(frame$note)) {
+        header_block <- paste0(header_block, "<br><i>", frame$note, "</i>")
+      }
+      header_block <- paste0(header_block, "</br></br>")
       
       if (type == 1 || type == 2) {  # Fixed (Fisher) or Random
-        oneway <- aov(formula = form, data = data)
+        oneway <- aov(formula = form, data = work)
         sum_aov <- ro(summary(oneway), R)
         
-        temp <- summary(lm(formula = form, data = data))
+        temp <- summary(lm(formula = form, data = work))
         r_sq <- temp[["r.squared"]]
         r_sqr_adj <- temp[["adj.r.squared"]]
         
@@ -86,7 +106,7 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
         
         omega_sq <- 100 * (sse - (dfe * msw)) / (sst + msw)  # fixed
         
-        table_aov <- as.data.frame(table(data[factor_ow]))
+        table_aov <- as.data.frame(table(work$.factor))
         table_aov <- cbind(table_aov, table_aov[2]^2)
         J <- nrow(table_aov)
         sum_n <- colSums(table_aov[2])
@@ -98,11 +118,12 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
         ICC <- 100 * bcv / (bcv + msw)
         
         output <- HTML(c(
+          header_block,
           "Fisher's One-way analysis of variance (assumes equal variances, robust if equal n per group)", "</br></br>",
-          "Model : ", names(oneway$model)[1], " by ", gsub(pattern = "as\\.factor\\(|\\)", replacement = "", names(oneway$model)[2]),
+          "Model : ", resp_label, " by ", factor_label,
           "</br></br>",
           "<table><tr><th  style='padding: 2px 15px !important;'>Source</th><th  style='padding: 2px 15px !important;'>df</th><th  style='padding: 2px 15px !important;'>SS</th><th  style='padding: 2px 15px !important;'>MS</th><th  style='padding: 2px 15px !important;'>F</th><th  style='padding: 2px 15px !important;'>p</th></tr>",
-          "<tr><td  style='padding: 2px 15px !important;'>", gsub(pattern = "as\\.factor\\(|\\)", replacement = "", names(oneway$model)[2]), "</td>",
+          "<tr><td  style='padding: 2px 15px !important;'>", factor_label, "</td>",
           "<td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Df"]][1], "</td><td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Sum Sq"]][1], "</td><td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Mean Sq"]][1], "</td><td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["F value"]][1], "</td><td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Pr(>F)"]][1], if(sum_aov[[1]][["Pr(>F)"]][1] <= (1 - conf)){"*"}, "</tr>",
           "<tr><td  style='padding: 2px 15px !important;'> Within</td>", "<td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Df"]][2], "</td><td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Sum Sq"]][2], "</td><td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Mean Sq"]][2], "</td></tr>",
           "<tr><td  style='padding: 2px 15px !important;'> Total</td>", "<td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Df"]][1] + sum_aov[[1]][["Df"]][2], "</td><td  style='padding: 2px 15px !important;'>", sum_aov[[1]][["Sum Sq"]][1] + sum_aov[[1]][["Sum Sq"]][2], "</td></tr>",
@@ -128,13 +149,13 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
         ))
       }  # end fixed and random
       
-      if (type == 3) {  # Kruskal-Wallis
-        form <- as.formula(paste(names(data)[data_col], " ~ ", names(data)[factor_ow]))
-        KW <- anova.independent.kruskal.wallis(fx = form, data = data, conf.level = conf)
+      if (type == 3) {  # Kruskal-Wallis (means only)
+        KW <- anova.independent.kruskal.wallis(fx = form, data = work, conf.level = conf)
         
         output <- HTML(c(
+          header_block,
           "Method : ", KW$method, "</br>",
-          "Model : ", names(data)[data_col], " by ", names(data)[factor_ow],
+          "Model : ", resp_label, " by ", factor_label,
           "</br></br>",
           "<table><tr>",
           "<td>H = ", ro(KW$statistic, R), "</td><td>p =", ro(KW$p.value, R), if(KW$p.value <= 1 - conf){"*"}, "</td></tr>",
@@ -143,22 +164,22 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
       }  # end K-W
       
       if (type == 4) {  # Fixed Welch
-        oneway_w <- oneway.test(formula = form, data = data, var.equal = FALSE)
-        oneway <- aov(formula = form, data = data)  # just for labels
-        nTot <- nrow(data)
+        oneway_w <- oneway.test(formula = form, data = work, var.equal = FALSE)
+        nTot <- nrow(work)
         dfEff <- oneway_w[["parameter"]][["num df"]]
         wF <- oneway_w[["statistic"]][["F"]]
         imp_w <- (dfEff * (wF - 1)) / (dfEff * (wF - 1) + nTot) * 100
         if(is.nan(wF)) {
-          return(HTML("NaN returned. This is possibly due to having a 0 variance for one or more cells. Try the Fisher ANOVA."))
+          return(HTML(paste0(header_block, "NaN returned. This is possibly due to having a 0 variance for one or more cells. Try the Fisher ANOVA.")))
         }
         output <- HTML(c(
+          header_block,
           "Welch's ", oneway_w[["method"]],
           "</br></br>",
-          "Model : ", names(oneway$model)[1], " by ", gsub(pattern = "as\\.factor\\(|\\)", replacement = "", names(oneway$model)[2]),
+          "Model : ", resp_label, " by ", factor_label,
           "</br></br>",
           "<table><tr><th  style='padding: 2px 15px !important;'>Source</th><th  style='padding: 2px 15px !important;'>df</th><th  style='padding: 2px 15px !important;'>F</th><th  style='padding: 2px 15px !important;'>p</th></tr>",
-          "<tr><td  style='padding: 2px 15px !important;'>", gsub(pattern = "as\\.factor\\(|\\)", replacement = "", names(oneway$model)[2]), "</td>",
+          "<tr><td  style='padding: 2px 15px !important;'>", factor_label, "</td>",
           "<td  style='padding: 2px 15px !important;'>", dfEff, ",", ro(oneway_w[["parameter"]][["denom df"]], R), "</td><td  style='padding: 2px 15px !important;'>", ro(wF, R), "</td><td  style='padding: 2px 15px !important;'>", ro(oneway_w[["p.value"]], R), if(oneway_w[["p.value"]] <= (1 - conf)){"*"}, "</tr>",
           "</table></br></br>",
           "<table><tr><td>Fixed Effect Importance:</td></tr>",
@@ -181,17 +202,33 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
       
       req(data_col, factor_ow)
       
-      # Make names valid (consistent with other reactives)
-      names(data) <- make.names(names(data))
+      frame <- build_oneway_analysis_frame(
+        data = data,
+        data_col = data_col,
+        factor_col = factor_ow,
+        analysis_disp = FALSE,
+        disp_type_id = 1L,
+        type_ow = 3L
+      )
+      req(isTRUE(frame$ok))
+      work <- frame$data
       
-      mean_rank_tab <- cbind(factor = data[factor_ow], data = data[data_col], rank = rank(data[data_col]))
+      mean_rank_tab <- data.frame(
+        factor = work$.factor,
+        response = work$.response,
+        rank = rank(work$.response),
+        stringsAsFactors = FALSE
+      )
       
-      KW_tab <- ro(aggregate(x = mean_rank_tab, by = mean_rank_tab[1], FUN = function(x) c(Mean.Rank = mean(x), Count = length(x)))[c(-2, -3)], R)
-      
-      names(KW_tab) <- c(names(data)[factor_ow], "Mean Rank", "Count")
-      
-      # Ensure proper data frame structure - flatten any matrix columns from aggregate
-      KW_tab <- as.data.frame(KW_tab)
+      KW_tab <- mean_rank_tab %>%
+        dplyr::group_by(.data$factor) %>%
+        dplyr::summarize(
+          `Mean Rank` = mean(.data$rank),
+          Count = dplyr::n(),
+          .groups = "drop"
+        )
+      KW_tab <- ro(as.data.frame(KW_tab), R)
+      names(KW_tab)[1L] <- frame$factor_label
       
       KW_tab
     })
@@ -208,10 +245,11 @@ create_oneway_anova_worker <- function(id, filtered_data, input_values) {
       R <- inputs_vals$decimal_ow
       type <- inputs_vals$type_ow
       disp_ow <- inputs_vals$disp_ow
+      ow_disp_analysis <- isTRUE(inputs_vals$ow_disp_analysis)
       
       req(data_col, factor_ow, conf, R, type)
       
-      if (!disp_ow || type == 3) {
+      if (!disp_ow || type == 3 || ow_disp_analysis) {
         return(NULL)
       }
       

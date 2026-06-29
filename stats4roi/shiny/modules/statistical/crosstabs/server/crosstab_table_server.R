@@ -429,7 +429,7 @@ create_crosstab_table_worker <- function(id, xt_data, input_values, type = c("ma
           Shiny.setInputValue('%s', {
             rows: [...new Set(selectedRows)],
             cols: [...new Set(selectedCols)]
-          });
+          }, {priority: 'event'});
         }", ns_string)
       )
       

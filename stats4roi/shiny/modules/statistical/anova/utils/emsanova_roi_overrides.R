@@ -14,6 +14,139 @@
 
 library(stringr)
 
+#' Convert nested-within parent names to index lists (EMSanova semantics).
+#' @param var.list factor names in model order
+#' @param nested character vector per factor ("" or parent names joined by *)
+#' @keywords internal
+ems_normalize_nested_spec <- function(var.list, nested) {
+  if (is.null(nested)) {
+    return(as.list(rep(NA, length(var.list))))
+  }
+  if (length(nested) != 0 && sum(!is.na(nested)) != 0) {
+    lapply(nested, function(x) {
+      x <- as.character(x)
+      if (length(x) == 0L || (length(x) == 1L && !nzchar(x))) {
+        return(NA)
+      }
+      if (length(x) > 1L) {
+        xx <- x
+      } else {
+        xx <- strsplit(x, split = "\\*", fixed = FALSE)[[1]]
+      }
+      temp <- NULL
+      for (i in seq_along(xx)) {
+        temp <- c(temp, which(var.list == xx[i]))
+      }
+      if (length(temp) == 0) NA else temp
+    })
+  } else {
+    as.list(rep(NA, length(var.list)))
+  }
+}
+
+#' Full factorial design matrix (EMSanova design.M1 before nesting).
+#' @keywords internal
+ems_factorial_design_matrix <- function(var.list) {
+  n <- length(var.list)
+  design.M1 <- NULL
+  for (i in seq_len(n)) {
+    design.M1 <- rbind(design.M1, design.M1)
+    temp1 <- rep(c("", var.list[i]), each = 2^(i - 1))
+    design.M1 <- cbind(design.M1, temp1)
+  }
+  design.M1[-1, , drop = FALSE]
+}
+
+#' Apply nested-within rules to a factorial design matrix (no SS aggregation).
+#' @keywords internal
+ems_apply_nested_to_design <- function(design.M1, var.list, nested) {
+  n <- length(var.list)
+  colnames(design.M1) <- var.list
+  nest.id <- which(!is.na(nested))
+  if (length(nest.id) == 0L) {
+    return(design.M1)
+  }
+  for (i in seq_along(nest.id)) {
+    for (j in seq_along(nested[[nest.id[i]]])) {
+      temp.list <- apply(
+        design.M1[, seq_len(n), drop = FALSE],
+        1,
+        function(x) ifelse(sum(x == var.list[nest.id[i]]) == 0, NA, var.list[nested[[nest.id[i]]][j]])
+      )
+      del.list <- which(apply(
+        design.M1[, seq_len(n), drop = FALSE],
+        1,
+        function(x) sum(x == var.list[nest.id[i]]) * sum(x == var.list[nested[[nest.id[i]]][j]]) == 1
+      ))
+      design.M1 <- cbind(design.M1, temp.list)
+      colnames(design.M1) <- c(colnames(design.M1)[-ncol(design.M1)], "nested")
+      design.M1 <- design.M1[-del.list, , drop = FALSE]
+
+      flag <- TRUE
+      id.t <- nest.id[i]
+      while (flag) {
+        n.id.t <- nested[[id.t]]
+        temp.c <- unlist(nested[n.id.t])
+        temp.c <- temp.c[!is.na(temp.c)]
+        if (length(temp.c) == 0) {
+          flag <- FALSE
+        } else {
+          for (l in seq_along(temp.c)) {
+            temp.j <- ncol(design.M1)
+            del.list <- which(apply(
+              design.M1,
+              1,
+              function(x) sum(x[seq_len(n)] == var.list[temp.c[l]]) * !is.na(x[temp.j]) == 1
+            ))
+            design.M1 <- design.M1[-del.list, , drop = FALSE]
+            design.M1[which(design.M1[, temp.j] == var.list[nested[[nest.id[i]]][j]]), n + temp.c[l]] <- var.list[temp.c[l]]
+          }
+          next_id <- nested[[id.t]]
+          if (length(next_id) != 1L || is.na(next_id)) {
+            flag <- FALSE
+          } else {
+            id.t <- next_id
+          }
+        }
+      }
+    }
+  }
+  design.M1
+}
+
+#' EMS model effect ids (e.g. \code{A}, \code{B(A)}) for a factor list and nesting spec.
+#' @param var.list factor names in model order
+#' @param nested character vector per factor ("" or parent names joined by "*"), or NULL
+#' @return character vector of effect names (no residual row)
+ems_design_effect_ids <- function(var.list, nested = NULL) {
+  var.list <- as.character(var.list)
+  if (length(var.list) < 2L) {
+    return(character(0))
+  }
+  nested_idx <- ems_normalize_nested_spec(var.list, nested)
+  design.M1 <- ems_factorial_design_matrix(var.list)
+  if (length(which(!is.na(nested_idx))) > 0L) {
+    design.M1 <- ems_apply_nested_to_design(design.M1, var.list, nested_idx)
+  }
+  design.M1[is.na(design.M1)] <- ""
+  n <- length(var.list)
+  out <- apply(design.M1, 1, function(x) {
+    if (paste(x[-seq_len(n)], collapse = "") != "") {
+      paste(
+        paste(x[seq_len(n)][x[seq_len(n)] != ""], collapse = ":"),
+        "(",
+        paste(x[-seq_len(n)][x[-seq_len(n)] != ""], collapse = "*"),
+        ")",
+        sep = ""
+      )
+    } else {
+      paste(x[seq_len(n)][x[seq_len(n)] != ""], collapse = ":")
+    }
+  })
+  out <- stringr::str_sort(out)
+  out[order(stringr::str_count(out, ":"))]
+}
+
 #' Calculate ANOVA table with EMS (ROI override)
 #' Modified from the monolithic app to avoid package bugs and to keep results unrounded.
 #'
@@ -380,18 +513,42 @@ ApproxF_roi <- function(SS.table, approx.name) {
   list(Appr.F = Appr.F, df1 = Appr.F.df1, df2 = Appr.F.df2, Appr.Pvalue = Appr.Pvalue)
 }
 
+#' Flatten pooled-ANOVA EMS list elements to a single string for matching.
+#' @keywords internal
+pooled_anova_ems_string <- function(ems_piece) {
+  if (length(ems_piece) < 1L) return("")
+  paste(as.character(ems_piece), collapse = "+")
+}
+
+#' Pick one denominator row when multiple EMS rows match the same error term.
+#' @keywords internal
+pooled_anova_denominator_index <- function(ems_terms, ss_temp, rownames_ss, current_i) {
+  ems_chr <- vapply(ems_terms, pooled_anova_ems_string, character(1))
+  den_idx <- which(ems_chr == ss_temp)
+  if (length(den_idx) < 1L) return(NA_integer_)
+  if (length(den_idx) == 1L) return(den_idx[[1L]])
+  residual_idx <- which(rownames_ss %in% c("Residuals", "Residual", "Within Cells"))
+  hit <- intersect(den_idx, residual_idx)
+  if (length(hit) >= 1L) return(hit[[1L]])
+  den_idx <- setdiff(den_idx, current_i)
+  if (length(den_idx) < 1L) return(NA_integer_)
+  den_idx[[1L]]
+}
+
 #' Pool nonsignificant interactions to Residuals (ROI override)
 PooledANOVA_roi <- function(SS.table, del.ID) {
   temp.SS <- SS.table[, c("Df", "SS")]
   temp.EMS <- as.character(SS.table$EMS)
-  Model.level <- SS.table$Model.Level
-  temp.ID <- del.ID[del.ID != "Residuals"]
+  Model.level <- if ("Model.Level" %in% names(SS.table)) SS.table$Model.Level else NULL
+  temp.ID <- del.ID[del.ID != "Residuals" & del.ID != "Residual"]
   temp.ID <- unlist(lapply(temp.ID, function(x) which(rownames(temp.SS) == x)))
   temp.EMS <- as.character(temp.EMS)
 
-  temp.SS[nrow(temp.SS), ] <- apply(temp.SS[del.ID, ], 2, function(x) sum(x, na.rm = TRUE))
-  temp.SS <- temp.SS[-temp.ID, ]
-  Model.level <- Model.level[-temp.ID]
+  temp.SS[nrow(temp.SS), ] <- apply(temp.SS[del.ID, , drop = FALSE], 2, function(x) sum(x, na.rm = TRUE))
+  temp.SS <- temp.SS[-temp.ID, , drop = FALSE]
+  if (!is.null(Model.level)) {
+    Model.level <- Model.level[-temp.ID]
+  }
 
   temp.SS[, 3] <- temp.SS[, 2] / temp.SS[, 1]
   temp.split.EMS <- lapply(temp.EMS, function(x) {
@@ -414,8 +571,14 @@ PooledANOVA_roi <- function(SS.table, del.ID) {
     SS.temp <- paste(temp.split.EMS[[i]][-n.SE], collapse = "+")
     test.EMS <- temp.split.EMS[[i]]
     if (sum(temp.EMS == SS.temp) != 0) {
-      F.temp <- temp.SS[i, 3] / temp.SS[which(EMS.t == SS.temp), 3]
-      pValue.temp <- 1 - stats::pf(F.temp, temp.SS[i, 1], temp.SS[which(EMS.t == SS.temp), 1])
+      den_idx <- pooled_anova_denominator_index(EMS.t, SS.temp, rownames(temp.SS), i)
+      if (is.na(den_idx)) {
+        F.temp <- NA_real_
+        pValue.temp <- NA_real_
+      } else {
+        F.temp <- temp.SS[i, 3] / temp.SS[den_idx, 3]
+        pValue.temp <- 1 - stats::pf(F.temp, temp.SS[i, 1], temp.SS[den_idx, 1])
+      }
     } else if (i != nrow(temp.SS) && length(test.EMS) != 1) {
       Appr.result <- ApproxF_roi(data.frame(temp.SS, EMS = unlist(EMS.t)), rownames(temp.SS)[i])
       F.temp <- Appr.result$Appr.F
@@ -425,7 +588,7 @@ PooledANOVA_roi <- function(SS.table, del.ID) {
       pValue.temp <- NA
     }
 
-    if (!is.na(pValue.temp)) {
+    if (length(pValue.temp) == 1L && !is.na(pValue.temp)) {
       if (pValue.temp <= 0.001) {
         Signif.temp <- "***"
       } else if (pValue.temp <= 0.01) {

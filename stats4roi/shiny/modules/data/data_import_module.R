@@ -70,8 +70,9 @@ create_data_import_server <- function(id) {
       data = reactive(imported$data()),
       name = reactive(imported$name()),
       new_data_signal = reactive({
-        req(imported$data())
-        TRUE
+        data <- imported$data()
+        req(data)
+        digest::digest(data)
       })
     ))
   })

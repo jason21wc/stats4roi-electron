@@ -40,7 +40,7 @@ create_msa_server <- function(id, filtered_data, reactive_color_palette) {
     # Register module with global invalidation system (filled in later)
     register_module(
       module_name = "msa",
-      ui_reset_function = function(session) {
+      ui_reset_function = function() {
         # Continuous MSA resets
         updatePickerInput(session, "msa_UI1", selected = character(0))
         updatePickerInput(session, "msa_UI2", selected = character(0))

@@ -50,7 +50,7 @@ create_crosstabs_server <- function(id, filtered_data, reactive_color_palette) {
     # REGISTER MODULE WITH GLOBAL DATA INVALIDATION SYSTEM
     # =========================================================================
     register_module("crosstabs_module", 
-      ui_reset = function(session) {
+      ui_reset = function() {
         # Reset all Crosstabs UI elements to defaults
         # TODO: Add specific resets as needed
       },
@@ -281,9 +281,8 @@ create_crosstabs_server <- function(id, filtered_data, reactive_color_palette) {
       table <- crosstab_table_data$table_data()
       req(table)
       
-      # Store the namespace function result for selection (worker's namespace)
-      worker_ns <- NS("crosstab_data")
-      ns_string <- worker_ns("selection")
+      # Selection must target the nested worker input (e.g. crosstabs-crosstab_data-selection)
+      ns_string <- ns("crosstab_data-selection")
       
       # Create the rhandsontable with explicit headers
       hot <- rhandsontable::rhandsontable(table, 
@@ -329,7 +328,7 @@ create_crosstabs_server <- function(id, filtered_data, reactive_color_palette) {
           Shiny.setInputValue('%s', {
             rows: [...new Set(selectedRows)],
             cols: [...new Set(selectedCols)]
-          });
+          }, {priority: 'event'});
         }", ns_string)
       )
       

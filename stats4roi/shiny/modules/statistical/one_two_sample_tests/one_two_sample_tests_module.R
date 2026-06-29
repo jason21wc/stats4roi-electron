@@ -39,6 +39,25 @@ names(choice_mean_alt_3) <- c("\U0394 of sample is not equal to \U0394",
 
 beta_statement <- "Power to reject the null if the observed difference was real = "
 
+# HTML table row for matched-pairs variance test (when var.test.* present in estimate)
+md_matched_pairs_var_test_row <- function(estimate, conf, p_for_sig = NULL) {
+  if (is.null(estimate) || !all(c("var.test.t", "var.test.df", "var.test.p") %in% names(estimate))) {
+    return(character(0))
+  }
+  if (is.null(p_for_sig)) {
+    p_for_sig <- estimate[["var.test.p"]]
+  }
+  star <- if (length(p_for_sig) == 1L && !is.na(p_for_sig) && p_for_sig < 1 - conf) "*" else ""
+  c(
+    "<tr>",
+    "<td>", "Matched Pairs t-test for ", "$\\sigma^2_1 = \\sigma^2_2$", ": ", "</td>",
+    "<td>", paste("t = "), estimate[["var.test.t"]], "</td>",
+    "<td>", "df =", estimate[["var.test.df"]], "</td>",
+    "<td>", paste("p = ", estimate[["var.test.p"]], star), "</td>",
+    "</tr>"
+  )
+}
+
 choice_prop_alt_1 <- c("two.sided", "less", "greater")
 names(choice_prop_alt_1) <- c("\U03C0 of sample is not equal to \U03C0\U2080",
                              "\U03C0 of sample is less than \U03C0\U2080",
@@ -79,6 +98,8 @@ choice_np_alt_text <- c(
   "x\U2099 - y\U2099 is not equal to 0", "x\U2099 - y\U2099 is less than 0", "x\U2099 - y\U2099 is greater than 0",
   "Pass\U2081 Fail\U2082 is not equal to Fail\U2081 Pass\U2082", "Pass\U2081 Fail\U2082 is less than Fail\U2081 Pass\U2082", "Pass\U2081 Fail\U2082 is greater than Fail\U2081 Pass\U2082"
 )
+
+source("modules/statistical/one_two_sample_tests/ots_group_utils.R")
 
 # Source sub-module UI components - Adding back step by step
 source("modules/statistical/one_two_sample_tests/ui/test_reference_ui.R")
@@ -165,7 +186,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # REGISTER MODULE WITH GLOBAL DATA INVALIDATION SYSTEM
     # =========================================================================
     register_module("one_two_sample_tests_module", 
-      ui_reset = function(session) {
+      ui_reset = function() {
         # Reset all One- and Two-Sample Tests UI elements to defaults
         # TODO: Add specific resets as tabs are implemented
       },
@@ -201,7 +222,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           # Use Data mode inputs
           conf_m_d_data = input$conf_m_d_data,
           decimal_m_d_d = input$decimal_m_d_d,
-          md_data_selected_columns = input$md_data_selected_columns,
+          md_data_col_g1 = input$md_data_col_g1,
+          md_data_col_g2 = input$md_data_col_g2,
           md_data_UI1 = input$md_data_UI1,
           md_data_UI2 = input$md_data_UI2,
           md_data_UI3 = input$md_data_UI3,
@@ -271,26 +293,37 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # Generate test number for Use Data mode
     data_md_test_num <- reactive({
       type <- input$data_type_md
-      md_data_selected_columns <- input$md_data_selected_columns
       sigma_known_data <- input$sigma_known_data
       dep_or_indep_data <- input$dep_or_indep_data
       one_samp_var_data <- input$one_samp_var_data
       
-      # Determine if one or two sample based on number of columns selected
       if (type == 1) {
-        # Column mode - check number of columns
-        if (is.null(md_data_selected_columns) || length(md_data_selected_columns) == 0) {
+        two_col <- ots_column_mode_ready(
+          col_g1 = input$md_data_col_g1,
+          col_g2 = input$md_data_col_g2,
+          two_sample = TRUE
+        )
+        one_col <- ots_column_mode_ready(col_g1 = input$md_data_col_g1, two_sample = FALSE)
+        if (!one_col) {
           return(NULL)
         }
-        is_one_sample <- length(md_data_selected_columns) == 1
+        is_one_sample <- !two_col
       } else {
-        # Reference column mode - always two sample (has g1 and g2)
+        if (!ots_reference_mode_ready(
+          input$data_choice_ref,
+          input$data_choice_data,
+          input$data_choice_g1,
+          input$data_choice_g2,
+          two_sample = TRUE
+        )) {
+          return(NULL)
+        }
         is_one_sample <- FALSE
       }
       
-      req(sigma_known_data)
-      if (!is_one_sample) req(dep_or_indep_data)
-      if (is_one_sample) req(!is.null(one_samp_var_data))
+      if (is.null(sigma_known_data)) return(NULL)
+      if (!is_one_sample && is.null(dep_or_indep_data)) return(NULL)
+      if (is_one_sample && is.null(one_samp_var_data)) return(NULL)
       
       output_data_md_test_num <- NULL
       
@@ -329,6 +362,24 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       output_data_md_test_num
     })
     
+    md_data_groups <- reactive({
+      data <- filtered_data()
+      req(data, input$data_type_md)
+      test_num <- data_md_test_num()
+      two_sample <- !is.null(test_num) && test_num %in% c(4L, 5L, 6L, 7L)
+      ots_groups_from_inputs(
+        data,
+        mode = input$data_type_md,
+        col_g1 = input$md_data_col_g1,
+        col_g2 = input$md_data_col_g2,
+        ref_col = input$data_choice_ref,
+        data_col = input$data_choice_data,
+        level_g1 = input$data_choice_g1,
+        level_g2 = input$data_choice_g2,
+        two_sample = two_sample
+      )
+    })
+    
     # =========================================================================
     # RENDER WORKER OUTPUTS (coordinator handles all rendering)
     # =========================================================================
@@ -337,6 +388,18 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     
     # Render Enter Statistics results
     output$pretty_md <- renderUI({
+      md_test_num()
+      input$md_alt
+      input$conf
+      input$md_UI1
+      input$md_UI2
+      input$md_UI3
+      input$md_UI4
+      input$md_UI5
+      input$md_UI6
+      input$t_type
+      input$md_t_dep_type_stat
+      
       results <- means_dispersion_result$mean_out()
       
       # Handle NULL or character results
@@ -635,6 +698,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           output_html <- HTML(c(
             paste("<b>", results$method, "</b>"),
             "<br><br>",
+            ots_dbar_pairing_note_html(),
             "<table>",
             "<tr>",
             "<td>", paste(withMathJax("$\\bar{D} = $"), results[["estimate"]][["sample.mean"]]), "</td>",
@@ -651,14 +715,14 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
             "<table>",
             "<tr>",
             "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-            "<td>", paste(withMathJax("$\\Delta :$")), "</td>",
+            "<td>", "$\\Delta :$", "</td>",
             "<td>", results[["conf.int"]][1], "</td>",
             "<td>", " to ", "</td>",
             "<td>", results[["conf.int"]][2], "</td>",
             "</tr>",
             "<tr>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$\\sigma_{D} :$")), "</td>",
+            "<td>", "$\\sigma_{D} :$", "</td>",
             "<td>", results[["estimate"]][["sd.lowerci"]], "</td>",
             "<td>", " to ", "</td>",
             "<td>", results[["estimate"]][["sd.upperci"]], "</td>",
@@ -675,8 +739,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
             "</table>"
           ))
         } else if (t_dep_type == 2) {
-          # Mean difference type
-          req(UI4, UI5, UI6)
+          # Mean difference type (match monolithic: block stale n2 in md_UI6 until r in [-1, 1])
+          req(UI4, UI5, UI6 <= 1, UI6 >= -1)
           
           # Correlation test
           corr_test <- cor.pearson.r.onesample.simple(
@@ -751,12 +815,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
             "<td>", "df =", corr_test$estimate[2], "</td>",
             "<td>", paste("p = ", corr_test$p.value, if (corr_test$p.value < 1 - conf) {"*"}), "</td>",
             "</tr>",
-            "<tr>",
-            "<td>", paste("Dependent test for ", withMathJax("$\\sigma_{1}^2=\\sigma_{2}^2$"), ": "), "</td>",
-            "<td>", paste("t = "), results$estimate[24], "</td>",
-            "<td>", "df =", results$estimate[25], "</td>",
-            "<td>", paste("p = ", results$estimate[26], if (results$estimate[26] < 1 - conf) {"*"}), "</td>",
-            "</tr>",
+            md_matched_pairs_var_test_row(results$estimate, conf),
             "<tr>",
             "<td>", paste("Test for ", names(choice_mean_alt_2[alt_num]), ": "), "</td>",
             "<td>", paste("t = ", results$statistic), "</td>",
@@ -773,6 +832,24 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     
     # Render Use Data results
     output$pretty_md_data <- renderUI({
+      # Read dynamic UI inputs to establish dependencies (may be NULL until rendered)
+      test_num <- data_md_test_num()
+      type <- input$data_type_md
+      input$sigma_known_data
+      input$dep_or_indep_data
+      input$one_samp_var_data
+      input$one_or_two_md_data
+      input$t_type_dat
+      input$md_t_dep_type
+      input$md_data_col_g1
+      input$md_data_col_g2
+      input$data_choice_ref
+      input$data_choice_data
+      input$data_choice_g1
+      input$data_choice_g2
+      input$conf_m_d_data
+      data <- filtered_data()
+      
       results <- means_dispersion_result$m_d_data_out()
       
       # Handle NULL or character results
@@ -793,15 +870,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       UI6 <- input$md_data_UI6
       alt <- input$one_or_two_md_data
       R <- input$decimal_m_d_d
-      test_num <- data_md_test_num()
-      md_data_selected_columns <- input$md_data_selected_columns
-      data <- filtered_data()
-      type <- input$data_type_md
-      
-      # Check required inputs
-      if (is.null(alt) || is.null(test_num)) {
-        return(HTML("<p>Please select all required options.</p>"))
-      }
+      groups <- md_data_groups()
       
       # Convert alternative to number
       if (alt == "two.sided") {
@@ -815,46 +884,46 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       # Handle results structure - test 5 returns a list with main, levene, adm_n1
       # Other tests return the results directly
       # Note: Rounding only occurs during table rendering, not here
+      main_results <- results
+      levene <- NULL
+      adm_n1 <- NULL
       if (is.list(results) && "main" %in% names(results)) {
-        # Test 5 - extract components (all unrounded - rounding happens during table rendering)
         main_results <- results$main
         levene <- results$levene
         adm_n1 <- results$adm_n1
-        # Create rounded version of main results for display
         resultsR <- ro(main_results, R)
       } else {
-        # Other tests - use results directly (unrounded)
-        main_results <- results
-        levene <- NULL
-        adm_n1 <- NULL
-        # Create rounded version for display
         resultsR <- ro(results, R)
       }
+      method_label <- main_results$method
       
       output_html <- NULL
+      if (is.null(groups) || is.null(groups$g1)) {
+        return(HTML("<p>Group assignment is not ready. Check factor, response, and level selections.</p>"))
+      }
       
       # Test 1: One-sample z-test
       if (test_num == 1) {
-        output_html <- HTML(c(
-          paste("<b>", results$method, "</b>"),
+        output_html <- ots_html_flatten(c(
+          paste("<b>", method_label, "</b>"),
           "<br><br>",
           "<table>",
           "<tr>",
-          "<td>", paste(withMathJax("$\\bar{X} = $"), resultsR$estimate[1]), "</td>",
+          "<td>", ots_mj_paste_stat("\\bar{X}", groups$g1, resultsR$estimate[1]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\mu_{0}=$"), resultsR$parameter), "</td>",
+          "<td>", paste0("$\\mu_{0} = $", resultsR$parameter), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$\\sigma = $"), ro(UI3, R)), "</td>",
+          "<td>", ots_mj_paste_stat("\\sigma", groups$g1, ro(UI3, R)), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n = $"), resultsR$estimate[2]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, resultsR$estimate[2]), "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
           "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-          "<td>", paste(withMathJax("$\\mu :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\mu", groups$g1), "</td>",
           "<td>", resultsR$conf.int[1], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$conf.int[2], "</td>",
@@ -872,33 +941,33 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       }
       # Test 2: One-sample t-test
       else if (test_num == 2) {
-        output_html <- HTML(c(
-          paste("<b>", results$method, "</b>"),
+        output_html <- ots_html_flatten(c(
+          paste("<b>", method_label, "</b>"),
           "<br><br>",
           "<table>",
           "<tr>",
-          "<td>", paste(withMathJax("$\\bar{X} = $"), resultsR$estimate[1]), "</td>",
+          "<td>", ots_mj_paste_stat("\\bar{X}", groups$g1, resultsR$estimate[1]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\mu_{0}=$"), resultsR$parameter), "</td>",
+          "<td>", paste0("$\\mu_{0} = $", resultsR$parameter), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$s = $"), resultsR$estimate[8]), "</td>",
+          "<td>", ots_mj_paste_stat("s", groups$g1, resultsR$estimate[8]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n = $"), resultsR$estimate[3] + 1), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, resultsR$estimate[3] + 1), "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
           "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-          "<td>", paste(withMathJax("$\\mu :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\mu", groups$g1), "</td>",
           "<td>", resultsR$conf.int[1], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$conf.int[2], "</td>",
           "</tr>",
           "<tr>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\sigma :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\sigma", groups$g1), "</td>",
           "<td>", resultsR$estimate[7], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[9], "</td>",
@@ -917,23 +986,23 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       }
       # Test 3: One-sample variance test
       else if (test_num == 3) {
-        output_html <- HTML(c(
-          paste("<b>", results$method, "</b>"),
+        output_html <- ots_html_flatten(c(
+          paste("<b>", method_label, "</b>"),
           "<br><br>",
           "<table>",
           "<tr>",
-          "<td>", paste(withMathJax("$s = $"), ro(results$estimate[1]^0.5, R)), "</td>",
+          "<td>", ots_mj_paste_stat("s", groups$g1, ro(results$estimate[1]^0.5, R)), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\sigma_{0}=$"), ro(UI2, R)), "</td>",
+          "<td>", paste0("$\\sigma_{0} = $", ro(UI2, R)), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n = $"), ro(results$estimate[3], R)), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, ro(results$estimate[3], R)), "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
           "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-          "<td>", paste(withMathJax("$\\sigma :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\sigma", groups$g1), "</td>",
           "<td>", ro(results$conf.int[1]^0.5, R), "</td>",
           "<td>", " to ", "</td>",
           "<td>", ro(results$conf.int[2]^0.5, R), "</td>",
@@ -942,7 +1011,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<table>",
           "<tr>",
           "<td>", paste("Test for ", names(choice_sd_alt_1[alt_num]), ": "), "</td>",
-          "<td>", paste(withMathJax("$\\chi^2 = $"), ro(results$statistic, R)), "</td>",
+          "<td>", paste0("$\\chi^2 = $", ro(results$statistic, R)), "</td>",
           "<td>", paste("df = ", ro(results$estimate[2], R)), "</td>",
           "<td>", paste("p = ", ro(results$p.value, R), if (results$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
@@ -952,54 +1021,49 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       }
       # Test 4: Two-sample z-test independent
       else if (test_num == 4) {
-        if (type == 1) {
-          group1_name <- names(data)[as.numeric(md_data_selected_columns[1])]
-          group2_name <- names(data)[as.numeric(md_data_selected_columns[2])]
-        } else {
-          group1_name <- paste("Group 1 = ", input$data_choice_g1)
-          group2_name <- paste("Group 2 = ", input$data_choice_g2)
+        if (is.null(groups$g2)) {
+          return(HTML("<p>Select Group 2 level for this two-sample test.</p>"))
         }
-        
-        output_html <- HTML(c(
-          paste("<b>", results$method, "</b>"),
+        output_html <- ots_html_flatten(c(
+          paste("<b>", method_label, "</b>"),
           "<br><br>",
           "<table>",
-          "<tr><td style='border-bottom:1px solid #000'>", group1_name, "</td><td style='border-bottom:1px solid #000'></td>",
-          "<td style='border-bottom:1px solid #000'>", group2_name, "</td></tr>",
+          "<tr><td style='border-bottom:1px solid #000'>", groups$g1$name, "</td><td style='border-bottom:1px solid #000'></td>",
+          "<td style='border-bottom:1px solid #000'>", groups$g2$name, "</td></tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$\\bar{X}_{1} = $"), resultsR$estimate[3]), "</td>",
+          "<td>", ots_mj_paste_stat("\\bar{X}", groups$g1, resultsR$estimate[3]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\bar{X}_{2}=$"), resultsR$estimate[7]), "</td>",
+          "<td>", ots_mj_paste_stat("\\bar{X}", groups$g2, resultsR$estimate[7]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$\\sigma_{1} = $"), ro(UI3, R)), "</td>",
+          "<td>", ots_mj_paste_stat("\\sigma", groups$g1, ro(UI3, R)), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\sigma_{2} = $"), ro(UI4, R)), "</td>",
+          "<td>", ots_mj_paste_stat("\\sigma", groups$g2, ro(UI4, R)), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1} = $"), resultsR$estimate[6]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, resultsR$estimate[6]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2} = $"), resultsR$estimate[10]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g2, resultsR$estimate[10]), "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
           "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-          "<td>", paste(withMathJax("$\\mu_{1} :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\mu", groups$g1), "</td>",
           "<td>", resultsR$estimate[4], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[5], "</td>",
           "</tr>",
           "<tr>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\mu_{2} :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\mu", groups$g2), "</td>",
           "<td>", resultsR$estimate[8], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[9], "</td>",
           "</tr>",
           "<tr>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\mu_{1}-\\mu_{2} :$")), "</td>",
+          "<td>", paste(ots_mj_diff_label("\\mu", groups$g1, groups$g2)), "</td>",
           "<td>", resultsR$conf.int[1], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$conf.int[2], "</td>",
@@ -1016,72 +1080,63 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       }
       # Test 5: Two-sample t-test independent
       else if (test_num == 5) {
-        req(data, type)
-        
-        # Get group names for display
-        if (type == 1) {
-          req(md_data_selected_columns)
-          group1_name <- names(data)[as.numeric(md_data_selected_columns[1])]
-          group2_name <- names(data)[as.numeric(md_data_selected_columns[2])]
-        } else {
-          group1_name <- paste("Group 1 = ", input$data_choice_g1)
-          group2_name <- paste("Group 2 = ", input$data_choice_g2)
+        if (is.null(groups$g2)) {
+          return(HTML("<p>Select Group 2 level for this two-sample test.</p>"))
         }
-        
-        output_html <- HTML(c(
-          paste("<b>", results$method, "</b>"),
+        output_html <- ots_html_flatten(c(
+          paste("<b>", method_label, "</b>"),
           "<br><br>",
           "<table>",
-          "<tr><td style='border-bottom:1px solid #000'>", group1_name, "</td><td style='border-bottom:1px solid #000'></td>",
-          "<td style='border-bottom:1px solid #000'>", group2_name, "</td></tr>",
+          "<tr><td style='border-bottom:1px solid #000'>", groups$g1$name, "</td><td style='border-bottom:1px solid #000'></td>",
+          "<td style='border-bottom:1px solid #000'>", groups$g2$name, "</td></tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$\\bar{X}_{1} = $"), resultsR$estimate[4]), "</td>",
+          "<td>", ots_mj_paste_stat("\\bar{X}", groups$g1, resultsR$estimate[4]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\bar{X}_{2}=$"), resultsR$estimate[14]), "</td>",
+          "<td>", ots_mj_paste_stat("\\bar{X}", groups$g2, resultsR$estimate[14]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$s_{1} = $"), resultsR$estimate[11]), "</td>",
+          "<td>", ots_mj_paste_stat("s", groups$g1, resultsR$estimate[11]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$s_{2} = $"), resultsR$estimate[21]), "</td>",
+          "<td>", ots_mj_paste_stat("s", groups$g2, resultsR$estimate[21]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1} = $"), resultsR$estimate[7]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, resultsR$estimate[7]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2} = $"), resultsR$estimate[17]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g2, resultsR$estimate[17]), "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
           "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-          "<td>", paste(withMathJax("$\\mu_{1} :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\mu", groups$g1), "</td>",
           "<td>", resultsR$estimate[5], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[6], "</td>",
           "</tr>",
           "<tr>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\mu_{2} :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\mu", groups$g2), "</td>",
           "<td>", resultsR$estimate[15], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[16], "</td>",
           "</tr>",
           "<tr>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\sigma_{1} :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\sigma", groups$g1), "</td>",
           "<td>", resultsR$estimate[12], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[13], "</td>",
           "</tr>",
           "<tr>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\sigma_{2} :$")), "</td>",
+          "<td>", ots_mj_paste_stat("\\sigma", groups$g2), "</td>",
           "<td>", resultsR$estimate[22], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[23], "</td>",
           "</tr>",
           "<tr>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$\\mu_{1}-\\mu_{2} :$")), "</td>",
+          "<td>", paste(ots_mj_diff_label("\\mu", groups$g1, groups$g2)), "</td>",
           "<td>", resultsR$conf.int[1], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$conf.int[2], "</td>",
@@ -1089,7 +1144,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "</table>",
           "<table>",
           "<tr>",
-          "<td>", paste("Tests for ", withMathJax("$\\sigma_{1}^2=\\sigma_{2}^2$"), ": "), "</td>",
+          "<td>", paste("Tests for ", ots_mj_var_ratio_label(groups$g1, groups$g2), ": "), "</td>",
           "</tr>",
           "<tr>",
           "<td align='right'>", "F-test", "</td>",
@@ -1107,7 +1162,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           ),
           if (!is.null(adm_n1)) c(
             "<tr>",
-            "<td align='right'>", paste("ADM", withMathJax("$_{n-1} $")), "</td>",
+            "<td align='right'>", "ADM", "$_{n-1}$", "</td>",
             "<td>", paste("t = ", ro(adm_n1$statistic, R)), "</td>",
             "<td>", paste("df = ", ro(adm_n1$estimate[3], R)), "</td>",
             "<td>", paste("p = ", ro(adm_n1$p.value, R), if (adm_n1$p.value < 1 - conf) {"*"}), "</td>",
@@ -1125,37 +1180,43 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       # Test 7: Two-sample t-test dependent
       else if (test_num == 7) {
         dep_t_type <- input$md_t_dep_type
-        req(dep_t_type)
+        if (is.null(dep_t_type)) {
+          return(HTML("<p>Select dependent t-test type.</p>"))
+        }
         
         if (dep_t_type == 1) {
+          if (is.null(groups$g2)) {
+            return(HTML("<p>Select Group 2 level for this dependent test.</p>"))
+          }
           # d-bar type
-          output_html <- HTML(c(
-            paste("<b>", results$method, "</b>"),
+          output_html <- ots_html_flatten(c(
+            paste("<b>", method_label, "</b>"),
             "<br><br>",
+            ots_dbar_pairing_note_html(groups$g1, groups$g2),
             "<table>",
             "<tr>",
-            "<td>", paste(withMathJax("$\\bar{D} = $"), resultsR[["estimate"]][["sample.mean"]]), "</td>",
+            "<td>", paste0("$\\bar{D} = $", resultsR[["estimate"]][["sample.mean"]]), "</td>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$\\Delta=$"), resultsR[["parameter"]][["null hypothesis mean"]]), "</td>",
+            "<td>", paste0("$\\Delta = $", resultsR[["parameter"]][["null hypothesis mean"]]), "</td>",
             "</tr>",
             "<tr>",
-            "<td>", paste(withMathJax("$s_{D} = $"), resultsR[["estimate"]][["sd"]]), "</td>",
+            "<td>", paste0("$s_{D} = $", resultsR[["estimate"]][["sd"]]), "</td>",
             "</tr>",
             "<tr>",
-            "<td>", paste(withMathJax("$n = $"), resultsR[["estimate"]][["df"]] + 1), "</td>",
+            "<td>", paste0("$n = $", resultsR[["estimate"]][["df"]] + 1), "</td>",
             "</tr>",
             "</table>",
             "<table>",
             "<tr>",
             "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-            "<td>", paste(withMathJax("$\\Delta :$")), "</td>",
+            "<td>", "$\\Delta :$", "</td>",
             "<td>", resultsR[["conf.int"]][1], "</td>",
             "<td>", " to ", "</td>",
             "<td>", resultsR[["conf.int"]][2], "</td>",
             "</tr>",
             "<tr>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$\\sigma_{D} :$")), "</td>",
+            "<td>", "$\\sigma_{D} :$", "</td>",
             "<td>", resultsR[["estimate"]][["sd.lowerci"]], "</td>",
             "<td>", " to ", "</td>",
             "<td>", resultsR[["estimate"]][["sd.upperci"]], "</td>",
@@ -1172,41 +1233,15 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
             "</table>"
           ))
         } else if (dep_t_type == 2) {
-          # Mean difference type - similar to test 5 but with correlation test
-          if (type == 1) {
-            group1_name <- names(data)[as.numeric(md_data_selected_columns[1])]
-            group2_name <- names(data)[as.numeric(md_data_selected_columns[2])]
-          } else {
-            group1_name <- paste("Group 1 = ", input$data_choice_g1)
-            group2_name <- paste("Group 2 = ", input$data_choice_g2)
+          if (is.null(groups$g2)) {
+            return(HTML("<p>Select Group 2 level for this two-sample test.</p>"))
           }
-          
-          # Correlation test - calculate from actual data
-          if (type == 1) {
-            req(md_data_selected_columns, length(md_data_selected_columns) >= 2, data)
-            ave_data <- na.omit(data.frame(g1 = data[, as.numeric(md_data_selected_columns[1])], 
-                                             g2 = data[, as.numeric(md_data_selected_columns[2])]))
-            req(nrow(ave_data) > 0)
-            rho_val <- cor(ave_data$g1, ave_data$g2)
-            n_val <- nrow(ave_data)
-          } else {
-            ref_col <- as.numeric(input$data_choice_ref)
-            data_col <- as.numeric(input$data_choice_data)
-            g1_col <- input$data_choice_g1
-            g2_col <- input$data_choice_g2
-            req(ref_col, data_col, g1_col, g2_col, data,
-                data_col > 0, data_col <= ncol(data),
-                ref_col > 0, ref_col <= ncol(data))
-            temp1 <- data[[data_col]][which(data[[ref_col]] == g1_col)]
-            temp2 <- data[[data_col]][which(data[[ref_col]] == g2_col)]
-            req(length(temp1) > 0, length(temp2) > 0,
-                is.numeric(temp1) || is.logical(temp1),
-                is.numeric(temp2) || is.logical(temp2))
-            temp <- na.omit(data.frame(temp1, temp2))
-            req(nrow(temp) > 0)
-            rho_val <- cor(temp$temp1, temp$temp2)
-            n_val <- nrow(temp)
+          paired <- ots_paired_frame(groups$g1$x, groups$g2$x)
+          if (is.null(paired)) {
+            return(HTML("<p>Need equal-length groups for dependent test.</p>"))
           }
+          rho_val <- cor(paired$g1, paired$g2)
+          n_val <- nrow(paired)
           
           corr_test <- cor.pearson.r.onesample.simple(
             sample.r = rho_val,
@@ -1216,46 +1251,46 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           )
           corr_test <- ro(corr_test, R)
           
-          output_html <- HTML(c(
-            paste("<b>", results$method, "</b>"),
+          output_html <- ots_html_flatten(c(
+            paste("<b>", method_label, "</b>"),
             "<br><br>",
             "<table>",
-            "<tr><td style='border-bottom:1px solid #000'>", group1_name, "</td><td style='border-bottom:1px solid #000'></td>",
-            "<td style='border-bottom:1px solid #000'>", group2_name, "</td></tr>",
+            "<tr><td style='border-bottom:1px solid #000'>", groups$g1$name, "</td><td style='border-bottom:1px solid #000'></td>",
+            "<td style='border-bottom:1px solid #000'>", groups$g2$name, "</td></tr>",
             "<tr>",
-            "<td>", paste(withMathJax("$\\bar{X}_{1} = $"), resultsR$estimate[5]), "</td>",
+            "<td>", ots_mj_paste_stat("\\bar{X}", groups$g1, resultsR$estimate[5]), "</td>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$\\bar{X}_{2}=$"), resultsR$estimate[14]), "</td>",
+            "<td>", ots_mj_paste_stat("\\bar{X}", groups$g2, resultsR$estimate[14]), "</td>",
             "</tr>",
             "<tr>",
-            "<td>", paste(withMathJax("$s_{1} = $"), resultsR$estimate[11]), "</td>",
+            "<td>", ots_mj_paste_stat("s", groups$g1, resultsR$estimate[11]), "</td>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$s_{2} = $"), resultsR$estimate[21]), "</td>",
+            "<td>", ots_mj_paste_stat("s", groups$g2, resultsR$estimate[21]), "</td>",
             "</tr>",
             "<tr>",
-            "<td>", paste(withMathJax("$n = $"), n_val), "</td>",
+            "<td>", ots_mj_paste_stat("n", groups$g1, n_val), "</td>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$r_{xy} = $"), ro(rho_val, R)), "</td>",
+            "<td>", paste0("$r_{xy} = $", ro(rho_val, R)), "</td>",
             "</tr>",
             "</table>",
             "<table>",
             "<tr>",
             "<td>", paste(conf * 100, "% confidence interval for"), "</td>",
-            "<td>", paste(withMathJax("$\\mu_{1} :$")), "</td>",
+            "<td>", ots_mj_paste_stat("\\mu", groups$g1), "</td>",
             "<td>", resultsR$estimate[6], "</td>",
             "<td>", " to ", "</td>",
             "<td>", resultsR$estimate[7], "</td>",
             "</tr>",
             "<tr>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$\\mu_{2} :$")), "</td>",
+            "<td>", ots_mj_paste_stat("\\mu", groups$g2), "</td>",
             "<td>", resultsR$estimate[15], "</td>",
             "<td>", " to ", "</td>",
             "<td>", resultsR$estimate[16], "</td>",
             "</tr>",
             "<tr>",
             "<td>", "</td>",
-            "<td>", paste(withMathJax("$\\mu_{1}-\\mu_{2} :$")), "</td>",
+            "<td>", paste(ots_mj_diff_label("\\mu", groups$g1, groups$g2)), "</td>",
             "<td>", resultsR$conf.int[1], "</td>",
             "<td>", " to ", "</td>",
             "<td>", resultsR$conf.int[2], "</td>",
@@ -1263,11 +1298,15 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
             "</table>",
             "<table>",
             "<tr>",
-            "<td>", paste("Test for ", withMathJax("$\\rho=0$"), ": "), "</td>",
+            "<td>", "Test for ", "$\\rho=0$", ": ", "</td>",
             "<td>", paste("t = "), corr_test$statistic, "</td>",
             "<td>", "df =", corr_test$estimate[2], "</td>",
             "<td>", paste("p = ", corr_test$p.value, if (corr_test$p.value < 1 - conf) {"*"}), "</td>",
             "</tr>",
+            md_matched_pairs_var_test_row(
+              resultsR$estimate, conf,
+              p_for_sig = results$estimate[["var.test.p"]]
+            ),
             "<tr>",
             "<td>", paste("Test for ", names(choice_mean_alt_2[alt_num]), ": "), "</td>",
             "<td>", paste("t = ", resultsR$statistic), "</td>",
@@ -1279,7 +1318,13 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         }
       }
       
-      output_html
+      if (is.null(output_html)) {
+        if (is.null(test_num)) {
+          return(HTML("<p>Please complete test options above.</p>"))
+        }
+        return(HTML("<p>Results display is not available for this test configuration.</p>"))
+      }
+      ots_results_mathjax_wrap(output_html, ns("md_data_mj"))
     })
     
     # =========================================================================
@@ -1662,6 +1707,9 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           inputId = ns("md_UI6"),
           label = withMathJax("$$r_{xy}:{ }$$"),
           value = 0.5,
+          min = -1,
+          max = 1,
+          step = 0.01,
           width = "150px"
         )
       } else if (md_test_num == 7) {
@@ -1674,6 +1722,9 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
             inputId = ns("md_UI6"),
             label = withMathJax("$$r_{xy}:{ }$$"),
             value = 0.5,
+            min = -1,
+            max = 1,
+            step = 0.01,
             width = "150px"
           )
         }
@@ -1684,19 +1735,51 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # MEANS AND DISPERSION "USE DATA" TAB UI RENDERING FUNCTIONS
     # =========================================================================
     
-    # Data selection - columns mode
+    # Data selection - columns mode (explicit Group 1 / Group 2 assignment)
     output$data_choice_column <- renderUI({
       data <- filtered_data()
       req(data, ncol(data) > 0)
       
-      choices <- seq_len(ncol(data))
-      names(choices) <- names(data)
+      choices <- ots_column_choices(data)
       
-      checkboxGroupInput(
-        inputId = ns("md_data_selected_columns"),
-        label = "Analyze which column(s)?",
-        choices = choices
+      tagList(
+        selectInput(
+          inputId = ns("md_data_col_g1"),
+          label = "Group 1 column",
+          choices = c("Select column..." = "", choices),
+          selected = ""
+        ),
+        selectInput(
+          inputId = ns("md_data_col_g2"),
+          label = "Group 2 column (leave blank for one-sample)",
+          choices = c("—" = "", choices),
+          selected = ""
+        ),
+        tags$p(
+          class = "help-block text-muted",
+          style = "font-size: 0.85em; margin-top: 0;",
+          "For dependent tests, row i in Group 1 is paired with row i in Group 2."
+        )
       )
+    })
+    
+    output$ots_md_group_assignment <- renderUI({
+      data <- filtered_data()
+      req(data, input$data_type_md)
+      test_num <- data_md_test_num()
+      two_sample <- !is.null(test_num) && test_num %in% c(4L, 5L, 6L, 7L)
+      groups <- ots_groups_from_inputs(
+        data,
+        mode = input$data_type_md,
+        col_g1 = input$md_data_col_g1,
+        col_g2 = input$md_data_col_g2,
+        ref_col = input$data_choice_ref,
+        data_col = input$data_choice_data,
+        level_g1 = input$data_choice_g1,
+        level_g2 = input$data_choice_g2,
+        two_sample = two_sample
+      )
+      ots_group_assignment_html(groups)
     })
     
     # Data selection - reference column mode
@@ -1709,7 +1792,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       selectInput(
         inputId = ns("data_choice_ref"),
-        label = "Select Factor",
+        label = "Factor column",
         multiple = FALSE,
         choices = choices
       )
@@ -1732,7 +1815,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       selectInput(
         inputId = ns("data_choice_data"),
-        label = "Select Data",
+        label = "Response column",
         multiple = FALSE,
         choices = choices
       )
@@ -1746,10 +1829,11 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       factor_col <- as.numeric(ref)
       factor_values <- unique(na.omit(data[[factor_col]]))
+      ref_name <- names(data)[factor_col]
       
       selectInput(
         inputId = ns("data_choice_g1"),
-        label = "Group 1",
+        label = paste0("Group 1 level (", ref_name, ")"),
         choices = factor_values
       )
     })
@@ -1763,13 +1847,14 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       factor_col <- as.numeric(ref)
       factor_values <- unique(na.omit(data[[factor_col]]))
+      ref_name <- names(data)[factor_col]
       
       # Remove group 1 from choices
       factor_values <- factor_values[factor_values != factor_g1]
       
       selectInput(
         inputId = ns("data_choice_g2"),
-        label = "Group 2",
+        label = paste0("Group 2 level (", ref_name, ")"),
         choices = factor_values
       )
     })
@@ -1782,10 +1867,14 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       if (type == 1) {
         # Column mode
-        dep_col <- input$md_data_selected_columns
+        two_col <- ots_column_mode_ready(
+          col_g1 = input$md_data_col_g1,
+          col_g2 = input$md_data_col_g2,
+          two_sample = TRUE
+        )
         dep_or_indep <- input$dep_or_indep_data
         
-        if (length(dep_col) == 1) {
+        if (!two_col) {
           # One sample
           radioButtons(
             inputId = ns("sigma_known_data"),
@@ -1831,8 +1920,12 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       if (type == 1) {
         # Column mode
-        dep_col <- input$md_data_selected_columns
-        if (length(dep_col) > 1) {
+        two_col <- ots_column_mode_ready(
+          col_g1 = input$md_data_col_g1,
+          col_g2 = input$md_data_col_g2,
+          two_sample = TRUE
+        )
+        if (two_col) {
           selectInput(
             inputId = ns("dep_or_indep_data"),
             label = "Independent or Dependent Test?",
@@ -1854,12 +1947,16 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # One-sample variance checkbox for data mode
     output$md_data_one_samp_var <- renderUI({
       type <- input$data_type_md
-      md_data_selected_columns <- input$md_data_selected_columns
       sigma_known_data <- input$sigma_known_data
       
       # Determine if one sample
       if (type == 1) {
-        if (is.null(md_data_selected_columns) || length(md_data_selected_columns) != 1) {
+        two_col <- ots_column_mode_ready(
+          col_g1 = input$md_data_col_g1,
+          col_g2 = input$md_data_col_g2,
+          two_sample = TRUE
+        )
+        if (two_col) {
           return(NULL)
         }
         is_one_sample <- TRUE
@@ -1968,473 +2065,201 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # These calculate and display statistics from the data
     output$md_data_UI1 <- renderUI({
       test_num <- data_md_test_num()
-      md_data_selected_columns <- input$md_data_selected_columns
-      data <- filtered_data()
+      groups <- md_data_groups()
       decimal_m_d_d <- input$decimal_m_d_d
-      type <- input$data_type_md
-      ref_col <- as.numeric(input$data_choice_ref)
-      data_col <- as.numeric(input$data_choice_data)
-      g1_num <- input$data_choice_g1
-      g2_num <- input$data_choice_g2
+      req(test_num, groups)
       
-      req(data, test_num)
-      
-      if (test_num == 1) {
-        # One-sample z-test - show sample mean
-        req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-        average <- ro(mean(x = na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
-        label <- withMathJax(paste("$\\bar{X} = $", average))
-        HTML(paste(label))
-      } else if (test_num == 2) {
-        # One-sample t-test - show sample mean
-        req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-        average <- ro(mean(x = na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
-        label <- withMathJax(paste("$\\bar{X} = $", average))
-        HTML(paste(label))
-      } else if (test_num == 3) {
-        # One-sample var test - show sample std
-        req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-        std <- ro(sd(x = na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
-        label <- withMathJax(paste("$s = $", std))
-        HTML(paste(label))
-      } else if (test_num == 4 || test_num == 5) {
-        # Two-sample independent - show group 1 mean
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-          average <- ro(mean(x = na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
-        } else if (type == 2) {
-          req(data_col, ref_col, g1_num, data, 
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g1_data <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-          req(length(g1_data) > 0, is.numeric(g1_data) || is.logical(g1_data))
-          average <- ro(mean(x = na.omit(g1_data)), decimal_m_d_d)
-        }
-        label <- withMathJax(paste("$\\bar{X}_{1} = $", average))
-        HTML(paste(label))
-      } else if (test_num == 7) {
+      if (test_num %in% c(1L, 2L)) {
+        average <- ro(mean(na.omit(groups$g1$x)), decimal_m_d_d)
+        ots_stat_value_html("\\bar{X}", groups$g1, average)
+      } else if (test_num == 3L) {
+        std <- ro(sd(na.omit(groups$g1$x)), decimal_m_d_d)
+        withMathJax(paste("$s = $", std))
+      } else if (test_num %in% c(4L, 5L)) {
+        req(groups$g2)
+        average <- ro(mean(na.omit(groups$g1$x)), decimal_m_d_d)
+        ots_stat_value_html("\\bar{X}", groups$g1, average)
+      } else if (test_num == 7L) {
         dep_t_type <- input$md_t_dep_type
-        req(dep_t_type)
-        
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 2, data)
-          ave_data <- na.omit(data.frame(g1 = data[, as.numeric(md_data_selected_columns[1])], 
-                                           g2 = data[, as.numeric(md_data_selected_columns[2])]))
-          req(nrow(ave_data) > 0)
-          if (dep_t_type == 1) {
-            average <- ro(mean(x = ave_data$g2 - ave_data$g1), decimal_m_d_d)
-            label <- withMathJax(paste("$\\bar{D} = $", average))
-          } else if (dep_t_type == 2) {
-            average <- ro(mean(x = ave_data$g1), decimal_m_d_d)
-            label <- withMathJax(paste("$\\bar{X}_{1} = $", average))
-          }
-          HTML(paste(label))
+        req(dep_t_type, groups$g2)
+        paired <- ots_paired_frame(groups$g1$x, groups$g2$x)
+        if (is.null(paired)) {
+          return("Need equal length groups for dependent test")
+        }
+        if (dep_t_type == 1L) {
+          average <- ro(mean(paired$g1 - paired$g2), decimal_m_d_d)
+          withMathJax(paste("$\\bar{D} = $", average))
         } else {
-          req(data_col, ref_col, g1_num, g2_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          temp1 <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-          temp2 <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-          req(length(temp1) > 0, length(temp2) > 0,
-              is.numeric(temp1) || is.logical(temp1),
-              is.numeric(temp2) || is.logical(temp2))
-          if (length(temp1) != length(temp2)) {
-            return("Need equal length groups for dependent test")
-          }
-          temp <- na.omit(data.frame(temp1, temp2))
-          req(nrow(temp) > 0)
-          if (dep_t_type == 1) {
-            average <- ro(mean(temp$temp1 - temp$temp2), decimal_m_d_d)
-            label <- withMathJax(paste("$\\bar{D} = $", average))
-          } else if (dep_t_type == 2) {
-            average <- ro(mean(temp$temp1), decimal_m_d_d)
-            label <- withMathJax(paste("$\\bar{X}_{1} = $", average))
-          }
-          HTML(paste(label))
+          average <- ro(mean(paired$g1), decimal_m_d_d)
+          ots_stat_value_html("\\bar{X}", groups$g1, average)
         }
       }
     })
     
     output$md_data_UI2 <- renderUI({
       test_num <- data_md_test_num()
-      md_data_selected_columns <- input$md_data_selected_columns
-      data <- filtered_data()
+      groups <- md_data_groups()
       decimal_m_d_d <- input$decimal_m_d_d
-      type <- input$data_type_md
-      ref_col <- as.numeric(input$data_choice_ref)
-      data_col <- as.numeric(input$data_choice_data)
-      g1_num <- input$data_choice_g1
-      g2_num <- input$data_choice_g2
-      
       req(test_num)
       
-      if (test_num == 1 || test_num == 2) {
-        # One-sample tests - parameter input
+      if (test_num %in% c(1L, 2L)) {
         numericInput(
           inputId = ns("md_data_UI2"),
           label = withMathJax("$\\mu_{0}:{ }$"),
-          value = 3
+          value = 3,
+          width = "150px"
         )
-      } else if (test_num == 3) {
-        # One-sample var test - parameter input
+      } else if (test_num == 3L) {
         numericInput(
           inputId = ns("md_data_UI2"),
           label = withMathJax("$\\sigma_{0}:{ }$"),
-          value = 3
+          value = 3,
+          width = "150px"
         )
-      } else if (test_num == 4 || test_num == 5) {
-        # Two-sample independent - show group 2 mean
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 2, data)
-          average <- ro(mean(x = na.omit(data[, as.numeric(md_data_selected_columns[2])])), decimal_m_d_d)
-        } else if (type == 2) {
-          req(data_col, ref_col, g2_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g2_data <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-          req(length(g2_data) > 0, is.numeric(g2_data) || is.logical(g2_data))
-          average <- ro(mean(x = na.omit(g2_data)), decimal_m_d_d)
-        }
-        label <- withMathJax(paste("$\\bar{X}_{2} = $", average))
-        HTML(paste(label))
-      } else if (test_num == 7) {
+      } else if (test_num %in% c(4L, 5L)) {
+        req(groups, groups$g2)
+        average <- ro(mean(na.omit(groups$g2$x)), decimal_m_d_d)
+        ots_stat_value_html("\\bar{X}", groups$g2, average)
+      } else if (test_num == 7L) {
         dep_t_type <- input$md_t_dep_type
         req(dep_t_type)
-        
-        if (dep_t_type == 1) {
-          # d-bar type - parameter input
+        if (dep_t_type == 1L) {
           numericInput(
             inputId = ns("md_data_UI2"),
             label = withMathJax("$\\Delta:{ }$"),
-            value = 0
+            value = 0,
+            width = "150px"
           )
-        } else if (dep_t_type == 2) {
-          # Mean difference type - show group 2 mean
-          if (type == 1) {
-            ave_data <- na.omit(data.frame(g1 = data[, as.numeric(md_data_selected_columns[1])], 
-                                           g2 = data[, as.numeric(md_data_selected_columns[2])]))
-            average <- ro(mean(x = ave_data$g2), decimal_m_d_d)
-            label <- withMathJax(paste("$\\bar{X}_{2} = $", average))
-            HTML(paste(label))
-          } else {
-            req(data_col, ref_col, g1_num, g2_num)
-            temp1 <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-            temp2 <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-            temp <- na.omit(data.frame(temp1, temp2))
-            average <- ro(mean(temp$temp2), decimal_m_d_d)
-            label <- withMathJax(paste("$\\bar{X}_{2} = $", average))
-            HTML(paste(label))
-          }
+        } else {
+          req(groups, groups$g2)
+          average <- ro(mean(na.omit(groups$g2$x)), decimal_m_d_d)
+          ots_stat_value_html("\\bar{X}", groups$g2, average)
         }
       }
     })
     
     output$md_data_UI3 <- renderUI({
       test_num <- data_md_test_num()
-      md_data_selected_columns <- input$md_data_selected_columns
-      data <- filtered_data()
+      groups <- md_data_groups()
       decimal_m_d_d <- input$decimal_m_d_d
-      type <- input$data_type_md
-      ref_col <- as.numeric(input$data_choice_ref)
-      data_col <- as.numeric(input$data_choice_data)
-      g1_num <- input$data_choice_g1
-      g2_num <- input$data_choice_g2
+      req(test_num, groups)
       
-      req(test_num)
-      
-      if (test_num == 1) {
-        # One-sample z-test - parameter input
-        req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
+      if (test_num == 1L) {
+        std <- ro(sd(na.omit(groups$g1$x)), decimal_m_d_d)
         numericInput(
           inputId = ns("md_data_UI3"),
           label = withMathJax("$\\sigma_{0}:{ }$"),
-          value = ro(sd(na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
+          value = std,
+          width = "150px"
         )
-      } else if (test_num == 2) {
-        # One-sample t-test - show sample std
-        req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-        std <- ro(sd(x = na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
-        label <- withMathJax(paste("$s = $", std))
-        HTML(paste(label))
-      } else if (test_num == 3) {
-        # One-sample var test - show sample size
-        req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-        n <- length(na.omit(data[, as.numeric(md_data_selected_columns[1])]))
-        label <- withMathJax(paste("$n = $", n))
-        HTML(paste(label))
-      } else if (test_num == 4) {
-        # Two-sample z independent - parameter input for sigma1
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-          std <- ro(sd(x = na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
-        } else if (type == 2) {
-          req(data_col, ref_col, g1_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g1_data <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-          req(length(g1_data) > 0, is.numeric(g1_data) || is.logical(g1_data))
-          std <- ro(sd(x = na.omit(g1_data)), decimal_m_d_d)
-        }
+      } else if (test_num == 2L) {
+        std <- ro(sd(na.omit(groups$g1$x)), decimal_m_d_d)
+        withMathJax(paste("$s = $", std))
+      } else if (test_num == 3L) {
+        n <- length(na.omit(groups$g1$x))
+        withMathJax(paste("$n = $", n))
+      } else if (test_num == 4L) {
+        std <- ro(sd(na.omit(groups$g1$x)), decimal_m_d_d)
+        sig_lab <- paste0("$\\sigma_{\\text{", ots_tex_name(groups$g1$label_key), "}}:{ }$")
         numericInput(
           inputId = ns("md_data_UI3"),
-          label = withMathJax("$\\sigma_{1}:{ }$"),
-          value = std
+          label = withMathJax(sig_lab),
+          value = std,
+          width = "150px"
         )
-      } else if (test_num == 5) {
-        # Two-sample t independent - show group 1 std
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 1)
-          std <- ro(sd(x = na.omit(data[, as.numeric(md_data_selected_columns[1])])), decimal_m_d_d)
-        } else if (type == 2) {
-          req(data_col, ref_col, g1_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g1_data <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-          req(length(g1_data) > 0, is.numeric(g1_data) || is.logical(g1_data))
-          std <- ro(sd(x = na.omit(g1_data)), decimal_m_d_d)
-        }
-        label <- withMathJax(paste("$s_{1} = $", std))
-        HTML(paste(label))
-      } else if (test_num == 7) {
+      } else if (test_num == 5L) {
+        std <- ro(sd(na.omit(groups$g1$x)), decimal_m_d_d)
+        ots_s_sub_html(1L, std, group = groups$g1)
+      } else if (test_num == 7L) {
         dep_t_type <- input$md_t_dep_type
-        req(dep_t_type)
-        
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 2, data)
-          ave_data <- na.omit(data.frame(g1 = data[, as.numeric(md_data_selected_columns[1])], 
-                                           g2 = data[, as.numeric(md_data_selected_columns[2])]))
-          req(nrow(ave_data) > 0)
-          if (dep_t_type == 1) {
-            std <- ro(sd(x = ave_data$g1 - ave_data$g2), decimal_m_d_d)
-            label <- withMathJax(paste("$s_{D} = $", std))
-          } else if (dep_t_type == 2) {
-            std <- ro(sd(x = ave_data$g1), decimal_m_d_d)
-            label <- withMathJax(paste("$s_{1} = $", std))
-          }
-          HTML(paste(label))
+        req(dep_t_type, groups$g2)
+        paired <- ots_paired_frame(groups$g1$x, groups$g2$x)
+        if (is.null(paired)) {
+          return("Need equal length groups for dependent test")
+        }
+        if (dep_t_type == 1L) {
+          std <- ro(sd(paired$g1 - paired$g2), decimal_m_d_d)
+          withMathJax(paste("$s_{D} = $", std))
         } else {
-          req(data_col, ref_col, g1_num, g2_num)
-          temp1 <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-          temp2 <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-          if (length(temp1) != length(temp2)) {
-            return("Need equal length groups for dependent test")
-          }
-          temp <- na.omit(data.frame(temp1, temp2))
-          if (dep_t_type == 1) {
-            std <- ro(sd(x = temp$temp1 - temp$temp2), decimal_m_d_d)
-            label <- withMathJax(paste("$s_{D} = $", std))
-          } else if (dep_t_type == 2) {
-            std <- ro(sd(x = temp$temp1), decimal_m_d_d)
-            label <- withMathJax(paste("$s_{1} = $", std))
-          }
-          HTML(paste(label))
+          std <- ro(sd(paired$g1), decimal_m_d_d)
+          ots_s_sub_html(1L, std, group = groups$g1)
         }
       }
     })
     
     output$md_data_UI4 <- renderUI({
       test_num <- data_md_test_num()
-      md_data_selected_columns <- input$md_data_selected_columns
-      data <- filtered_data()
+      groups <- md_data_groups()
       decimal_m_d_d <- input$decimal_m_d_d
-      type <- input$data_type_md
-      ref_col <- as.numeric(input$data_choice_ref)
-      data_col <- as.numeric(input$data_choice_data)
-      g1_num <- input$data_choice_g1
-      g2_num <- input$data_choice_g2
-      
       req(test_num)
       
-      if (test_num > 0 && test_num < 4) {
+      if (test_num %in% c(1L, 2L, 3L)) {
         NULL
-      } else if (test_num == 4) {
-        # Two-sample z independent - parameter input for sigma2
-        if (type == 1) {
-          std <- ro(sd(x = na.omit(data[, as.numeric(md_data_selected_columns[2])])), decimal_m_d_d)
-        } else if (type == 2) {
-          req(data_col, ref_col, g2_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g2_data <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-          req(length(g2_data) > 0, is.numeric(g2_data) || is.logical(g2_data))
-          std <- ro(sd(x = na.omit(g2_data)), decimal_m_d_d)
-        }
+      } else if (test_num == 4L) {
+        req(groups, groups$g2)
+        std <- ro(sd(na.omit(groups$g2$x)), decimal_m_d_d)
+        sig_lab <- paste0("$\\sigma_{\\text{", ots_tex_name(groups$g2$label_key), "}}:{ }$")
         numericInput(
           inputId = ns("md_data_UI4"),
-          label = withMathJax("$\\sigma_{2}:{ }$"),
-          value = std
+          label = withMathJax(sig_lab),
+          value = std,
+          width = "150px"
         )
-      } else if (test_num == 5) {
-        # Two-sample t independent - show group 2 std
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 2, data)
-          std <- ro(sd(x = na.omit(data[, as.numeric(md_data_selected_columns[2])])), decimal_m_d_d)
-        } else if (type == 2) {
-          req(data_col, ref_col, g2_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g2_data <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-          req(length(g2_data) > 0, is.numeric(g2_data) || is.logical(g2_data))
-          std <- ro(sd(x = na.omit(g2_data)), decimal_m_d_d)
-        }
-        label <- withMathJax(paste("$s_{2} = $", std))
-        HTML(paste(label))
-      } else if (test_num == 7) {
+      } else if (test_num == 5L) {
+        req(groups, groups$g2)
+        std <- ro(sd(na.omit(groups$g2$x)), decimal_m_d_d)
+        ots_s_sub_html(2L, std, group = groups$g2)
+      } else if (test_num == 7L) {
         dep_t_type <- input$md_t_dep_type
-        req(dep_t_type)
-        
-        if (dep_t_type == 1) {
-          NULL
-        } else if (dep_t_type == 2) {
-          if (type == 1) {
-            ave_data <- na.omit(data.frame(g1 = data[, as.numeric(md_data_selected_columns[1])], 
-                                             g2 = data[, as.numeric(md_data_selected_columns[2])]))
-            std <- ro(sd(x = ave_data$g2), decimal_m_d_d)
-            label <- withMathJax(paste("$s_{2} = $", std))
-            HTML(paste(label))
-          } else {
-            req(data_col, ref_col, g1_num, g2_num, data,
-                data_col > 0, data_col <= ncol(data),
-                ref_col > 0, ref_col <= ncol(data))
-            temp1 <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-            temp2 <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-            req(length(temp1) > 0, length(temp2) > 0,
-                is.numeric(temp1) || is.logical(temp1),
-                is.numeric(temp2) || is.logical(temp2))
-            temp <- na.omit(data.frame(temp1, temp2))
-            req(nrow(temp) > 0)
-            std <- ro(sd(x = temp$temp2), decimal_m_d_d)
-            label <- withMathJax(paste("$s_{2} = $", std))
-            HTML(paste(label))
-          }
-        }
+        req(dep_t_type, dep_t_type == 2L, groups, groups$g2)
+        std <- ro(sd(na.omit(groups$g2$x)), decimal_m_d_d)
+        ots_s_sub_html(2L, std, group = groups$g2)
       }
     })
     
     output$md_data_UI5 <- renderUI({
       test_num <- data_md_test_num()
-      md_data_selected_columns <- input$md_data_selected_columns
-      data <- filtered_data()
-      decimal_m_d_d <- input$decimal_m_d_d
-      type <- input$data_type_md
-      ref_col <- as.numeric(input$data_choice_ref)
-      data_col <- as.numeric(input$data_choice_data)
-      g1_num <- input$data_choice_g1
-      g2_num <- input$data_choice_g2
+      groups <- md_data_groups()
+      req(test_num, groups)
       
-      req(test_num)
-      
-      if (test_num == 1 || test_num == 2) {
-        # One-sample tests - show sample size
-        req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-        n <- length(na.omit(data[, as.numeric(md_data_selected_columns[1])]))
-        label <- withMathJax(paste("$n = $", n))
-        HTML(paste(label))
-      } else if (test_num == 3) {
+      if (test_num %in% c(1L, 2L)) {
+        n <- length(na.omit(groups$g1$x))
+        withMathJax(paste("$n = $", n))
+      } else if (test_num == 3L) {
         NULL
-      } else if (test_num == 4 || test_num == 5) {
-        # Two-sample independent - show group 1 size
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 1, data)
-          n <- length(na.omit(data[, as.numeric(md_data_selected_columns[1])]))
-        } else if (type == 2) {
-          req(data_col, ref_col, g1_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g1_data <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-          req(length(g1_data) > 0)
-          n <- length(na.omit(g1_data))
+      } else if (test_num %in% c(4L, 5L)) {
+        n <- length(na.omit(groups$g1$x))
+        ots_n_sub_html(1L, n, group = groups$g1)
+      } else if (test_num == 7L) {
+        req(groups$g2)
+        paired <- ots_paired_frame(groups$g1$x, groups$g2$x)
+        if (is.null(paired)) {
+          return("Need equal length groups for dependent test")
         }
-        label <- withMathJax(paste("$n_{1} = $", n))
-        HTML(paste(label))
-      } else if (test_num == 7) {
-        # Two-sample dependent - show sample size
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 2)
-          ave_data <- na.omit(data.frame(g1 = data[, as.numeric(md_data_selected_columns[1])], 
-                                           g2 = data[, as.numeric(md_data_selected_columns[2])]))
-          n <- length(ave_data$g1)
-          label <- withMathJax(paste("$n = $", n))
-          HTML(paste(label))
-        } else {
-          req(data_col, ref_col, g1_num, g2_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          temp1 <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-          temp2 <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-          req(length(temp1) > 0, length(temp2) > 0)
-          if (length(temp1) != length(temp2)) {
-            return("Need equal length groups for dependent test")
-          }
-          n <- nrow(na.omit(data.frame(temp1, temp2)))
-          label <- withMathJax(paste("$n = $", n))
-          HTML(paste(label))
-        }
+        n <- nrow(paired)
+        withMathJax(paste("$n = $", n))
       }
     })
     
     output$md_data_UI6 <- renderUI({
       test_num <- data_md_test_num()
-      md_data_selected_columns <- input$md_data_selected_columns
-      data <- filtered_data()
+      groups <- md_data_groups()
       decimal_m_d_d <- input$decimal_m_d_d
-      type <- input$data_type_md
-      ref_col <- as.numeric(input$data_choice_ref)
-      data_col <- as.numeric(input$data_choice_data)
-      g1_num <- input$data_choice_g1
-      g2_num <- input$data_choice_g2
-      
       req(test_num)
       
-      if (test_num > 0 && test_num < 4) {
+      if (test_num %in% c(1L, 2L, 3L)) {
         NULL
-      } else if (test_num == 4 || test_num == 5) {
-        # Two-sample independent - show group 2 size
-        if (type == 1) {
-          req(md_data_selected_columns, length(md_data_selected_columns) >= 2, data)
-          n <- length(na.omit(data[, as.numeric(md_data_selected_columns[2])]))
-        } else if (type == 2) {
-          req(data_col, ref_col, g2_num, data,
-              data_col > 0, data_col <= ncol(data),
-              ref_col > 0, ref_col <= ncol(data))
-          g2_data <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-          req(length(g2_data) > 0)
-          n <- length(na.omit(g2_data))
-        }
-        label <- withMathJax(paste("$n_{2} = $", n))
-        HTML(paste(label))
-      } else if (test_num == 7) {
+      } else if (test_num %in% c(4L, 5L)) {
+        req(groups, groups$g2)
+        n <- length(na.omit(groups$g2$x))
+        ots_n_sub_html(2L, n, group = groups$g2)
+      } else if (test_num == 7L) {
         dep_t_type <- input$md_t_dep_type
-        req(dep_t_type)
-        
-        if (dep_t_type == 1) {
-          NULL
-        } else if (dep_t_type == 2) {
-          # Mean difference type - show correlation
-          if (type == 1) {
-            req(md_data_selected_columns, length(md_data_selected_columns) >= 2)
-            ave_data <- na.omit(data.frame(g1 = data[, as.numeric(md_data_selected_columns[1])], 
-                                             g2 = data[, as.numeric(md_data_selected_columns[2])]))
-            req(nrow(ave_data) > 0)
-            rho <- ro(cor(ave_data$g1, ave_data$g2), decimal_m_d_d)
-            label <- withMathJax(paste("$r_{xy} = $", rho))
-            HTML(paste(label))
-          } else {
-            req(data_col, ref_col, g1_num, g2_num, data,
-                data_col > 0, data_col <= ncol(data),
-                ref_col > 0, ref_col <= ncol(data))
-            temp1 <- data[[data_col]][which(data[[ref_col]] == g1_num)]
-            temp2 <- data[[data_col]][which(data[[ref_col]] == g2_num)]
-            req(length(temp1) > 0, length(temp2) > 0,
-                is.numeric(temp1) || is.logical(temp1),
-                is.numeric(temp2) || is.logical(temp2))
-            temp <- na.omit(data.frame(temp1, temp2))
-            req(nrow(temp) > 0)
-            rho <- ro(cor(temp$temp1, temp$temp2), decimal_m_d_d)
-            label <- withMathJax(paste("$r_{xy} = $", rho))
-            HTML(paste(label))
-          }
-        }
+        req(dep_t_type, dep_t_type == 2L, groups, groups$g2)
+        paired <- ots_paired_frame(groups$g1$x, groups$g2$x)
+        req(paired)
+        rho <- ro(cor(paired$g1, paired$g2), decimal_m_d_d)
+        withMathJax(paste("$r_{xy} = $", rho))
       }
     })
     
@@ -2458,11 +2283,13 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           n_samp_p_2 = input$n_samp_p_2,
           p0 = input$p0,
           p2 = input$p2,
+          prop_enter_counts = isTRUE(input$prop_enter_counts),
           # Use Data mode inputs
           decimal_bi_d = input$decimal_bi_d,
           conf_bi_data = input$conf_bi_data,
           data_type_bi = input$data_type_bi,
-          bi_data_selected_columns = input$bi_data_selected_columns,
+          bi_data_col_g1 = input$bi_data_col_g1,
+          bi_data_col_g2 = input$bi_data_col_g2,
           bi_data_success1 = input$bi_data_success1,
           bi_data_success2 = input$bi_data_success2,
           alt_p_bi = input$alt_p_bi,
@@ -2474,6 +2301,36 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         )
       })
     )
+    
+    # Proportions Enter Statistics: toggle numeric inputs between p and success counts x
+    observe({
+      use_counts <- isTRUE(input$prop_enter_counts)
+      n1 <- input$n_samp_p
+      n2 <- input$n_samp_p_2
+      one_two <- input$one_or_two_p
+      max1 <- if (is.null(n1) || !is.finite(n1) || n1 < 1) 1e6 else n1
+      
+      if (use_counts) {
+        updateNumericInput(session, "p_samp",
+                           label = withMathJax("$$np_{1}$$"),
+                           min = 0, max = max1, step = 1)
+        if (!is.null(one_two) && one_two == 2) {
+          max2 <- if (is.null(n2) || !is.finite(n2) || n2 < 1) 1e6 else n2
+          updateNumericInput(session, "p2",
+                             label = withMathJax("$$np_{2}$$"),
+                             min = 0, max = max2, step = 1)
+        }
+      } else {
+        updateNumericInput(session, "p_samp",
+                           label = withMathJax("$$p_{1}$$"),
+                           min = 0, max = 1, step = 0.01)
+        if (!is.null(one_two) && one_two == 2) {
+          updateNumericInput(session, "p2",
+                             label = withMathJax("$$p_{2}$$"),
+                             min = 0, max = 1, step = 0.01)
+        }
+      }
+    })
     
     # Set choice vectors for alternative hypothesis selectors
     observe({
@@ -2596,6 +2453,27 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       }
     })
     
+    bi_data_groups <- reactive({
+      data <- filtered_data()
+      req(data, input$data_type_bi)
+      two_col <- ots_column_mode_ready(
+        col_g1 = input$bi_data_col_g1,
+        col_g2 = input$bi_data_col_g2,
+        two_sample = TRUE
+      )
+      ots_groups_from_inputs(
+        data,
+        mode = input$data_type_bi,
+        col_g1 = input$bi_data_col_g1,
+        col_g2 = input$bi_data_col_g2,
+        ref_col = input$data_choice_ref_bi,
+        data_col = input$data_choice_data_bi,
+        level_g1 = input$data_choice_g1_bi,
+        level_g2 = input$data_choice_g2_bi,
+        two_sample = if (input$data_type_bi == 1) two_col else TRUE
+      )
+    })
+    
     # Render Use Data results
     output$pretty_prop_stat_data <- renderUI({
       results <- proportions_result$prop_data_out()
@@ -2604,7 +2482,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       R <- input$decimal_bi_d
       conf <- input$conf_bi_data
       data <- filtered_data()
-      bi_data_selected_columns <- input$bi_data_selected_columns
+      groups <- bi_data_groups()
       
       if (is.null(results)) {
         return(HTML("<p>No results available. Please check your inputs.</p>"))
@@ -2628,47 +2506,39 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         alt_num <- 1
       }
       
-      # Determine number of samples
-      if (data_type == 1) {
-        data_columns <- as.numeric(bi_data_selected_columns)
-        if (!isTruthy(data_columns)) {
-          return(NULL)
-        }
-        samples <- length(data_columns)
-        
-        if (samples == 1) {
-          # One-sample - get group names
-          group1_name <- names(data)[data_columns[1]]
-        } else if (samples == 2) {
-          group1_name <- names(data)[data_columns[1]]
-          group2_name <- names(data)[data_columns[2]]
-        }
+      two_col <- if (data_type == 1) {
+        ots_column_mode_ready(
+          col_g1 = input$bi_data_col_g1,
+          col_g2 = input$bi_data_col_g2,
+          two_sample = TRUE
+        )
       } else {
-        samples <- 2
-        group1_name <- paste("Group 1 = ", input$data_choice_g1_bi)
-        group2_name <- paste("Group 2 = ", input$data_choice_g2_bi)
+        TRUE
       }
+      samples <- if (two_col) 2L else 1L
+      req(groups)
       
       if (samples == 1) {
+        req(groups$g1)
         # One-sample proportion test
-        HTML(c(
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>", resultsR$method, "</b>"),
           "<br><br>",
           "<table>",
           "<tr>",
-          "<td>", paste(withMathJax("$p =$"), resultsR[["statistic"]][["p"]]), "</td>",
+          "<td>", ots_mj_paste_stat("p", groups$g1, resultsR[["statistic"]][["p"]]), "</td>",
           "<td>", "</td>",
           "<td>", paste(withMathJax("$\\pi_{0} =$"), resultsR[["parameter"]][["null hypothesis proportion"]]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n= $"), resultsR[["estimate"]][["sample.size"]]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, resultsR[["estimate"]][["sample.size"]]), "</td>",
           "<td>", "</td>",
           "<td>", "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\pi: $")), "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", ots_mj_paste_stat("\\pi", groups$g1)), "</td>",
           "<td>", resultsR$conf.int[1], "</td>",
           "<td>", "to", "</td>",
           "<td>", resultsR$conf.int[2], "</td>",
@@ -2681,35 +2551,35 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "</tr>",
           "</table>",
           paste(beta_statement, 100 * resultsR[["estimate"]][["power"]], "%")
-        ))
+        )), ns("prop_data_mj")))
       } else if (samples == 2) {
-        # Two-sample proportion test
-        HTML(c(
+        req(groups$g2)
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>", resultsR$method, "</b>"),
           "<br><br>",
           "<table>",
-          "<tr><td style='border-bottom:1px solid #000'>", group1_name, "</td><td style='border-bottom:1px solid #000'></td>",
-          "<td style='border-bottom:1px solid #000'>", group2_name, "</td></tr>",
+          "<tr><td style='border-bottom:1px solid #000'>", groups$g1$name, "</td><td style='border-bottom:1px solid #000'></td>",
+          "<td style='border-bottom:1px solid #000'>", groups$g2$name, "</td></tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$p_{1} =$"), resultsR[["estimate"]][["sample.prop.g1"]]), "</td>",
+          "<td>", ots_mj_paste_stat("p", groups$g1, resultsR[["estimate"]][["sample.prop.g1"]]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$p_{2} =$"), resultsR[["estimate"]][["sample.prop.g2"]]), "</td>",
+          "<td>", ots_mj_paste_stat("p", groups$g2, resultsR[["estimate"]][["sample.prop.g2"]]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1}= $"), resultsR[["estimate"]][["sample.size.g1"]]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, resultsR[["estimate"]][["sample.size.g1"]]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2}= $"), resultsR[["estimate"]][["sample.size.g2"]]), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g2, resultsR[["estimate"]][["sample.size.g2"]]), "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\pi_{1}: $")), "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", ots_mj_paste_stat("\\pi", groups$g1)), "</td>",
           "<td>", resultsR[["estimate"]][["p.g1.lowerci"]], "</td>",
           "<td>", "to", "</td>",
           "<td>", resultsR[["estimate"]][["p.g1.upperci"]], "</td>",
           "</tr>",
           "<tr>",
-          "<td align='right'>", paste(withMathJax("$\\pi_{2}: $")), "</td>",
+          "<td align='right'>", paste(ots_mj_paste_stat("\\pi", groups$g2)), "</td>",
           "<td>", resultsR[["estimate"]][["p.g2.lowerci"]], "</td>",
           "<td>", "to", "</td>",
           "<td>", resultsR[["estimate"]][["p.g2.upperci"]], "</td>",
@@ -2721,7 +2591,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
           "</table>"
-        ))
+        )), ns("prop_data_mj")))
       }
     })
     
@@ -2729,19 +2599,56 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # PROPORTIONS UI RENDERING FUNCTIONS
     # =========================================================================
     
-    # Column selection for data mode
     output$data_choice_column_bi <- renderUI({
       data <- filtered_data()
-      req(data)
-      
-      choices <- seq(1, ncol(data))
-      names(choices) <- names(data)
-      
-      checkboxGroupInput(
-        inputId = ns("bi_data_selected_columns"),
-        label = "Analyze which column(s)?",
-        choices = choices
+      req(data, ncol(data) > 0)
+      choices <- ots_column_choices(data)
+      tagList(
+        selectInput(
+          inputId = ns("bi_data_col_g1"),
+          label = "Group 1 column",
+          choices = c("Select column..." = "", choices),
+          selected = ""
+        ),
+        selectInput(
+          inputId = ns("bi_data_col_g2"),
+          label = "Group 2 column (leave blank for one-sample)",
+          choices = c("—" = "", choices),
+          selected = ""
+        )
       )
+    })
+    
+    output$ots_bi_group_assignment <- renderUI({
+      data <- filtered_data()
+      req(data, input$data_type_bi)
+      two_col <- if (input$data_type_bi == 1) {
+        ots_column_mode_ready(
+          col_g1 = input$bi_data_col_g1,
+          col_g2 = input$bi_data_col_g2,
+          two_sample = TRUE
+        )
+      } else {
+        ots_reference_mode_ready(
+          input$data_choice_ref_bi,
+          input$data_choice_data_bi,
+          input$data_choice_g1_bi,
+          input$data_choice_g2_bi,
+          two_sample = TRUE
+        )
+      }
+      groups <- ots_groups_from_inputs(
+        data,
+        mode = input$data_type_bi,
+        col_g1 = input$bi_data_col_g1,
+        col_g2 = input$bi_data_col_g2,
+        ref_col = input$data_choice_ref_bi,
+        data_col = input$data_choice_data_bi,
+        level_g1 = input$data_choice_g1_bi,
+        level_g2 = input$data_choice_g2_bi,
+        two_sample = two_col
+      )
+      ots_group_assignment_html(groups)
     })
     
     # Reference column selection
@@ -2749,12 +2656,11 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       data <- filtered_data()
       req(data)
       
-      choices <- seq(1, ncol(data))
-      names(choices) <- names(data)
+      choices <- ots_column_choices(data)
       
       selectInput(
         inputId = ns("data_choice_ref_bi"),
-        label = "Select Factor",
+        label = "Factor column",
         choices = choices
       )
     })
@@ -2776,7 +2682,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       selectInput(
         inputId = ns("data_choice_data_bi"),
-        label = "Select Data",
+        label = "Response column",
         choices = choices
       )
     })
@@ -2787,11 +2693,13 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       ref_col <- input$data_choice_ref_bi
       req(data, ref_col)
       
-      factor_levels <- unique(na.omit(data[[as.numeric(ref_col)]]))
+      factor_col <- as.numeric(ref_col)
+      factor_levels <- unique(na.omit(data[[factor_col]]))
+      ref_name <- names(data)[factor_col]
       
       selectInput(
         inputId = ns("data_choice_g1_bi"),
-        label = "Group 1",
+        label = paste0("Group 1 level (", ref_name, ")"),
         choices = factor_levels
       )
     })
@@ -2803,14 +2711,14 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       g1 <- input$data_choice_g1_bi
       req(data, ref_col, g1)
       
-      factor_levels <- unique(na.omit(data[[as.numeric(ref_col)]]))
-      
-      # Remove the selected group 1
+      factor_col <- as.numeric(ref_col)
+      factor_levels <- unique(na.omit(data[[factor_col]]))
+      ref_name <- names(data)[factor_col]
       temp <- factor_levels[factor_levels != g1]
       
       selectInput(
         inputId = ns("data_choice_g2_bi"),
-        label = "Group 2",
+        label = paste0("Group 2 level (", ref_name, ")"),
         choices = temp
       )
     })
@@ -2821,26 +2729,24 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(data_type)
       
       if (data_type == 1) {
-        # Columns mode
-        bi_data_selected_columns <- input$bi_data_selected_columns
-        if (!isTruthy(bi_data_selected_columns)) {
-          return(HTML("<p>Select at least one data column</p>"))
+        two_col <- ots_column_mode_ready(
+          col_g1 = input$bi_data_col_g1,
+          col_g2 = input$bi_data_col_g2,
+          two_sample = TRUE
+        )
+        one_col <- ots_column_mode_ready(col_g1 = input$bi_data_col_g1, two_sample = FALSE)
+        if (!one_col) {
+          return(HTML("<p>Select Group 1 column</p>"))
         }
-        samples <- length(bi_data_selected_columns)
+        samples <- if (two_col) 2L else 1L
       } else {
-        # Reference mode
-        factor_col <- input$data_choice_ref_bi
-        if (!isTruthy(factor_col)) {
+        if (!isTruthy(input$data_choice_ref_bi)) {
           return(HTML("<p>Select factor column</p>"))
         }
-        samples <- 2
+        samples <- 2L
       }
       
-      if (samples > 2) {
-        return(HTML("<p>Select at most two columns</p>"))
-      }
-      
-      if (samples == 1) {
+      if (samples == 1L) {
         selectInput(
           inputId = ns("alt_p_bi"),
           label = "Alternative hypothesis for proportions",
@@ -2861,19 +2767,18 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       data_type <- input$data_type_bi
       req(data, data_type)
       
+      groups <- bi_data_groups()
       if (data_type == 1) {
-        # Columns mode
-        data_columns <- as.numeric(input$bi_data_selected_columns)
-        if (length(data_columns) > 2 || !isTruthy(data_columns)) {
+        if (!ots_column_mode_ready(col_g1 = input$bi_data_col_g1, two_sample = FALSE)) {
           return(NULL)
         }
-        options <- na.omit(unique(data[[data_columns[1]]]))
+        req(groups)
+        options <- na.omit(unique(groups$g1$x))
         if (length(options) == 1) {
           options <- c(options, paste0("Not ", options))
         }
-        col_name <- names(data)[data_columns[1]]
+        col_name <- groups$g1$name
       } else {
-        # Reference mode
         data_col <- as.numeric(input$data_choice_data_bi)
         req(data_col)
         options <- na.omit(unique(data[[data_col]]))
@@ -2898,19 +2803,28 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(data, data_type)
       
       if (data_type == 1) {
-        # Columns mode
-        data_columns <- as.numeric(input$bi_data_selected_columns)
-        if (length(data_columns) > 2 || !isTruthy(data_columns) || length(data_columns) == 1) {
+        if (!ots_column_mode_ready(
+          col_g1 = input$bi_data_col_g1,
+          col_g2 = input$bi_data_col_g2,
+          two_sample = TRUE
+        )) {
           return(NULL)
         }
-        options <- na.omit(unique(data[[data_columns[2]]]))
+        groups <- bi_data_groups()
+        req(groups, groups$g2)
+        options <- na.omit(unique(groups$g2$x))
         if (length(options) == 1) {
           options <- c(options, paste0("Not ", options))
         }
-        col_name <- names(data)[data_columns[2]]
+        col_name <- groups$g2$name
       } else {
-        # Reference mode - not used
-        return(NULL)
+        groups <- bi_data_groups()
+        req(groups, groups$g2)
+        options <- na.omit(unique(groups$g2$x))
+        if (length(options) == 1) {
+          options <- c(options, paste0("Not ", options))
+        }
+        col_name <- groups$g2$name
       }
       
       selectInput(
@@ -2923,212 +2837,62 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     
     # Dynamic UI elements showing statistics from data
     output$bi_test_data_ui1 <- renderUI({
-      data <- filtered_data()
-      data_type <- input$data_type_bi
+      groups <- bi_data_groups()
       decimal_bi_d <- input$decimal_bi_d
-      req(data, data_type, decimal_bi_d, nrow(data) > 0, ncol(data) > 0)
-      
-      if (data_type == 1) {
-        # Columns mode
-        data_columns <- as.numeric(input$bi_data_selected_columns)
-        if (!isTruthy(data_columns) || length(data_columns) == 0) {
-          return(NULL)
-        }
-        req(all(data_columns > 0), all(data_columns <= ncol(data)))
-        samples <- length(data_columns)
-        
-        if (samples == 1) {
-          # One-sample - show sample proportion
-          x <- na.omit(data[[data_columns[1]]])
-          success1 <- input$bi_data_success1
-          req(success1, length(x) > 0)
-          count <- sum(x == success1, na.rm = TRUE)
-          n <- length(x)
-          req(n > 0)
-          p_val <- count / n
-          label <- withMathJax(paste("$p = $", ro(p_val, decimal_bi_d)))
-          HTML(paste(label))
-        } else if (samples == 2) {
-          # Two-sample - show group 1 proportion
-          success1 <- input$bi_data_success1
-          req(success1)
-          x <- na.omit(data[[data_columns[1]]])
-          req(length(x) > 0)
-          count <- sum(x == success1, na.rm = TRUE)
-          n <- length(x)
-          req(n > 0)
-          p_val <- count / n
-          label <- withMathJax(paste("$p_{1} = $", ro(p_val, decimal_bi_d)))
-          HTML(paste(label))
-        }
+      success1 <- input$bi_data_success1
+      req(groups, success1, decimal_bi_d)
+      x <- na.omit(groups$g1$x)
+      req(length(x) > 0)
+      p_val <- ro(sum(x == success1, na.rm = TRUE) / length(x), decimal_bi_d)
+      if (is.null(groups$g2)) {
+        withMathJax(paste("$p = $", p_val))
       } else {
-        # Reference mode - show group 1 proportion
-        ref_col <- as.numeric(input$data_choice_ref_bi)
-        data_col <- as.numeric(input$data_choice_data_bi)
-        g1 <- input$data_choice_g1_bi
-        success1 <- input$bi_data_success1
-        req(ref_col, data_col, g1, success1,
-            ref_col > 0, ref_col <= ncol(data),
-            data_col > 0, data_col <= ncol(data))
-        
-        bi_data <- data.frame(ref = data[[ref_col]], data = data[[data_col]])
-        g1_data <- bi_data$data[bi_data$ref == g1]
-        req(length(g1_data) > 0)
-        count <- sum(g1_data == success1, na.rm = TRUE)
-        n <- sum(!is.na(g1_data))
-        req(n > 0)
-        p_val <- count / n
-        label <- withMathJax(paste("$p_{1} = $", ro(p_val, decimal_bi_d)))
-        HTML(paste(label))
+        ots_stat_value_html("p", groups$g1, p_val)
       }
     })
     
     output$bi_test_data_ui2 <- renderUI({
-      data <- filtered_data()
-      data_type <- input$data_type_bi
-      req(data, data_type, nrow(data) > 0, ncol(data) > 0)
-      
-      if (data_type == 1) {
-        # Columns mode
-        data_columns <- as.numeric(input$bi_data_selected_columns)
-        if (!isTruthy(data_columns)) {
-          return(NULL)
-        }
-        req(all(data_columns > 0), all(data_columns <= ncol(data)))
-        samples <- length(data_columns)
-        
-        if (samples == 1) {
-          # One-sample - parameter input for null hypothesis
-          numericInput(
-            inputId = ns("bi_test_data_ui2"),
-            label = withMathJax("$\\pi_{0}:{ }$"),
-            value = 0.5,
-            min = 0,
-            max = 1,
-            width = "75px"
-          )
-        } else if (samples == 2) {
-          # Two-sample - show group 2 proportion
-          decimal_bi_d <- input$decimal_bi_d
-          success2 <- input$bi_data_success2
-          req(success2, decimal_bi_d)
-          x <- na.omit(data[[data_columns[2]]])
-          req(length(x) > 0)
-          count <- sum(x == success2, na.rm = TRUE)
-          n <- length(x)
-          req(n > 0)
-          p_val <- count / n
-          label <- withMathJax(paste("$p_{2} = $", ro(p_val, decimal_bi_d)))
-          HTML(paste(label))
-        }
+      groups <- bi_data_groups()
+      req(groups)
+      if (is.null(groups$g2)) {
+        numericInput(
+          inputId = ns("bi_test_data_ui2"),
+          label = withMathJax("$\\pi_{0}:{ }$"),
+          value = 0.5,
+          min = 0,
+          max = 1,
+          width = "150px"
+        )
       } else {
-        # Reference mode - show group 2 proportion
-        ref_col <- as.numeric(input$data_choice_ref_bi)
-        data_col <- as.numeric(input$data_choice_data_bi)
-        g2 <- input$data_choice_g2_bi
-        success1 <- input$bi_data_success1
         decimal_bi_d <- input$decimal_bi_d
-        req(ref_col, data_col, g2, success1, decimal_bi_d,
-            ref_col > 0, ref_col <= ncol(data),
-            data_col > 0, data_col <= ncol(data))
-        
-        bi_data <- data.frame(ref = data[[ref_col]], data = data[[data_col]])
-        g2_data <- bi_data$data[bi_data$ref == g2]
-        req(length(g2_data) > 0)
-        count <- sum(g2_data == success1, na.rm = TRUE)
-        n <- sum(!is.na(g2_data))
-        req(n > 0)
-        p_val <- count / n
-        label <- withMathJax(paste("$p_{2} = $", ro(p_val, decimal_bi_d)))
-        HTML(paste(label))
+        success2 <- input$bi_data_success2
+        req(success2, decimal_bi_d)
+        x <- na.omit(groups$g2$x)
+        req(length(x) > 0)
+        p_val <- ro(sum(x == success2, na.rm = TRUE) / length(x), decimal_bi_d)
+        ots_stat_value_html("p", groups$g2, p_val)
       }
     })
     
     output$bi_test_data_ui3 <- renderUI({
-      data <- filtered_data()
-      data_type <- input$data_type_bi
-      req(data, data_type, nrow(data) > 0, ncol(data) > 0)
-      
-      if (data_type == 1) {
-        # Columns mode
-        data_columns <- as.numeric(input$bi_data_selected_columns)
-        if (!isTruthy(data_columns)) {
-          return(NULL)
-        }
-        req(all(data_columns > 0), all(data_columns <= ncol(data)))
-        samples <- length(data_columns)
-        
-        if (samples == 1) {
-          # One-sample - show sample size
-          x <- na.omit(data[[data_columns[1]]])
-          req(length(x) > 0)
-          n <- length(x)
-          label <- withMathJax(paste("$n = $", n))
-          HTML(paste(label))
-        } else if (samples == 2) {
-          # Two-sample - show group 1 size
-          x <- na.omit(data[[data_columns[1]]])
-          req(length(x) > 0)
-          n <- length(x)
-          label <- withMathJax(paste("$n_{1} = $", n))
-          HTML(paste(label))
-        }
+      groups <- bi_data_groups()
+      req(groups)
+      x <- na.omit(groups$g1$x)
+      req(length(x) > 0)
+      n <- length(x)
+      if (is.null(groups$g2)) {
+        withMathJax(paste("$n = $", n))
       } else {
-        # Reference mode - show group 1 size
-        ref_col <- as.numeric(input$data_choice_ref_bi)
-        data_col <- as.numeric(input$data_choice_data_bi)
-        g1 <- input$data_choice_g1_bi
-        req(ref_col, data_col, g1,
-            ref_col > 0, ref_col <= ncol(data),
-            data_col > 0, data_col <= ncol(data))
-        
-        bi_data <- data.frame(ref = data[[ref_col]], data = data[[data_col]])
-        g1_data <- bi_data$data[bi_data$ref == g1]
-        req(length(g1_data) > 0)
-        n <- sum(!is.na(g1_data))
-        label <- withMathJax(paste("$n_{1} = $", n))
-        HTML(paste(label))
+        ots_n_sub_html(1L, n, group = groups$g1)
       }
     })
     
     output$bi_test_data_ui4 <- renderUI({
-      data <- filtered_data()
-      data_type <- input$data_type_bi
-      req(data, data_type, nrow(data) > 0, ncol(data) > 0)
-      
-      if (data_type == 1) {
-        # Columns mode
-        data_columns <- as.numeric(input$bi_data_selected_columns)
-        if (!isTruthy(data_columns) || length(data_columns) == 1) {
-          return(NULL)
-        }
-        req(all(data_columns > 0), all(data_columns <= ncol(data)))
-        samples <- length(data_columns)
-        
-        if (samples == 2) {
-          # Two-sample - show group 2 size
-          x <- na.omit(data[[data_columns[2]]])
-          req(length(x) > 0)
-          n <- length(x)
-          label <- withMathJax(paste("$n_{2} = $", n))
-          HTML(paste(label))
-        }
-      } else {
-        # Reference mode - show group 2 size
-        ref_col <- as.numeric(input$data_choice_ref_bi)
-        data_col <- as.numeric(input$data_choice_data_bi)
-        g2 <- input$data_choice_g2_bi
-        req(ref_col, data_col, g2,
-            ref_col > 0, ref_col <= ncol(data),
-            data_col > 0, data_col <= ncol(data))
-        
-        bi_data <- data.frame(ref = data[[ref_col]], data = data[[data_col]])
-        g2_data <- bi_data$data[bi_data$ref == g2]
-        req(length(g2_data) > 0)
-        n <- sum(!is.na(g2_data))
-        label <- withMathJax(paste("$n_{2} = $", n))
-        HTML(paste(label))
-      }
+      groups <- bi_data_groups()
+      req(groups, groups$g2)
+      x <- na.omit(groups$g2$x)
+      req(length(x) > 0)
+      ots_n_sub_html(2L, length(x), group = groups$g2)
     })
     
     # =========================================================================
@@ -3155,7 +2919,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           decimal_poi_d = input$decimal_poi_d,
           conf_poi_data = input$conf_poi_data,
           data_type_poi = input$data_type_poi,
-          poi_data_selected_columns = input$poi_data_selected_columns,
+          poi_data_col_g1 = input$poi_data_col_g1,
+          poi_data_col_g2 = input$poi_data_col_g2,
           alt_poi_data = input$alt_poi_data,
           data_choice_ref_poi = input$data_choice_ref_poi,
           data_choice_data_poi = input$data_choice_data_poi,
@@ -3298,7 +3063,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       conf <- input$conf_poi_data
       data <- filtered_data()
       data_type <- input$data_type_poi
-      poi_data_selected_columns <- input$poi_data_selected_columns
+      poi_sel_cols <- ots_col_vector(input$poi_data_col_g1, input$poi_data_col_g2)
       
       if (is.null(results)) {
         return(HTML("<p>No results available. Please check your inputs.</p>"))
@@ -3322,51 +3087,42 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         alt_num <- 1
       }
       
-      # Determine number of samples and get group names
-      if (data_type == 1) {
-        sel_col <- as.numeric(poi_data_selected_columns)
-        if (!isTruthy(sel_col)) {
-          return(NULL)
-        }
-        req(all(sel_col > 0), all(sel_col <= ncol(data)))
-        samples <- length(sel_col)
-        
-        if (samples == 1) {
-          # One-sample - get column name
-          group1_name <- names(data)[sel_col[1]]
-        } else if (samples == 2) {
-          group1_name <- names(data)[sel_col[1]]
-          group2_name <- names(data)[sel_col[2]]
-        }
-      } else {
-        samples <- 2
-        g1 <- input$data_choice_g1_poi
-        g2 <- input$data_choice_g2_poi
-        req(g1, g2)
-        group1_name <- paste("Group 1 = ", g1)
-        group2_name <- paste("Group 2 = ", g2)
-      }
+      two_col <- length(poi_sel_cols) >= 2L
+      samples <- if (two_col) 2L else 1L
+      groups <- ots_groups_from_inputs(
+        data,
+        mode = data_type,
+        col_g1 = input$poi_data_col_g1,
+        col_g2 = input$poi_data_col_g2,
+        ref_col = input$data_choice_ref_poi,
+        data_col = input$data_choice_data_poi,
+        level_g1 = input$data_choice_g1_poi,
+        level_g2 = input$data_choice_g2_poi,
+        two_sample = two_col
+      )
+      req(groups)
       
       if (samples == 1) {
+        req(groups$g1)
         # One-sample Poisson test
-        HTML(c(
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>", resultsR$method, "</b>"),
           "<br><br>",
           "<table>",
           "<tr>",
-          "<td>", paste(withMathJax("$c =$"), resultsR$statistic), "</td>",
+          "<td>", ots_mj_paste_stat("c", groups$g1, resultsR$statistic), "</td>",
           "<td>", "</td>",
           "<td>", paste(withMathJax("$\\lambda_{0} =$"), resultsR$null.value), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n= $"), resultsR$parameter), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, resultsR$parameter), "</td>",
           "<td>", "</td>",
           "<td>", "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\lambda: $")), "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", ots_mj_paste_stat("\\lambda", groups$g1)), "</td>",
           "<td>", resultsR$conf.int[1], "</td>",
           "<td>", "to", "</td>",
           "<td>", resultsR$conf.int[2], "</td>",
@@ -3378,67 +3134,42 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
           "</table>"
-        ))
+        )), ns("poi_data_mj")))
       } else if (samples == 2) {
-        # Two-sample Poisson test - need to get counts and n from data
-        if (data_type == 1) {
-          sel_col <- as.numeric(poi_data_selected_columns)
-          req(all(sel_col > 0), all(sel_col <= ncol(data)))
-          poi_data <- data[sel_col]
-          count1 <- sum(na.omit(poi_data[[1]]))
-          n1 <- nrow(na.omit(poi_data[1]))
-          count2 <- sum(na.omit(poi_data[[2]]))
-          n2 <- nrow(na.omit(poi_data[2]))
-        } else {
-          ref_col <- as.numeric(input$data_choice_ref_poi)
-          data_col <- as.numeric(input$data_choice_data_poi)
-          g1_id <- input$data_choice_g1_poi
-          g2_id <- input$data_choice_g2_poi
-          req(ref_col, data_col, g1_id, g2_id,
-              ref_col > 0, ref_col <= ncol(data),
-              data_col > 0, data_col <= ncol(data))
-          
-          poi_data1 <- data.frame(
-            group = data[[ref_col]][data[[ref_col]] == g1_id],
-            count = data[[data_col]][data[[ref_col]] == g1_id]
-          )
-          poi_data2 <- data.frame(
-            group = data[[ref_col]][data[[ref_col]] == g2_id],
-            count = data[[data_col]][data[[ref_col]] == g2_id]
-          )
-          req(length(poi_data1$count) > 0, length(poi_data2$count) > 0)
-          count1 <- sum(na.omit(poi_data1$count))
-          n1 <- length(na.omit(poi_data1$count))
-          count2 <- sum(na.omit(poi_data2$count))
-          n2 <- length(na.omit(poi_data2$count))
-        }
+        req(groups$g2)
+        g1_x <- na.omit(groups$g1$x)
+        g2_x <- na.omit(groups$g2$x)
+        count1 <- sum(g1_x)
+        n1 <- length(g1_x)
+        count2 <- sum(g2_x)
+        n2 <- length(g2_x)
         
-        HTML(c(
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>", resultsR$method, "</b>"),
           "<br><br>",
           "<table>",
-          "<tr><td style='border-bottom:1px solid #000'>", group1_name, "</td><td style='border-bottom:1px solid #000'></td>",
-          "<td style='border-bottom:1px solid #000'>", group2_name, "</td></tr>",
+          "<tr><td style='border-bottom:1px solid #000'>", groups$g1$name, "</td><td style='border-bottom:1px solid #000'></td>",
+          "<td style='border-bottom:1px solid #000'>", groups$g2$name, "</td></tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$c_{1} =$"), count1), "</td>",
+          "<td>", ots_mj_paste_stat("c", groups$g1, count1), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$c_{2} =$"), count2), "</td>",
+          "<td>", ots_mj_paste_stat("c", groups$g2, count2), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1}= $"), n1), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g1, n1), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2}= $"), n2), "</td>",
+          "<td>", ots_mj_paste_stat("n", groups$g2, n2), "</td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\lambda_{1}: $")), "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", ots_mj_paste_stat("\\lambda", groups$g1)), "</td>",
           "<td>", resultsR[["estimate"]][["g1.lambda.lowerci"]], "</td>",
           "<td>", "to", "</td>",
           "<td>", resultsR[["estimate"]][["g1.lambda.upperci"]], "</td>",
           "</tr>",
           "<tr>",
-          "<td align='right'>", paste(withMathJax("$\\lambda_{2}: $")), "</td>",
+          "<td align='right'>", paste(ots_mj_paste_stat("\\lambda", groups$g2)), "</td>",
           "<td>", resultsR[["estimate"]][["g2.lambda.lowerci"]], "</td>",
           "<td>", "to", "</td>",
           "<td>", resultsR[["estimate"]][["g2.lambda.upperci"]], "</td>",
@@ -3450,7 +3181,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
           "</table>"
-        ))
+        )), ns("poi_data_mj")))
       }
     })
     
@@ -3458,19 +3189,56 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # POISSON UI RENDERING FUNCTIONS
     # =========================================================================
     
-    # Column selection for data mode
     output$data_choice_column_poi <- renderUI({
       data <- filtered_data()
-      req(data)
-      
-      choices <- seq(1, ncol(data))
-      names(choices) <- names(data)
-      
-      checkboxGroupInput(
-        inputId = ns("poi_data_selected_columns"),
-        label = "Analyze which column(s)?",
-        choices = choices
+      req(data, ncol(data) > 0)
+      choices <- ots_column_choices(data)
+      tagList(
+        selectInput(
+          inputId = ns("poi_data_col_g1"),
+          label = "Group 1 column",
+          choices = c("Select column..." = "", choices),
+          selected = ""
+        ),
+        selectInput(
+          inputId = ns("poi_data_col_g2"),
+          label = "Group 2 column (leave blank for one-sample)",
+          choices = c("—" = "", choices),
+          selected = ""
+        )
       )
+    })
+    
+    output$ots_poi_group_assignment <- renderUI({
+      data <- filtered_data()
+      req(data, input$data_type_poi)
+      two_col <- if (input$data_type_poi == 1) {
+        ots_column_mode_ready(
+          col_g1 = input$poi_data_col_g1,
+          col_g2 = input$poi_data_col_g2,
+          two_sample = TRUE
+        )
+      } else {
+        ots_reference_mode_ready(
+          input$data_choice_ref_poi,
+          input$data_choice_data_poi,
+          input$data_choice_g1_poi,
+          input$data_choice_g2_poi,
+          two_sample = TRUE
+        )
+      }
+      groups <- ots_groups_from_inputs(
+        data,
+        mode = input$data_type_poi,
+        col_g1 = input$poi_data_col_g1,
+        col_g2 = input$poi_data_col_g2,
+        ref_col = input$data_choice_ref_poi,
+        data_col = input$data_choice_data_poi,
+        level_g1 = input$data_choice_g1_poi,
+        level_g2 = input$data_choice_g2_poi,
+        two_sample = two_col
+      )
+      ots_group_assignment_html(groups)
     })
     
     # Reference column selection
@@ -3478,13 +3246,10 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       data <- filtered_data()
       req(data)
       
-      choices <- seq(1, ncol(data))
-      names(choices) <- names(data)
-      
       selectInput(
         inputId = ns("data_choice_ref_poi"),
-        label = "Select Factor",
-        choices = choices
+        label = "Factor column",
+        choices = ots_column_choices(data)
       )
     })
     
@@ -3505,7 +3270,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       selectInput(
         inputId = ns("data_choice_data_poi"),
-        label = "Select Data",
+        label = "Response column",
         choices = choices
       )
     })
@@ -3516,11 +3281,13 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       ref_col <- input$data_choice_ref_poi
       req(data, ref_col)
       
-      factor_levels <- unique(na.omit(data[[as.numeric(ref_col)]]))
+      factor_col <- as.numeric(ref_col)
+      factor_levels <- unique(na.omit(data[[factor_col]]))
+      ref_name <- names(data)[factor_col]
       
       selectInput(
         inputId = ns("data_choice_g1_poi"),
-        label = "Group 1",
+        label = paste0("Group 1 level (", ref_name, ")"),
         choices = factor_levels
       )
     })
@@ -3532,14 +3299,14 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       g1 <- input$data_choice_g1_poi
       req(data, ref_col, g1)
       
-      factor_levels <- unique(na.omit(data[[as.numeric(ref_col)]]))
-      
-      # Remove the selected group 1
+      factor_col <- as.numeric(ref_col)
+      factor_levels <- unique(na.omit(data[[factor_col]]))
+      ref_name <- names(data)[factor_col]
       temp <- factor_levels[factor_levels != g1]
       
       selectInput(
         inputId = ns("data_choice_g2_poi"),
-        label = "Group 2",
+        label = paste0("Group 2 level (", ref_name, ")"),
         choices = temp
       )
     })
@@ -3551,11 +3318,11 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       if (data_type == 1) {
         # Columns mode
-        poi_data_selected_columns <- input$poi_data_selected_columns
-        if (!isTruthy(poi_data_selected_columns)) {
+        poi_sel_cols <- ots_col_vector(input$poi_data_col_g1, input$poi_data_col_g2)
+        if (!isTruthy(poi_sel_cols)) {
           return(HTML("<p>Select at least one data column</p>"))
         }
-        samples <- length(poi_data_selected_columns)
+        samples <- length(poi_sel_cols)
       } else {
         # Reference mode
         factor_col <- input$data_choice_ref_poi
@@ -3593,7 +3360,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       if (data_type == 1) {
         # Columns mode
-        sel_col <- as.numeric(input$poi_data_selected_columns)
+        sel_col <- as.numeric(ots_col_vector(input$poi_data_col_g1, input$poi_data_col_g2))
         if (!isTruthy(sel_col) || length(sel_col) == 0) {
           return(NULL)
         }
@@ -3644,7 +3411,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       if (data_type == 1) {
         # Columns mode
-        sel_col <- as.numeric(input$poi_data_selected_columns)
+        sel_col <- as.numeric(ots_col_vector(input$poi_data_col_g1, input$poi_data_col_g2))
         if (!isTruthy(sel_col)) {
           return(NULL)
         }
@@ -3658,7 +3425,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
             label = withMathJax("$\\lambda_{0}:{ }$"),
             value = 0.5,
             min = 0,
-            width = "75px"
+            width = "150px"
           )
         } else if (samples == 2) {
           # Two-sample - show group 2 lambda
@@ -3702,7 +3469,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       if (data_type == 1) {
         # Columns mode
-        sel_col <- as.numeric(input$poi_data_selected_columns)
+        sel_col <- as.numeric(ots_col_vector(input$poi_data_col_g1, input$poi_data_col_g2))
         if (!isTruthy(sel_col)) {
           return(NULL)
         }
@@ -3748,7 +3515,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       if (data_type == 1) {
         # Columns mode
-        sel_col <- as.numeric(input$poi_data_selected_columns)
+        sel_col <- as.numeric(ots_col_vector(input$poi_data_col_g1, input$poi_data_col_g2))
         if (!isTruthy(sel_col) || length(sel_col) == 1) {
           return(NULL)
         }
@@ -3810,7 +3577,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           conf_np_data = input$conf_np_data,
           decimal_np_data = input$decimal_np_data,
           data_type_np = input$data_type_np,
-          np_data_selected_columns = input$np_data_selected_columns,
+          np_data_col_g1 = input$np_data_col_g1,
+          np_data_col_g2 = input$np_data_col_g2,
           np_tests_data = input$np_tests_data,
           choice_np_alt_data = input$choice_np_alt_stat_data,
           data_choice_ref_np = input$data_choice_ref_np,
@@ -3938,17 +3706,17 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(np_tests)
       
       if (np_tests == 1) {
-        numericInput(inputId = ns("npUI1"), label = withMathJax("$n_{above}:{ }$"), value = 2, min = 0, step = 1)
+        numericInput(inputId = ns("npUI1"), label = withMathJax("$n_{above}:{ }$"), value = 2, min = 0, step = 1, width = "150px")
       } else if (np_tests == 2) {
-        numericInput(inputId = ns("npUI1"), label = withMathJax("$S^{+}:{ }$"), value = 3, min = 0, step = 1)
+        numericInput(inputId = ns("npUI1"), label = withMathJax("$S^{+}:{ }$"), value = 3, min = 0, step = 1, width = "150px")
       } else if (np_tests == 3) {
-        numericInput(inputId = ns("npUI1"), label = withMathJax("$S_{1}:{ }$"), value = 32, min = 0, step = 1)
+        numericInput(inputId = ns("npUI1"), label = withMathJax("$S_{1}:{ }$"), value = 32, min = 0, step = 1, width = "150px")
       } else if (np_tests == 4) {
-        numericInput(inputId = ns("npUI1"), label = withMathJax("$n_{1 \\;above}:{ }$"), value = 1, min = 0, step = 1)
+        numericInput(inputId = ns("npUI1"), label = withMathJax("$n_{1 \\;above}:{ }$"), value = 1, min = 0, step = 1, width = "150px")
       } else if (np_tests == 5) {
-        numericInput(inputId = ns("npUI1"), label = withMathJax("$n^+:{ }$"), value = 8, min = 0, step = 1)
+        numericInput(inputId = ns("npUI1"), label = withMathJax("$n^+:{ }$"), value = 8, min = 0, step = 1, width = "150px")
       } else if (np_tests == 6) {
-        numericInput(inputId = ns("npUI1"), label = withMathJax("$S^{+}:{ }$"), value = 27, min = 0, step = 1)
+        numericInput(inputId = ns("npUI1"), label = withMathJax("$S^{+}:{ }$"), value = 27, min = 0, step = 1, width = "150px")
       } else if (np_tests == 7) {
         HTML("<p style='text-align:center'><b>Pass 2</b></p>")
       }
@@ -3961,11 +3729,11 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       if (np_tests == 1) {
         NULL
       } else if (np_tests == 2) {
-        numericInput(inputId = ns("npUI2"), label = withMathJax("$S^{-}:{ }$"), value = 150, min = 0, step = 1)
+        numericInput(inputId = ns("npUI2"), label = withMathJax("$S^{-}:{ }$"), value = 150, min = 0, step = 1, width = "150px")
       } else if (np_tests == 3) {
-        numericInput(inputId = ns("npUI2"), label = withMathJax("$S_{2}:{ }$"), value = 46, min = 0, step = 1)
+        numericInput(inputId = ns("npUI2"), label = withMathJax("$S_{2}:{ }$"), value = 46, min = 0, step = 1, width = "150px")
       } else if (np_tests == 4) {
-        numericInput(inputId = ns("npUI2"), label = withMathJax("$n_{2 \\;above}:{ }$"), value = 5, min = 0, step = 1)
+        numericInput(inputId = ns("npUI2"), label = withMathJax("$n_{2 \\;above}:{ }$"), value = 5, min = 0, step = 1, width = "150px")
       } else if (np_tests == 5 || np_tests == 6) {
         NULL
       } else if (np_tests == 7) {
@@ -3978,19 +3746,19 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(np_tests)
       
       if (np_tests == 1) {
-        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{equal}:{ }$"), value = 0, min = 0, step = 1)
+        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{equal}:{ }$"), value = 0, min = 0, step = 1, width = "150px")
       } else if (np_tests == 2) {
-        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{Adj.}:{ }$"), value = 17, min = 1, step = 1)
+        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{Adj.}:{ }$"), value = 17, min = 1, step = 1, width = "150px")
       } else if (np_tests == 3) {
-        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{1}:{ }$"), value = 6, min = 0, step = 1)
+        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{1}:{ }$"), value = 6, min = 0, step = 1, width = "150px")
       } else if (np_tests == 4) {
-        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{1 \\;equal}:{ }$"), value = 0, min = 0, step = 1)
+        numericInput(inputId = ns("npUI3"), label = withMathJax("$n_{1 \\;equal}:{ }$"), value = 0, min = 0, step = 1, width = "150px")
       } else if (np_tests == 5) {
-        numericInput(inputId = ns("npUI3"), label = withMathJax("$n^=:{ }$"), value = 0, min = 0, step = 1)
+        numericInput(inputId = ns("npUI3"), label = withMathJax("$n^=:{ }$"), value = 0, min = 0, step = 1, width = "150px")
       } else if (np_tests == 6) {
-        numericInput(inputId = ns("npUI3"), label = withMathJax("$S^{-}:{ }$"), value = 18, min = 0, step = 1)
+        numericInput(inputId = ns("npUI3"), label = withMathJax("$S^{-}:{ }$"), value = 18, min = 0, step = 1, width = "150px")
       } else if (np_tests == 7) {
-        numericInput(inputId = ns("npUI3"), label = "Pass 1", value = 56, min = 0, step = 1)
+        numericInput(inputId = ns("npUI3"), label = "Pass 1", value = 56, min = 0, step = 1, width = "150px")
       }
     })
     
@@ -4001,13 +3769,13 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       if (np_tests %in% c(1, 2)) {
         NULL
       } else if (np_tests == 3) {
-        numericInput(inputId = ns("npUI4"), label = withMathJax("$n_{2}:{ }$"), value = 6, min = 0, step = 1)
+        numericInput(inputId = ns("npUI4"), label = withMathJax("$n_{2}:{ }$"), value = 6, min = 0, step = 1, width = "150px")
       } else if (np_tests == 4) {
-        numericInput(inputId = ns("npUI4"), label = withMathJax("$n_{2 \\;equal}:{ }$"), value = 0, min = 0, step = 1)
+        numericInput(inputId = ns("npUI4"), label = withMathJax("$n_{2 \\;equal}:{ }$"), value = 0, min = 0, step = 1, width = "150px")
       } else if (np_tests %in% c(5, 6)) {
         NULL
       } else if (np_tests == 7) {
-        numericInput(inputId = ns("npUI4"), label = "Pass 1", value = 4, min = 0, step = 1)
+        numericInput(inputId = ns("npUI4"), label = "Pass 1", value = 4, min = 0, step = 1, width = "150px")
       }
     })
     
@@ -4016,17 +3784,17 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(np_tests)
       
       if (np_tests == 1) {
-        numericInput(inputId = ns("npUI5"), label = withMathJax("$n_{below}:{ }$"), value = 8, min = 0, step = 1)
+        numericInput(inputId = ns("npUI5"), label = withMathJax("$n_{below}:{ }$"), value = 8, min = 0, step = 1, width = "150px")
       } else if (np_tests %in% c(2, 3)) {
         NULL
       } else if (np_tests == 4) {
-        numericInput(inputId = ns("npUI5"), label = withMathJax("$n_{1 \\;below}:{ }$"), value = 5, min = 0, step = 1)
+        numericInput(inputId = ns("npUI5"), label = withMathJax("$n_{1 \\;below}:{ }$"), value = 5, min = 0, step = 1, width = "150px")
       } else if (np_tests == 5) {
-        numericInput(inputId = ns("npUI5"), label = withMathJax("$n^-:{ }$"), value = 2, min = 0, step = 1)
+        numericInput(inputId = ns("npUI5"), label = withMathJax("$n^-:{ }$"), value = 2, min = 0, step = 1, width = "150px")
       } else if (np_tests == 6) {
-        numericInput(inputId = ns("npUI5"), label = withMathJax("$n:{ }$"), value = 10, min = 1, step = 1)
+        numericInput(inputId = ns("npUI5"), label = withMathJax("$n:{ }$"), value = 10, min = 1, step = 1, width = "150px")
       } else if (np_tests == 7) {
-        numericInput(inputId = ns("npUI5"), label = "Fail 1", value = 56, min = 1, step = 1)
+        numericInput(inputId = ns("npUI5"), label = "Fail 1", value = 56, min = 1, step = 1, width = "150px")
       }
     })
     
@@ -4037,9 +3805,9 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       if (np_tests %in% c(1, 2, 3, 5, 6)) {
         NULL
       } else if (np_tests == 4) {
-        numericInput(inputId = ns("npUI6"), label = withMathJax("$n_{2 \\;below}:{ }$"), value = 1, min = 0, step = 1)
+        numericInput(inputId = ns("npUI6"), label = withMathJax("$n_{2 \\;below}:{ }$"), value = 1, min = 0, step = 1, width = "150px")
       } else if (np_tests == 7) {
-        numericInput(inputId = ns("npUI6"), label = "Fail 1", value = 4, min = 1, step = 1)
+        numericInput(inputId = ns("npUI6"), label = "Fail 1", value = 4, min = 1, step = 1, width = "150px")
       }
     })
     
@@ -4350,26 +4118,85 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     # USE DATA MODE - UI RENDERING FUNCTIONS
     # =========================================================================
     
-    # Column selection for Use Data mode
     output$data_choice_column_np <- renderUI({
       data <- filtered_data()
-      req(data)
-      
-      choices <- seq(1:ncol(data))
-      names(choices) <- names(data)
-      
-      checkboxGroupInput(
-        inputId = ns("np_data_selected_columns"),
-        label = "Analyze which column(s)?",
-        choices = choices
+      req(data, ncol(data) > 0)
+      choices <- ots_column_choices(data)
+      tagList(
+        selectInput(
+          inputId = ns("np_data_col_g1"),
+          label = "Group 1 column",
+          choices = c("Select column..." = "", choices),
+          selected = ""
+        ),
+        selectInput(
+          inputId = ns("np_data_col_g2"),
+          label = "Group 2 column (leave blank for one-sample)",
+          choices = c("—" = "", choices),
+          selected = ""
+        ),
+        tags$p(
+          class = "help-block text-muted",
+          style = "font-size: 0.85em; margin-top: 0;",
+          "For dependent tests, row i in Group 1 is paired with row i in Group 2."
+        )
+      )
+    })
+    
+    output$ots_np_group_assignment <- renderUI({
+      req(filtered_data(), input$data_type_np)
+      ots_group_assignment_html(np_data_groups())
+    })
+
+    np_data_groups <- reactive({
+      data <- filtered_data()
+      req(data, input$data_type_np)
+      np_tests <- input$np_tests_data
+      two_sample_np <- !is.null(np_tests) && np_tests %in% c(3L, 4L, 5L, 6L, 7L)
+      two_col <- if (as.integer(input$data_type_np)[1L] == 1L) {
+        if (two_sample_np) {
+          ots_column_mode_ready(
+            col_g1 = input$np_data_col_g1,
+            col_g2 = input$np_data_col_g2,
+            two_sample = TRUE
+          )
+        } else {
+          ots_column_mode_ready(col_g1 = input$np_data_col_g1, two_sample = FALSE)
+        }
+      } else if (two_sample_np) {
+        ots_reference_mode_ready(
+          input$data_choice_ref_np,
+          input$data_choice_data_np,
+          input$data_choice_g1_np,
+          input$data_choice_g2_np,
+          two_sample = TRUE
+        )
+      } else {
+        ots_reference_mode_ready(
+          input$data_choice_ref_np,
+          input$data_choice_data_np,
+          input$data_choice_g1_np,
+          two_sample = FALSE
+        )
+      }
+      ots_groups_from_inputs(
+        data,
+        mode = input$data_type_np,
+        col_g1 = input$np_data_col_g1,
+        col_g2 = input$np_data_col_g2,
+        ref_col = input$data_choice_ref_np,
+        data_col = input$data_choice_data_np,
+        level_g1 = input$data_choice_g1_np,
+        level_g2 = input$data_choice_g2_np,
+        two_sample = two_col
       )
     })
     
     # Number of selected columns reactive
     num_selected_columns_np_data <- reactive({
-      np_data_selected_columns <- input$np_data_selected_columns
-      if (is.null(np_data_selected_columns)) return(0)
-      length(np_data_selected_columns)
+      np_sel_cols <- ots_col_vector(input$np_data_col_g1, input$np_data_col_g2)
+      if (is.null(np_sel_cols)) return(0)
+      length(np_sel_cols)
     })
     
     # Independent or Dependent selection
@@ -4488,7 +4315,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(test)
       if (test != 7) return()
       
-      columns <- as.numeric(input$np_data_selected_columns)
+      columns <- as.numeric(ots_col_vector(input$np_data_col_g1, input$np_data_col_g2))
       data <- filtered_data()
       req(columns, data, test)
       
@@ -4534,227 +4361,184 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
     
     output$npUI1_data <- renderUI({
       np_tests <- input$np_tests_data
-      np_data_selected_columns <- input$np_data_selected_columns
-      data_type <- input$data_type_np
+      groups <- np_data_groups()
+      R <- input$decimal_np_data
       data <- filtered_data()
+      np_sel_cols <- ots_col_vector(input$np_data_col_g1, input$np_data_col_g2)
       
       req(np_tests, data)
       
-      if (np_tests == 1) {
-        # One-sample sign test - show median
-        req(np_data_selected_columns)
-        x <- data[, as.numeric(np_data_selected_columns[1])]
-        HTML(paste(withMathJax("$\\widetilde{X}_{data} = $"), median(x, na.rm = TRUE)))
-      } else if (np_tests == 2) {
-        # One-sample Wilcoxon signed ranks test - show median
-        req(np_data_selected_columns)
-        x <- data[, as.numeric(np_data_selected_columns[1])]
-        HTML(paste(withMathJax("$\\widetilde{X}_{data} = $"), median(x, na.rm = TRUE)))
-      } else if (np_tests == 3 || np_tests == 4) {
-        # Two-sample tests - show group 1 median
-        if (data_type == 1) {
-          req(np_data_selected_columns)
-          x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        } else if (data_type == 2) {
-          ref_col <- as.numeric(input$data_choice_ref_np)
-          data_col <- as.numeric(input$data_choice_data_np)
-          req(ref_col, data_col)
-          x1 <- data[[data_col]][which(data[[ref_col]] == input$data_choice_g1_np)]
-        }
-        HTML(paste(withMathJax("$\\widetilde{X}_{1} =$"), median(na.omit(x1))))
-      } else if (np_tests == 5) {
-        # Two-sample dependent sign test
-        req(np_data_selected_columns, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        temp <- median.test.twosample.dependent.signtest(g1 = x1, g2 = x2)
-        temp <- temp$estimate[3]
-        HTML(paste(withMathJax("$n^{+} =$"), temp))
-      } else if (np_tests == 6) {
-        # Two-sample dependent Wilcoxon signed ranks test
-        req(np_data_selected_columns, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        len <- length(x2)
-        n <- seq(1:len)
-        n_plus <- 0
-        for (val in n) {
-          if (x1[val] > x2[val]) {
-            n_plus <- n_plus + 1
-          }
-        }
-        HTML(paste(withMathJax("$n^{+} =$"), n_plus))
-      } else if (np_tests == 7) {
-        # McNemar's test
+      if (np_tests %in% c(1L, 2L)) {
+        req(groups, groups$g1)
+        med <- median(na.omit(groups$g1$x))
+        if (!is.null(R)) med <- ro(med, R)
+        ots_stat_value_html("\\widetilde{X}", groups$g1, med)
+      } else if (np_tests %in% c(3L, 4L)) {
+        req(groups, groups$g1)
+        med <- median(na.omit(groups$g1$x))
+        if (!is.null(R)) med <- ro(med, R)
+        ots_stat_value_html("\\widetilde{X}", groups$g1, med)
+      } else if (np_tests == 5L) {
+        req(groups, groups$g2)
+        temp <- median.test.twosample.dependent.signtest(
+          g1 = groups$g1$x,
+          g2 = groups$g2$x
+        )
+        n_plus <- temp$estimate[3]
+        if (!is.null(R)) n_plus <- ro(n_plus, R)
+        ots_mj_mod_stat_html("n", groups$g1, "^{+}", n_plus)
+      } else if (np_tests == 6L) {
+        req(groups, groups$g2)
+        paired <- ots_paired_frame(groups$g1$x, groups$g2$x)
+        n_plus <- if (is.null(paired)) 0L else sum(paired$g1 > paired$g2)
+        ots_mj_mod_stat_html("n", groups$g1, "^{+}", n_plus)
+      } else if (np_tests == 7L) {
         pass <- input$np_mc_pass
-        req(np_data_selected_columns, data, pass, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        cats <- unique(c(na.omit(unique(data[[as.numeric(np_data_selected_columns[1])]])), 
-                         na.omit(unique(data[[as.numeric(np_data_selected_columns[2])]]))))
+        req(np_sel_cols, data, pass, length(np_sel_cols) >= 2)
+        x1 <- data[, as.numeric(np_sel_cols[1])]
+        x2 <- data[, as.numeric(np_sel_cols[2])]
+        cats <- unique(c(
+          na.omit(unique(data[[as.numeric(np_sel_cols[1])]])),
+          na.omit(unique(data[[as.numeric(np_sel_cols[2])]]))
+        ))
         cats <- c(cats[cats == pass], cats[cats != pass])
-        mctable <- table(factor(x1, levels = cats, labels = c("Pass", "Fail")),
-                         factor(x2, levels = cats, labels = c("Pass", "Fail")))
-        a <- mctable[1, 1]
-        HTML(paste0(withMathJax("$P_{1}P_{2}=$"), a))
+        mctable <- table(
+          factor(x1, levels = cats, labels = c("Pass", "Fail")),
+          factor(x2, levels = cats, labels = c("Pass", "Fail"))
+        )
+        HTML(paste0(withMathJax("$P_{1}P_{2}=$"), mctable[1, 1]))
       }
     })
     
     output$npUI2_data <- renderUI({
       np_tests <- input$np_tests_data
-      data_type <- input$data_type_np
+      groups <- np_data_groups()
+      R <- input$decimal_np_data
       data <- filtered_data()
+      np_sel_cols <- ots_col_vector(input$np_data_col_g1, input$np_data_col_g2)
       
       req(np_tests)
       
-      if (np_tests == 1) {
-        # One-sample sign test - input for M0
-        numericInput(inputId = ns("np_data_UI2"), label = withMathJax("$M_0{ }$"), value = 2, min = 0, step = 1)
-      } else if (np_tests == 2) {
-        # One-sample Wilcoxon signed ranks test - input for M0
-        numericInput(inputId = ns("np_data_UI2"), label = withMathJax("$M_0:{ }$"), value = 3, min = 0, step = 1)
-      } else if (np_tests == 3 || np_tests == 4) {
-        # Two-sample tests - show group 2 median
-        req(data_type)
-        if (data_type == 1) {
-          np_data_selected_columns <- input$np_data_selected_columns
-          req(np_data_selected_columns, data, length(np_data_selected_columns) >= 2)
-          x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        } else if (data_type == 2) {
-          ref_col <- as.numeric(input$data_choice_ref_np)
-          data_col <- as.numeric(input$data_choice_data_np)
-          req(ref_col, data_col)
-          x2 <- data[[data_col]][which(data[[ref_col]] == input$data_choice_g2_np)]
-        }
-        HTML(paste(withMathJax("$\\widetilde{X}_{2} =$"), median(na.omit(x2))))
-      } else if (np_tests == 5 || np_tests == 6) {
+      if (np_tests == 1L) {
+        numericInput(
+          inputId = ns("np_data_UI2"),
+          label = withMathJax("$M_0{ }$"),
+          value = 2,
+          min = 0,
+          step = 1,
+          width = "150px"
+        )
+      } else if (np_tests == 2L) {
+        numericInput(
+          inputId = ns("np_data_UI2"),
+          label = withMathJax("$M_0:{ }$"),
+          value = 3,
+          min = 0,
+          step = 1,
+          width = "150px"
+        )
+      } else if (np_tests %in% c(3L, 4L)) {
+        req(groups, groups$g2)
+        med <- median(na.omit(groups$g2$x))
+        if (!is.null(R)) med <- ro(med, R)
+        ots_stat_value_html("\\widetilde{X}", groups$g2, med)
+      } else if (np_tests %in% c(5L, 6L)) {
         NULL
-      } else if (np_tests == 7) {
-        # McNemar's test
-        req(data_type)
-        if (data_type == 1) {
-          np_data_selected_columns <- input$np_data_selected_columns
-        } else {
-          # For data_type == 2 (Reference Column mode), McNemar's test may not be applicable
-          # or needs different handling - return NULL for now
+      } else if (np_tests == 7L) {
+        if (as.integer(input$data_type_np)[1L] != 1L) {
           return(NULL)
         }
         pass <- input$np_mc_pass
-        req(np_data_selected_columns, data, pass, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        cats <- unique(c(na.omit(unique(data[[as.numeric(np_data_selected_columns[1])]])), 
-                         na.omit(unique(data[[as.numeric(np_data_selected_columns[2])]]))))
+        req(np_sel_cols, data, pass, length(np_sel_cols) >= 2)
+        x1 <- data[, as.numeric(np_sel_cols[1])]
+        x2 <- data[, as.numeric(np_sel_cols[2])]
+        cats <- unique(c(
+          na.omit(unique(data[[as.numeric(np_sel_cols[1])]])),
+          na.omit(unique(data[[as.numeric(np_sel_cols[2])]]))
+        ))
         cats <- c(cats[cats == pass], cats[cats != pass])
-        mctable <- table(factor(x1, levels = cats, labels = c("Pass", "Fail")),
-                         factor(x2, levels = cats, labels = c("Pass", "Fail")))
-        b <- mctable[1, 2]
-        HTML(paste0(withMathJax("$P_{1}F_{2}=$"), b))
+        mctable <- table(
+          factor(x1, levels = cats, labels = c("Pass", "Fail")),
+          factor(x2, levels = cats, labels = c("Pass", "Fail"))
+        )
+        HTML(paste0(withMathJax("$P_{1}F_{2}=$"), mctable[1, 2]))
       }
     })
     
     output$npUI3_data <- renderUI({
       np_tests <- input$np_tests_data
-      data_type <- input$data_type_np
+      groups <- np_data_groups()
       data <- filtered_data()
-      np_data_selected_columns <- input$np_data_selected_columns
+      np_sel_cols <- ots_col_vector(input$np_data_col_g1, input$np_data_col_g2)
       
       req(np_tests, data)
       
-      if (np_tests == 1) {
-        # One-sample sign test - show sample size
-        req(np_data_selected_columns)
-        HTML(paste(withMathJax("$n =$"), length(data[, as.numeric(np_data_selected_columns[1])])))
-      } else if (np_tests == 2) {
-        # One-sample Wilcoxon signed ranks test - show sample size
-        req(np_data_selected_columns)
-        HTML(paste(withMathJax("$n =$"), length(data[, as.numeric(np_data_selected_columns[1])])))
-      } else if (np_tests == 3 || np_tests == 4) {
-        # Two-sample tests - show group 1 sample size
-        if (data_type == 1) {
-          req(np_data_selected_columns)
-          x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        } else if (data_type == 2) {
-          ref_col <- as.numeric(input$data_choice_ref_np)
-          data_col <- as.numeric(input$data_choice_data_np)
-          req(ref_col, data_col)
-          x1 <- data[[data_col]][which(data[[ref_col]] == input$data_choice_g1_np)]
-        }
-        HTML(paste(withMathJax("$n_1 =$"), length(na.omit(x1))))
-      } else if (np_tests == 5) {
-        # Two-sample dependent sign test
-        req(np_data_selected_columns, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        temp <- median.test.twosample.dependent.signtest(g1 = x1, g2 = x2)
+      if (np_tests %in% c(1L, 2L)) {
+        req(groups, groups$g1)
+        ots_n_sub_html(group = groups$g1, value = length(na.omit(groups$g1$x)))
+      } else if (np_tests %in% c(3L, 4L)) {
+        req(groups, groups$g1)
+        ots_n_sub_html(group = groups$g1, value = length(na.omit(groups$g1$x)))
+      } else if (np_tests == 5L) {
+        req(groups, groups$g2)
+        temp <- median.test.twosample.dependent.signtest(
+          g1 = groups$g1$x,
+          g2 = groups$g2$x
+        )
         n_incl <- temp$estimate[2]
-        sample_s <- length(data[, as.numeric(np_data_selected_columns[2])])
-        HTML(paste(withMathJax("$n^{=} =$"), sample_s - n_incl))
-      } else if (np_tests == 6) {
-        # Two-sample dependent Wilcoxon signed ranks test
-        req(np_data_selected_columns, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        len <- length(x2)
-        n <- seq(1:len)
-        n_minus <- 0
-        for (val in n) {
-          if (x1[val] < x2[val]) {
-            n_minus <- n_minus + 1
-          }
-        }
-        HTML(paste(withMathJax("$n^{-} =$"), n_minus))
-      } else if (np_tests == 7) {
-        # McNemar's test
+        n_equal <- length(na.omit(groups$g2$x)) - n_incl
+        ots_mj_mod_stat_html("n", groups$g1, "^{=}", n_equal)
+      } else if (np_tests == 6L) {
+        req(groups, groups$g2)
+        paired <- ots_paired_frame(groups$g1$x, groups$g2$x)
+        n_minus <- if (is.null(paired)) 0L else sum(paired$g1 < paired$g2)
+        ots_mj_mod_stat_html("n", groups$g1, "^{-}", n_minus)
+      } else if (np_tests == 7L) {
         pass <- input$np_mc_pass
-        req(np_data_selected_columns, data, pass, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        cats <- unique(c(na.omit(unique(data[[as.numeric(np_data_selected_columns[1])]])), 
-                         na.omit(unique(data[[as.numeric(np_data_selected_columns[2])]]))))
+        req(np_sel_cols, data, pass, length(np_sel_cols) >= 2)
+        x1 <- data[, as.numeric(np_sel_cols[1])]
+        x2 <- data[, as.numeric(np_sel_cols[2])]
+        cats <- unique(c(
+          na.omit(unique(data[[as.numeric(np_sel_cols[1])]])),
+          na.omit(unique(data[[as.numeric(np_sel_cols[2])]]))
+        ))
         cats <- c(cats[cats == pass], cats[cats != pass])
-        mctable <- table(factor(x1, levels = cats, labels = c("Pass", "Fail")),
-                         factor(x2, levels = cats, labels = c("Pass", "Fail")))
-        c <- mctable[2, 1]
-        HTML(paste0(withMathJax("$F_{1}P_{2}=$"), c))
+        mctable <- table(
+          factor(x1, levels = cats, labels = c("Pass", "Fail")),
+          factor(x2, levels = cats, labels = c("Pass", "Fail"))
+        )
+        HTML(paste0(withMathJax("$F_{1}P_{2}=$"), mctable[2, 1]))
       }
     })
     
     output$npUI4_data <- renderUI({
       np_tests <- input$np_tests_data
-      data_type <- input$data_type_np
+      groups <- np_data_groups()
       data <- filtered_data()
-      np_data_selected_columns <- input$np_data_selected_columns
+      np_sel_cols <- ots_col_vector(input$np_data_col_g1, input$np_data_col_g2)
       
       req(np_tests, data)
       
-      if (np_tests == 3 || np_tests == 4) {
-        # Two-sample tests - show group 2 sample size
-        if (data_type == 1) {
-          req(np_data_selected_columns, length(np_data_selected_columns) >= 2)
-          x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        } else if (data_type == 2) {
-          ref_col <- as.numeric(input$data_choice_ref_np)
-          data_col <- as.numeric(input$data_choice_data_np)
-          req(ref_col, data_col)
-          x2 <- data[[data_col]][which(data[[ref_col]] == input$data_choice_g2_np)]
-        }
-        HTML(paste(withMathJax("$n_2 =$"), length(na.omit(x2))))
-      } else if (np_tests == 5 || np_tests == 6) {
+      if (np_tests %in% c(3L, 4L)) {
+        req(groups, groups$g2)
+        ots_n_sub_html(group = groups$g2, value = length(na.omit(groups$g2$x)))
+      } else if (np_tests %in% c(5L, 6L)) {
         NULL
-      } else if (np_tests == 7) {
-        # McNemar's test
+      } else if (np_tests == 7L) {
         pass <- input$np_mc_pass
-        req(np_data_selected_columns, data, pass, length(np_data_selected_columns) >= 2)
-        x1 <- data[, as.numeric(np_data_selected_columns[1])]
-        x2 <- data[, as.numeric(np_data_selected_columns[2])]
-        cats <- unique(c(na.omit(unique(data[[as.numeric(np_data_selected_columns[1])]])), 
-                         na.omit(unique(data[[as.numeric(np_data_selected_columns[2])]]))))
+        req(np_sel_cols, data, pass, length(np_sel_cols) >= 2)
+        x1 <- data[, as.numeric(np_sel_cols[1])]
+        x2 <- data[, as.numeric(np_sel_cols[2])]
+        cats <- unique(c(
+          na.omit(unique(data[[as.numeric(np_sel_cols[1])]])),
+          na.omit(unique(data[[as.numeric(np_sel_cols[2])]]))
+        ))
         cats <- c(cats[cats == pass], cats[cats != pass])
-        mctable <- table(factor(x1, levels = cats, labels = c("Pass", "Fail")),
-                         factor(x2, levels = cats, labels = c("Pass", "Fail")))
-        d <- mctable[2, 2]
-        HTML(paste0(withMathJax("$F_{1}F_{2}=$"), d))
+        mctable <- table(
+          factor(x1, levels = cats, labels = c("Pass", "Fail")),
+          factor(x2, levels = cats, labels = c("Pass", "Fail"))
+        )
+        HTML(paste0(withMathJax("$F_{1}F_{2}=$"), mctable[2, 2]))
       }
     })
     
@@ -4806,13 +4590,13 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       conf <- input$conf_np_data
       alt <- input$choice_np_alt_stat_data
       np_tests <- input$np_tests_data
-      data_type <- input$data_type_np
       data <- filtered_data()
-      np_data_selected_columns <- input$np_data_selected_columns
+      np_sel_cols <- ots_col_vector(input$np_data_col_g1, input$np_data_col_g2)
+      np_groups <- np_data_groups()
       
-      req(conf, alt, np_tests, data_type, data)
+      req(conf, alt, np_tests, data)
       
-      # For Reference Column mode, we don't need np_data_selected_columns
+      # For Reference Column mode, we don't need np_sel_cols
       # For Data in Columns mode, we do need it (but only for certain tests)
 
       if (alt == "two.sided") {
@@ -4825,27 +4609,27 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       # Test 1: One-sample sign test
       if (np_tests == 1) {
-        req(np_data_selected_columns)
-        len <- length(data[[as.numeric(np_data_selected_columns[1])]])
-        HTML(c(
+        req(np_groups, np_groups$g1)
+        len <- length(na.omit(np_groups$g1$x))
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>Sign Test for Location</b><br>", "<b>", "Method: ", resultsR$method, "</b>"),
           "<br><br>",
           "<table>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{above} = $"), resultsR$estimate[3]), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; above", resultsR$estimate[3]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$p_{above} = $"), resultsR$statistic), "</td>",
+          "<td>", ots_mj_mod_stat("p", np_groups$g1, "\\; above", resultsR$statistic), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{equal} = $"), len - resultsR$estimate[2]), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; equal", len - resultsR$estimate[2]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{below} = $"), resultsR$estimate[2] - resultsR$estimate[3]), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; below", resultsR$estimate[2] - resultsR$estimate[3]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{observed} = $"), len), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; observed", len), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{included} = $"), resultsR$estimate[2]), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; included", resultsR$estimate[2]), "</td>",
           "</tr>",
           "</table>",
           "<table>",
@@ -4853,7 +4637,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", paste("Test for proportion above = ", resultsR$parameter), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\pi_{above} :$")), "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", ots_mj_mod_stat("\\pi", np_groups$g1, "\\; above")), "</td>",
           "<td>", resultsR$conf.int[1], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$conf.int[2], "</td>",
@@ -4862,13 +4646,13 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<table>",
           "<tr>",
           "<td>", paste("Test for ", choice_np_alt_text[3 * (as.numeric(np_tests) - 1) + alt_num], ": "), "</td>",
-          "<td>", paste(withMathJax("$p_{above} = $"), resultsR$statistic), "</td>",
+          "<td>", ots_mj_mod_stat("p", np_groups$g1, "\\; above", resultsR$statistic), "</td>",
           "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
           "</table></br>",
           "<table><tr><td>", beta_statement, resultsR$estimate[4], "</td></tr>",
           "</table>"
-        ))
+        )), ns("np_data_mj")))
       }
       # Test 3: Two-sample Mann-Whitney U test
       else if (np_tests == 3) {
@@ -4876,48 +4660,23 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         req(resultsR$method, resultsR$estimate, resultsR$statistic, resultsR$p.value)
         req(length(resultsR$estimate) >= 4)
         
-        # Determine group names based on data mode
-        if (data_type == 1) {
-          # Data in Columns mode
-          group1_name <- if (!is.null(np_data_selected_columns) && length(np_data_selected_columns) >= 1) {
-            names(data)[as.numeric(np_data_selected_columns[1])]
-          } else {
-            "Group 1"
-          }
-          group2_name <- if (!is.null(np_data_selected_columns) && length(np_data_selected_columns) >= 2) {
-            names(data)[as.numeric(np_data_selected_columns[2])]
-          } else {
-            "Group 2"
-          }
-        } else {
-          # Reference Column mode
-          ref_col <- as.numeric(input$data_choice_ref_np)
-          g1_num <- input$data_choice_g1_np
-          g2_num <- input$data_choice_g2_np
-          
-          # Ensure inputs are available
-          req(ref_col, g1_num, g2_num, !is.null(ref_col), !is.null(g1_num), !is.null(g2_num))
-          req(ref_col > 0, ref_col <= ncol(data))
-          
-          group1_name <- paste0(names(data)[ref_col], " = ", g1_num)
-          group2_name <- paste0(names(data)[ref_col], " = ", g2_num)
-        }
+        req(np_groups, np_groups$g2)
         
-        HTML(c(
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>", "Method: ", resultsR$method, "</b>"),
           "<br><br>",
           "<table>",
-          "<tr><td style='border-bottom:1px solid #000'>", group1_name, "</td><td style='border-bottom:1px solid #000'></td>",
-          "<td style='border-bottom:1px solid #000'>", group2_name, "</td></tr>",
+          "<tr><td style='border-bottom:1px solid #000'>", np_groups$g1$name, "</td><td style='border-bottom:1px solid #000'></td>",
+          "<td style='border-bottom:1px solid #000'>", np_groups$g2$name, "</td></tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$S_{1} = $"), resultsR$estimate[1]), "</td>",
+          "<td>", ots_mj_paste_stat("S", np_groups$g1, resultsR$estimate[1]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$S_{2} = $"), resultsR$estimate[2]), "</td>",
+          "<td>", ots_mj_paste_stat("S", np_groups$g2, resultsR$estimate[2]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1} = $"), resultsR$estimate[3]), "</td>",
+          "<td>", ots_mj_paste_stat("n", np_groups$g1, resultsR$estimate[3]), "</td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2} = $"), resultsR$estimate[4]), "</td>",
+          "<td>", ots_mj_paste_stat("n", np_groups$g2, resultsR$estimate[4]), "</td>",
           "</tr>",
           "</table>",
           "<table>",
@@ -4932,7 +4691,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
           "</table>"
-        ))
+        )), ns("np_data_mj")))
       }
       # Test 4: Two-sample median test (Mood's)
       else if (np_tests == 4) {
@@ -4940,69 +4699,47 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         req(resultsR$method, resultsR$estimate, resultsR$p.value, resultsR$conf.int)
         req(length(resultsR$estimate) >= 12)
         
-        # Determine group names and calculate lengths based on data mode
-        if (data_type == 1) {
-          # Data in Columns mode
-          req(np_data_selected_columns, length(np_data_selected_columns) >= 2)
-          selected_cols <- as.numeric(np_data_selected_columns)
-          len1 <- length(na.omit(data[, selected_cols[1]]))
-          len2 <- length(na.omit(data[, selected_cols[2]]))
-          group1_name <- names(data)[selected_cols[1]]
-          group2_name <- names(data)[selected_cols[2]]
-        } else {
-          # Reference Column mode
-          ref_col <- as.numeric(input$data_choice_ref_np)
-          data_col <- as.numeric(input$data_choice_data_np)
-          g1_num <- input$data_choice_g1_np
-          g2_num <- input$data_choice_g2_np
-          
-          req(ref_col, data_col, g1_num, g2_num)
-          req(!is.null(ref_col), !is.null(data_col), !is.null(g1_num), !is.null(g2_num))
-          req(ref_col > 0, ref_col <= ncol(data), data_col > 0, data_col <= ncol(data))
-          
-          len1 <- length(na.omit(data[[data_col]][which(data[[ref_col]] == g1_num)]))
-          len2 <- length(na.omit(data[[data_col]][which(data[[ref_col]] == g2_num)]))
-          group1_name <- paste0(names(data)[ref_col], " = ", g1_num)
-          group2_name <- paste0(names(data)[ref_col], " = ", g2_num)
-        }
+        req(np_groups, np_groups$g2)
+        len1 <- length(na.omit(np_groups$g1$x))
+        len2 <- length(na.omit(np_groups$g2$x))
         
-        html_result <- HTML(c(
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>", "Two-Sample Median Test<br>Method: ", resultsR$method, "</b>"),
           "<br><br>",
           "<table>",
-          "<tr><td style='border-bottom:1px solid #000'>", group1_name, "</td><td style='border-bottom:1px solid #000'></td>",
-          "<td style='border-bottom:1px solid #000'>", group2_name, "</td></tr>",
+          "<tr><td style='border-bottom:1px solid #000'>", np_groups$g1$name, "</td><td style='border-bottom:1px solid #000'></td>",
+          "<td style='border-bottom:1px solid #000'>", np_groups$g2$name, "</td></tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1\\; above} = $"), resultsR$estimate[3]), "</td><td></td>",
-          "<td>", paste(withMathJax("$p_{1\\; above} = $"), resultsR$estimate[1]), "</td>",
-          "<td>", paste(withMathJax("$n_{2\\; above} = $"), resultsR$estimate[9]), "</td><td></td>",
-          "<td>", paste(withMathJax("$p_{2\\; above} = $"), resultsR$estimate[7]), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; above", resultsR$estimate[3]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("p", np_groups$g1, "\\; above", resultsR$estimate[1]), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g2, "\\; above", resultsR$estimate[9]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("p", np_groups$g2, "\\; above", resultsR$estimate[7]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1\\; equal} = $"), len1 - resultsR$estimate[2]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; equal", len1 - resultsR$estimate[2]), "</td><td></td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2\\; equal} = $"), len2 - resultsR$estimate[8]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g2, "\\; equal", len2 - resultsR$estimate[8]), "</td><td></td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1\\; below} = $"), resultsR$estimate[4]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; below", resultsR$estimate[4]), "</td><td></td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2\\; below} = $"), resultsR$estimate[10]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g2, "\\; below", resultsR$estimate[10]), "</td><td></td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(withMathJax("$n_{1\\; total\\; inc.} = $"), resultsR$estimate[2]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; total\\; inc.", resultsR$estimate[2]), "</td><td></td>",
           "<td>", "</td>",
-          "<td>", paste(withMathJax("$n_{2\\; total\\; inc.} = $"), resultsR$estimate[8]), "</td><td></td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g2, "\\; total\\; inc.", resultsR$estimate[8]), "</td><td></td>",
           "</tr>",
           "</table>",
           "<table>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\pi_{1 \\;above} :$")), "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", ots_mj_mod_stat("\\pi", np_groups$g1, "\\; above")), "</td>",
           "<td>", resultsR$estimate[5], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[6], "</td>",
           "</tr>",
           "<tr>",
-          "<td align='right'>", paste(withMathJax("$\\pi_{2 \\;above} :$")), "</td>",
+          "<td align='right'>", paste(ots_mj_mod_stat("\\pi", np_groups$g2, "\\; above")), "</td>",
           "<td>", resultsR$estimate[11], "</td>",
           "<td>", " to ", "</td>",
           "<td>", resultsR$estimate[12], "</td>",
@@ -5020,9 +4757,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
           "</table>"
-        ))
-        
-        html_result
+        )), ns("np_data_mj")))
       }
       # Test 7: McNemar's test of change
       else if (np_tests == 7) {
@@ -5033,9 +4768,9 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         # Get column names and pass value for display
         if (data_type == 1) {
           # Data in Columns mode
-          req(np_data_selected_columns, length(np_data_selected_columns) >= 2)
-          test1_name <- names(data)[as.numeric(np_data_selected_columns[1])]
-          test2_name <- names(data)[as.numeric(np_data_selected_columns[2])]
+          req(np_sel_cols, length(np_sel_cols) >= 2)
+          test1_name <- names(data)[as.numeric(np_sel_cols[1])]
+          test2_name <- names(data)[as.numeric(np_sel_cols[2])]
         } else {
           # Reference Column mode - McNemar's test typically uses two columns
           # This case may not be applicable, but set defaults

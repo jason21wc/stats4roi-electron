@@ -10,6 +10,7 @@ library(lolcat)
 
 # Source global systems
 source("modules/config/global_config.R")
+source("modules/statistical/one_two_sample_tests/ots_group_utils.R")
 
 # =============================================================================
 # WORKER SERVER FUNCTION
@@ -159,15 +160,39 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
       
       results <- NULL
       
+      two_sample_np <- np_tests_data %in% c(3L, 4L, 5L, 6L, 7L)
+      
       if (data_type == 1) {
-        # Data in Columns mode
-        np_data_selected_columns <- inputs_vals$np_data_selected_columns
-        req(np_data_selected_columns)
+        if (two_sample_np) {
+          if (!ots_column_mode_ready(
+            col_g1 = inputs_vals$np_data_col_g1,
+            col_g2 = inputs_vals$np_data_col_g2,
+            two_sample = TRUE
+          )) {
+            return(NULL)
+          }
+        } else if (!ots_column_mode_ready(col_g1 = inputs_vals$np_data_col_g1, two_sample = FALSE)) {
+          return(NULL)
+        }
         
-        selected_cols <- as.numeric(np_data_selected_columns)
-        req(all(selected_cols > 0), all(selected_cols <= ncol(data)))
-        x1 <- na.omit(data[, selected_cols[1]])
+        groups <- ots_groups_from_inputs(
+          data,
+          mode = 1L,
+          col_g1 = inputs_vals$np_data_col_g1,
+          col_g2 = inputs_vals$np_data_col_g2,
+          two_sample = two_sample_np
+        )
+        req(groups)
+        x1 <- na.omit(groups$g1$x)
         req(length(x1) > 0, is.numeric(x1) || is.logical(x1))
+        x2 <- if (two_sample_np) {
+          req(groups$g2)
+          x2v <- na.omit(groups$g2$x)
+          req(length(x2v) > 0, is.numeric(x2v) || is.logical(x2v))
+          x2v
+        } else {
+          NULL
+        }
         
         if (np_tests_data == 1) {
           # One-sample sign test
@@ -206,9 +231,8 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
           # Update the count to prevent recalculation until next button click
           last_mann_whitney_count(button_click)
           
-          req(length(selected_cols) >= 2)
-          x2 <- na.omit(data[, selected_cols[2]])
-          req(length(x1) > 0, length(x2) > 0, is.numeric(x1) || is.logical(x1), is.numeric(x2) || is.logical(x2))
+          req(!is.null(x2))
+          req(length(x1) > 0, length(x2) > 0)
           
           results <- median.test.twosample.independent.mann.whitney(
             g1 = x1,
@@ -220,9 +244,8 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
           cached_mann_whitney_results(results)
         } else if (np_tests_data == 4) {
           # Two-sample median test (Mood's)
-          req(length(selected_cols) >= 2)
-          x2 <- na.omit(data[, selected_cols[2]])
-          req(length(x1) > 0, length(x2) > 0, is.numeric(x1) || is.logical(x1), is.numeric(x2) || is.logical(x2))
+          req(!is.null(x2))
+          req(length(x1) > 0, length(x2) > 0)
           results <- median.test.twosample.independent.mood(
             g1 = x1,
             g2 = x2,
@@ -231,8 +254,7 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
           )
         } else if (np_tests_data == 5) {
           # Two-sample dependent sign test
-          req(length(selected_cols) >= 2)
-          x2 <- na.omit(data[, selected_cols[2]])
+          req(!is.null(x2))
           results <- median.test.twosample.dependent.signtest(
             x1 = x1,
             x2 = x2,
@@ -241,8 +263,7 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
           )
         } else if (np_tests_data == 6) {
           # Two-sample dependent Wilcoxon signed ranks test
-          req(length(selected_cols) >= 2)
-          x2 <- na.omit(data[, selected_cols[2]])
+          req(!is.null(x2))
           results <- wilcoxon.signed.ranks.twosample.test(
             x1 = x1,
             x2 = x2,
@@ -250,8 +271,7 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
           )
         } else if (np_tests_data == 7) {
           # McNemar's test of change
-          req(length(selected_cols) >= 2)
-          x2 <- na.omit(data[, selected_cols[2]])
+          req(!is.null(x2))
           pass1 <- inputs_vals$np_mc_pass
           req(pass1)
           

@@ -105,7 +105,7 @@ create_correlation_association_server <- function(id, filtered_data, reactive_co
     # REGISTER MODULE WITH GLOBAL DATA INVALIDATION SYSTEM
     # =========================================================================
     register_module("correlation_association_module", 
-      ui_reset = function(session) {
+      ui_reset = function() {
         # Reset all Correlation and Association UI elements to defaults
         # TODO: Add specific resets as needed
       },

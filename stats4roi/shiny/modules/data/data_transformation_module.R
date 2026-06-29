@@ -1,5 +1,5 @@
 # Data Transformation Module for stats4ROI
-# Allows mathematical transforms and random distribution columns on working data.
+# Allows mathematical transforms, random distribution columns, and run numbers on working data.
 # Original data is preserved; new columns are appended.
 
 # Helper: ensure new column name is unique given existing names
@@ -46,9 +46,49 @@ compute_transform <- function(type, x, A, B, C = 1) {
       exp = exp(A * x + B),
       arcsine = asin(pmax(-1, pmin(1, A * x + B))),
       sine = sin(A * x + B),
+      poisson_sqrt = {
+        arg <- A * x + B
+        if (any(arg < 0, na.rm = TRUE)) return(NULL)
+        sqrt(arg) + sqrt(arg + 1)
+      },
       NULL
     )
   }, error = function(e) NULL)
+}
+
+# Rank values across selected columns together (ties.method = "average").
+# Returns named list of rank vectors per column, or NULL on error.
+compute_global_rank <- function(data, columns) {
+  if (is.null(data) || !is.data.frame(data)) return(NULL)
+  columns <- as.character(columns)
+  if (length(columns) == 0L || !all(columns %in% names(data))) return(NULL)
+  if (!all(vapply(data[columns], is.numeric, logical(1)))) return(NULL)
+  n <- nrow(data)
+  if (n == 0L) {
+    return(stats::setNames(vector("list", length(columns)), columns))
+  }
+  n_cols <- length(columns)
+  values <- numeric(n * n_cols)
+  col_indices <- vector("list", n_cols)
+  names(col_indices) <- columns
+  idx <- 1L
+  for (col in columns) {
+    col_indices[[col]] <- idx:(idx + n - 1L)
+    values[idx:(idx + n - 1L)] <- data[[col]]
+    idx <- idx + n
+  }
+  ranks <- rep(NA_real_, length(values))
+  ok <- !is.na(values)
+  ranks[ok] <- rank(values[ok], ties.method = "average")
+  lapply(col_indices, function(ii) ranks[ii])
+}
+
+# Collect output column names from transform specs.
+spec_output_names <- function(spec_list) {
+  if (length(spec_list) == 0L) return(character(0))
+  unlist(lapply(spec_list, function(x) {
+    if (identical(x$type, "global_rank")) x$newnames else x$newname
+  }), use.names = FALSE)
 }
 
 # Check data frame for Inf/NaN in numeric columns. Returns list(has_issue, columns, n_inf, n_nan).
@@ -92,6 +132,21 @@ generate_random_column <- function(type, n, A, B, C = 0) {
   }, error = function(e) NULL)
 }
 
+# Assign integer run numbers to each unique factor combination (sorted order).
+# Returns integer vector or NULL on invalid input.
+generate_run_numbers <- function(data, factor_cols) {
+  if (is.null(data) || !is.data.frame(data)) return(NULL)
+  if (is.null(factor_cols) || length(factor_cols) == 0) return(NULL)
+  factor_cols <- as.character(factor_cols)
+  if (!all(factor_cols %in% names(data))) return(NULL)
+  factor_data <- data[, factor_cols, drop = FALSE]
+  if (nrow(factor_data) == 0) return(integer(0))
+  factor_chr <- lapply(factor_data, as.character)
+  factor_df <- as.data.frame(factor_chr, stringsAsFactors = FALSE)
+  interaction_key <- interaction(factor_df, drop = TRUE, lex.order = TRUE, sep = "\x01")
+  as.integer(factor(interaction_key))
+}
+
 # Data Transformation UI
 create_data_transformation_ui <- function(id) {
   ns <- NS(id)
@@ -125,7 +180,9 @@ create_data_transformation_ui <- function(id) {
           "Log (y = ln(A*X+B))" = "log",
           "EXP (y = exp(A*X+B))" = "exp",
           "Arcsine (y = asin(A*X+B))" = "arcsine",
-          "Sine (y = sin(A*X+B), radians)" = "sine"
+          "Sine (y = sin(A*X+B), radians)" = "sine",
+          "Poisson (y = sqrt(A*X+B) + sqrt(A*X+B+1))" = "poisson_sqrt",
+          "Global rank (ties = average)" = "global_rank"
         )
       ),
       fluidRow(
@@ -166,6 +223,22 @@ create_data_transformation_ui <- function(id) {
       textInput(ns("rand_colname"), "Column name (optional)", value = "", placeholder = "e.g. my_random"),
       actionButton(ns("add_random"), "Add column", class = "btn-primary")
     ),
+    column(
+      width = 12,
+      hr(),
+      h4("Generate Run Number from factors")
+    ),
+    column(
+      width = 6,
+      shinyWidgets::pickerInput(
+        inputId = ns("run_factors"),
+        label = "Select factor column(s)",
+        choices = character(0),
+        multiple = TRUE,
+        options = list(`actions-box` = TRUE)
+      ),
+      actionButton(ns("add_run_number"), "Generate Run Number", class = "btn-primary")
+    ),
     column(width = 12, tags$div(style = "display: none;", numericInput(ns("clear_trigger"), "", value = 0)))
   )
 }
@@ -187,8 +260,8 @@ create_data_transformation_server <- function(id, working_data) {
     config <- get_global_config()
     if (!is.null(config$register_module)) {
       config$register_module("data_transformation_module",
-        ui_reset = function(session) {
-          updateNumericInput(session, "transform-clear_trigger", value = runif(1))
+        ui_reset = function() {
+          updateNumericInput(session, ns("clear_trigger"), value = runif(1))
         },
         validation = NULL
       )
@@ -206,6 +279,7 @@ create_data_transformation_server <- function(id, working_data) {
       wd <- working_data()
       if (is.null(wd) || !is.data.frame(wd) || ncol(wd) == 0) {
         shinyWidgets::updatePickerInput(session, "columns", choices = character(0))
+        shinyWidgets::updatePickerInput(session, "run_factors", choices = character(0))
         return(invisible(NULL))
       }
       num_cols <- names(wd)[vapply(wd, is.numeric, logical(1))]
@@ -215,6 +289,8 @@ create_data_transformation_server <- function(id, working_data) {
         choices <- stats::setNames(num_cols, num_cols)
         shinyWidgets::updatePickerInput(session, "columns", choices = choices)
       }
+      all_choices <- stats::setNames(names(wd), names(wd))
+      shinyWidgets::updatePickerInput(session, "run_factors", choices = all_choices)
       n <- nrow(wd)
       if (n > 0) updateNumericInput(session, "rand_n", value = n)
     })
@@ -234,12 +310,37 @@ create_data_transformation_server <- function(id, working_data) {
       B <- if (is.null(input$param_b) || is.na(input$param_b)) 0 else input$param_b
       C <- if (is.null(input$param_c) || is.na(input$param_c)) 1 else input$param_c
       if (!type %in% c("power1", "power2", "inverse")) C <- 1
-      existing <- c(names(wd), vapply(specs(), `[[`, character(1), "newname"))
+      existing <- c(names(wd), spec_output_names(specs()))
       new_specs <- specs()
+      if (identical(type, "global_rank")) {
+        valid_cols <- cols[cols %in% names(wd) & vapply(wd[cols], is.numeric, logical(1))]
+        if (length(valid_cols) == 0) {
+          shiny::showNotification("Please select at least one numeric column.", type = "warning")
+          return(invisible(NULL))
+        }
+        ranked <- compute_global_rank(wd, valid_cols)
+        if (is.null(ranked)) {
+          shiny::showNotification("Global rank transform produced invalid values or error.", type = "warning")
+          return(invisible(NULL))
+        }
+        newnames <- character(length(valid_cols))
+        for (i in seq_along(valid_cols)) {
+          base_name <- paste0(valid_cols[i], "_global_rank")
+          newnames[i] <- make_unique_name(base_name, existing)
+          existing <- c(existing, newnames[i])
+        }
+        specs(c(new_specs, list(list(
+          type = "global_rank",
+          columns = valid_cols,
+          newnames = newnames
+        ))))
+        return(invisible(NULL))
+      }
       msg_invalid <- switch(type,
         log = "Log requires A*X+B > 0 for all values.",
         inverse = "Inverse requires A*X ≠ 0 for all values.",
         power1 = , power2 = "Power requires A*X+B >= 0 (and C > 0 for Power2).",
+        poisson_sqrt = "Poisson transform requires A*X+B >= 0 for all values.",
         "Transform produced invalid values or error."
       )
       for (col in cols) {
@@ -283,7 +384,7 @@ create_data_transformation_server <- function(id, working_data) {
         return(invisible(NULL))
       }
       existing <- c(if (is.null(wd)) character(0) else names(wd),
-                   vapply(specs(), `[[`, character(1), "newname"))
+                   spec_output_names(specs()))
       base_name <- trimws(input$rand_colname)
       if (base_name == "") base_name <- paste0(dist_type, "_", A, "_", B, if (dist_type == "chisq") paste0("_", C) else "")
       newname <- make_unique_name(base_name, existing)
@@ -296,6 +397,33 @@ create_data_transformation_server <- function(id, working_data) {
         n = n
       )))
       specs(new_specs)
+    })
+
+    # Generate run number column from selected factor combinations
+    observeEvent(input$add_run_number, {
+      wd <- working_data()
+      if (is.null(wd) || nrow(wd) == 0) return(invisible(NULL))
+      factor_cols <- input$run_factors
+      if (is.null(factor_cols) || length(factor_cols) == 0) {
+        shiny::showNotification("Please select at least one factor column.", type = "warning")
+        return(invisible(NULL))
+      }
+      if (!all(factor_cols %in% names(wd))) {
+        shiny::showNotification("Selected factor columns are not in the current data.", type = "warning")
+        return(invisible(NULL))
+      }
+      newcol <- generate_run_numbers(wd, factor_cols)
+      if (is.null(newcol)) {
+        shiny::showNotification("Could not generate run numbers from selected factors.", type = "error")
+        return(invisible(NULL))
+      }
+      existing <- c(names(wd), spec_output_names(specs()))
+      newname <- make_unique_name("Run Number", existing)
+      specs(c(specs(), list(list(
+        type = "run_number",
+        factor_columns = factor_cols,
+        newname = newname
+      ))))
     })
 
     # Warn when transformed data contains Inf or NaN (e.g. log(0), 1/0)
@@ -329,6 +457,16 @@ create_data_transformation_server <- function(id, working_data) {
       }
       for (i in seq_along(s)) {
         x <- s[[i]]
+        if (identical(x$type, "run_number")) {
+          cat(sprintf("%s: [run number] %s -> %s\n",
+                      i, paste(x$factor_columns, collapse = ", "), x$newname))
+          next
+        }
+        if (identical(x$type, "global_rank")) {
+          cat(sprintf("%s: [global rank] %s -> %s (ties = average)\n",
+                      i, paste(x$columns, collapse = ", "), paste(x$newnames, collapse = ", ")))
+          next
+        }
         p <- x$params
         if (!is.null(x$column)) {
           if (x$type %in% c("power1", "power2", "inverse")) {
@@ -355,7 +493,19 @@ create_data_transformation_server <- function(id, working_data) {
       out <- wd
       n_out <- nrow(wd)
       for (x in s) {
-        if (!is.null(x$column)) {
+        if (identical(x$type, "run_number")) {
+          newcol <- generate_run_numbers(wd, x$factor_columns)
+          if (!is.null(newcol)) {
+            out <- dplyr::bind_cols(out, tibble::tibble(!!x$newname := newcol))
+          }
+        } else if (identical(x$type, "global_rank")) {
+          ranked <- compute_global_rank(wd, x$columns)
+          if (!is.null(ranked)) {
+            for (i in seq_along(x$columns)) {
+              out <- dplyr::bind_cols(out, tibble::tibble(!!x$newnames[i] := ranked[[x$columns[i]]]))
+            }
+          }
+        } else if (!is.null(x$column)) {
           type <- x$type
           col_vec <- wd[[x$column]]
           p <- x$params

@@ -126,3 +126,7 @@ names(choice_att_b_limits) <- c(
   "Custom"
 )
 
+# Capability Calculations: distribution and study choices
+choice_cap_distribution <- c("Normal" = 1, "Nonnormal" = 2)
+choice_cap_study <- c("Short-term" = 1, "Long-term" = 2)
+

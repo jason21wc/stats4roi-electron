@@ -7,6 +7,7 @@
 library(shiny)
 library(DT)
 library(dplyr)
+library(lolcat)
 
 # Source global systems
 source("modules/config/global_config.R")
@@ -40,6 +41,10 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
       data_col <- input_vals$data_list_for_desc
       if (is.null(data_col)) return(NULL)
       data_col
+    })
+
+    quantile_type <- reactive({
+      normalize_quantile_type(input_values()$desc_quantile_type)
     })
     
     # =========================================================================
@@ -84,7 +89,73 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
     # =========================================================================
     # HELPER FUNCTIONS
     # =========================================================================
+    wants_sample_mode <- function(desc_stats) {
+      any(grepl("^stat\\.sample\\.mode=T", desc_stats))
+    }
+    
+    format_sample_mode_value <- function(x) {
+      if (length(x) == 0L || all(is.na(x))) {
+        return(NA_character_)
+      }
+      if (length(x) == 1L) {
+        return(as.character(x)[1])
+      }
+      paste(as.character(x), collapse = ", ")
+    }
+    
+    insert_sample_mode_column <- function(output, values) {
+      output$sample.mode <- values
+      nms <- names(output)
+      nms <- nms[nms != "sample.mode"]
+      if ("true.mode" %in% nms) {
+        ti <- match("true.mode", nms)
+        nms <- c(nms[seq_len(ti - 1)], "sample.mode", nms[seq(ti, length(nms))])
+      } else if ("median" %in% nms) {
+        mi <- match("median", nms)
+        nms <- c(nms[seq_len(mi)], "sample.mode", nms[seq(mi + 1, length(nms))])
+      } else {
+        nms <- c(nms, "sample.mode")
+      }
+      output[, nms, drop = FALSE]
+    }
+    
+    append_sample_mode <- function(output, data, selected_stats, dep_name = NULL, group_cols = NULL) {
+      if (is.null(output) || nrow(output) == 0L || !wants_sample_mode(selected_stats)) {
+        return(output)
+      }
+      
+      values <- if (is.null(group_cols) || length(group_cols) == 0L) {
+        if (!"dv.name" %in% names(output)) {
+          return(output)
+        }
+        vapply(
+          output$dv.name,
+          function(nm) format_sample_mode_value(sample.mode(data[[nm]])),
+          FUN.VALUE = character(1)
+        )
+      } else {
+        vapply(
+          seq_len(nrow(output)),
+          function(i) {
+            sub <- data
+            for (gc in group_cols) {
+              sub <- sub[sub[[gc]] == output[[gc]][i], , drop = FALSE]
+            }
+            format_sample_mode_value(sample.mode(sub[[dep_name]]))
+          },
+          FUN.VALUE = character(1)
+        )
+      }
+      
+      insert_sample_mode_column(output, values)
+    }
+    
     build_stats_selection <- function(desc_stats) {
+      # sample.mode is not a summary.impl flag; computed separately via lolcat::sample.mode()
+      desc_stats <- desc_stats[!grepl("^stat\\.sample\\.mode=", desc_stats)]
+      # quantiles use selected Hyndman-Fan type via quantile_types.R, not lolcat's default type 7
+      desc_stats <- strip_eda_quantile_stats(desc_stats)
+      
       # Build statistics selection string (following original app logic)
       stats_sel <- paste(desc_stats, collapse = ",")
       if (grepl("stat.mean=T", stats_sel) != T) {
@@ -127,6 +198,7 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
       selections <- input_values()
       R <- decimals()
       desc_stats <- desc_stats()
+      q_type <- quantile_type()
       
       if (is.null(data) || nrow(data) == 0) {
         return(data.frame())
@@ -155,6 +227,19 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           
           # Execute statistics (following original app logic)
           output <- eval(parse(text = paste("summary.all.variables(data = desc_dat,", stats_sel, ")")))
+          output <- append_sample_mode(output, desc_dat, desc_stats)
+          output <- apply_eda_quantiles(output, desc_dat, desc_stats, type = q_type)
+          
+          if (needs_pooled_all_row(ncol(desc_dat))) {
+            pooled_dat <- pool_data_frame_columns(desc_dat)
+            pooled_out <- eval(parse(text = paste("summary.all.variables(data = pooled_dat,", stats_sel, ")")))
+            if ("dv.name" %in% names(pooled_out)) {
+              pooled_out$dv.name <- POOLED_ALL_LABEL
+            }
+            pooled_out <- append_sample_mode(pooled_out, pooled_dat, desc_stats)
+            pooled_out <- apply_eda_quantiles(pooled_out, pooled_dat, desc_stats, type = q_type)
+            output <- prepend_rows_top(pooled_out, output)
+          }
         } else if (data_type == 2) {
           # Factor analysis - use summary.continuous with formula (following original app logic)
           data_col <- data_list_for_desc()
@@ -177,6 +262,58 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           
           # Execute statistics using the selection string (respecting user choices)
           output <- eval(parse(text = paste("summary.continuous(fx=model_text, data = data,", stats_sel, ")")))
+          group_cols <- make.names(indep)
+          output <- append_sample_mode(
+            output,
+            data,
+            desc_stats,
+            dep_name = make.names(dep_name),
+            group_cols = group_cols
+          )
+          output <- apply_eda_quantiles(
+            output,
+            data,
+            desc_stats,
+            dep_name = make.names(dep_name),
+            group_cols = group_cols,
+            type = q_type
+          )
+          
+          if (needs_pooled_all_row(nrow(output))) {
+            dep_name_m <- make.names(dep_name)
+            pooled_x <- data[[dep_name_m]]
+            pooled_dat <- data.frame(All = pooled_x, stringsAsFactors = FALSE)
+            pooled_out <- eval(parse(text = paste("summary.all.variables(data = pooled_dat,", stats_sel, ")")))
+            pooled_row <- pooled_out[1, , drop = FALSE]
+            if ("dv.name" %in% names(pooled_row)) {
+              pooled_row$dv.name <- NULL
+            }
+            if (wants_sample_mode(desc_stats)) {
+              pooled_row <- insert_sample_mode_column(
+                pooled_row,
+                format_sample_mode_value(sample.mode(pooled_x))
+              )
+            }
+            if (has_eda_quantile_stats(desc_stats)) {
+              requests <- parse_eda_quantile_requests(desc_stats)
+              vals <- compute_eda_quantile_values(pooled_x, requests, type = q_type)
+              for (col in names(vals)) {
+                pooled_row[[col]] <- vals[[col]]
+              }
+            }
+            pooled_row <- pooled_row[, intersect(names(output), names(pooled_row)), drop = FALSE]
+            missing_cols <- setdiff(names(output), names(pooled_row))
+            for (col in missing_cols) {
+              if (col %in% group_cols) {
+                pooled_row[[col]] <- POOLED_ALL_LABEL
+              } else {
+                pooled_row[[col]] <- NA
+              }
+            }
+            pooled_row <- pooled_row[, names(output), drop = FALSE]
+            pooled_row <- label_factor_group_row(pooled_row, group_cols)
+            output <- prepend_rows_top(pooled_row, output)
+          }
         } else {
           output <- data.frame()
         }

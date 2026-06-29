@@ -10,7 +10,7 @@
 | Name | stats4roi-electron |
 | Purpose | Electron wrapper for stats4ROI R Shiny application |
 | Target Platform | Apple Silicon Macs (ARM64) |
-| Current Version | 4.2.0 |
+| Current Version | 4.2.1 |
 | Status | Production |
 
 ## Specification Summary
@@ -74,6 +74,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | GitHub Release | Complete | 2024-01-24 |
 | Documentation | Complete | 2025-01-26 |
 | Upstream Sync v4.2.0 (DOE module) | Complete | 2026-04-25 |
+| Upstream Sync v4.2.1 (Taguchi optimization) | Complete | 2026-06-28 |
 
 ## Source Documents Registry
 
@@ -102,6 +103,34 @@ rm -rf /tmp/upstream
 cd stats4roi && npm start
 npm run make
 ```
+
+## R Runtime Assembly — propagate Fork (CRITICAL)
+
+The bundled `r-mac/` runtime MUST contain Steve's Shiny fork of `propagate`
+([ProfessorPeregrine/propagate](https://github.com/ProfessorPeregrine/propagate)),
+**not** CRAN propagate. CRAN's `predictNLS` prints to stdout inside Shiny reactive
+contexts and corrupts scatterplot confidence/prediction-interval rendering.
+`app.R` warns at startup if the fork is missing. The fork is CRAN 1.0-6 + a one-line
+patch (older base than CRAN 1.0-7, but it is the config Steve tests against).
+
+**This is not automatic** — any fresh `r-mac/` install pulls CRAN propagate from
+the default repo and silently regresses. After assembling/refreshing `r-mac/`, run:
+
+```bash
+cd stats4roi
+ROOT=$(pwd); LIB="$ROOT/r-mac/library"
+# Bundled R hardcodes FLIBS=/opt/gfortran (absent here). propagate is Fortran-free,
+# so blank FLIBS or the link fails: "ld: library 'emutls_w' not found".
+printf 'FLIBS =\n' > /tmp/Makevars-nofortran
+R_MAKEVARS_USER=/tmp/Makevars-nofortran R_LIBS="$LIB" R_LIBS_USER="$LIB" R_LIBS_SITE="$LIB" \
+  "$ROOT/r-mac/bin/Rscript" --vanilla -e \
+  '.libPaths(file.path(getwd(),"r-mac","library")); remotes::install_github("ProfessorPeregrine/propagate", upgrade="never", force=TRUE, lib=.libPaths()[1], build=TRUE)'
+```
+
+**Verify:** `packageDescription("propagate")$RemoteUsername` must equal
+`"ProfessorPeregrine"`, and the `npm start` log must NOT contain
+"does not appear to be the Shiny fork". (Requires Xcode CLT clang; R auto-restores
+the prior package if the compile fails, so the runtime is never left corrupted.)
 
 ---
 *Last Updated: 2026-04-25*

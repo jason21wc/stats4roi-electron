@@ -41,6 +41,10 @@ create_quantiles_server <- function(id, data_source, data_type_reactive, input_v
       if (is.null(data_col) || is.na(data_col)) return(NULL)
       data_col
     })
+
+    quantile_type <- reactive({
+      normalize_quantile_type(input_values()$quantile_type)
+    })
     
     # =========================================================================
     # QUANTILES CALCULATION
@@ -66,6 +70,7 @@ create_quantiles_server <- function(id, data_source, data_type_reactive, input_v
       data_col <- data_list_for_quant()
       quant <- quant_sel()
       custom <- quant_cust()
+      q_type <- quantile_type()
       
       # Calculate quantile sequence
       if (quant == 1) {
@@ -81,46 +86,52 @@ create_quantiles_server <- function(id, data_source, data_type_reactive, input_v
         }
         selected_cols <- as.numeric(selections$eda_UI1)
         quant_dat <- data[, selected_cols, drop = FALSE]
-        output <- summary.all.variables(
-          data = quant_dat,
-          stat.mean = F,
-          stat.var = F,
-          stat.ad.test = 0,
-          stat.sw.test = 0,
-          stat.skew.test = 0,
-          stat.kurt.test = 0,
-          stat.dago.test = 0,
-          stat.quantiles = quantiles
-        )
+        output <- compute_quantiles_column_mode(quant_dat, quantiles, type = q_type)
+        if (needs_pooled_all_row(ncol(quant_dat))) {
+          pooled_row <- compute_quantiles_pooled_all_column(quant_dat, quantiles, type = q_type)
+          output <- prepend_rows_top(pooled_row, output)
+        }
       } else if (data_type == 2) {
         # Factor analysis
         if (is.null(selections$eda_UI1) || is.null(selections$eda_UI2) || is.null(data_col)) {
           return(data.frame())
         }
-        dep_name <- colnames(data)[as.numeric(data_col)]
-        indep <- colnames(data)[as.numeric(selections$eda_UI1)]
-        indep_names <- paste(indep, collapse = "+")
-        model_text <- formula(paste(dep_name, " ~ ", indep_names))
+        dep_info <- resolve_factor_dependent_column(data, data_col, selections$eda_UI2)
+        dep_name <- dep_info$dep_name
+        if (is.null(dep_name)) {
+          return(data.frame())
+        }
+        group_cols <- make.names(colnames(data)[as.numeric(selections$eda_UI1)])
         
-        output <- summary.continuous(
-          fx = model_text,
+        output <- compute_quantiles_factor_mode(
           data = data,
-          stat.mean = F,
-          stat.var = F,
-          stat.ad.test = 0,
-          stat.sw.test = 0,
-          stat.skew.test = 0,
-          stat.kurt.test = 0,
-          stat.dago.test = 0,
-          stat.quantiles = quantiles
+          dep_name = dep_name,
+          group_cols = group_cols,
+          probs = quantiles,
+          type = q_type
         )
+        if (needs_pooled_all_row(nrow(output))) {
+          pooled_row <- compute_quantiles_pooled_all_factor(
+            data = data,
+            dep_name = dep_name,
+            group_cols = group_cols,
+            probs = quantiles,
+            type = q_type
+          )
+          output <- prepend_rows_top(pooled_row, output)
+        }
       } else {
         return(data.frame())
       }
       
-      # Round output and transpose
-      output <- t(ro(output, R))
-      output
+      # Round output and transpose (preserve variable/group names as column headers)
+      output <- ro(output, R)
+      id_cols <- if (data_type == 1L) {
+        "dv.name"
+      } else {
+        group_cols
+      }
+      format_eda_transposed_table(output, id_cols = id_cols)
     })
     
     # =========================================================================

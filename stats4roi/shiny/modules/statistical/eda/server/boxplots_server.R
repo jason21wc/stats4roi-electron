@@ -253,12 +253,8 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
           factors <- as.numeric(selections$eda_UI1)  # Factor columns
           data_col_idx <- as.numeric(selections$eda_UI2)[as.numeric(data_col)]  # Selected data column
           
-          # Create grouping variable from factors (exactly like original app)
-          if (length(factors) == 1) {
-            group_var <- data[, factors[1]]
-          } else {
-            group_var <- interaction(data[, factors], sep = ", ")
-          }
+          # Always use interaction (monolithic pattern) so numeric factors are discrete x levels
+          group_var <- interaction(data[, factors, drop = FALSE], sep = ", ")
           
           # Get dependent variable (following original app)
           dep_var <- data[, data_col_idx]
@@ -270,8 +266,10 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
           # Create plot data exactly like original app
           plot_data <- data.frame(
             Data = dep_var,
-            ID = group_var
+            ID = group_var,
+            stringsAsFactors = FALSE
           )
+          plot_data$ID <- factor(plot_data$ID)
           
           # Filter out NAs (following original app pattern)
           plot_data <- plot_data[which(!is.na(plot_data$Data)), ]
@@ -283,13 +281,13 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
           # Outlier detection (following original app pattern)
           wild_outliers <- plot_data %>%
             group_by(ID) %>%
-            filter(Data < quantile(Data, probs = .25) - 3 * IQR(Data) |
-                   Data > quantile(Data, probs = .75) + 3 * IQR(Data))
+            filter(Data < quantile(Data, probs = .25, type = 6) - 3 * IQR(Data, type = 6) |
+                   Data > quantile(Data, probs = .75, type = 6) + 3 * IQR(Data, type = 6))
           
           outliers <- plot_data %>%
             group_by(ID) %>%
-            filter(Data < quantile(Data, probs = .25) - 1.5 * IQR(Data) |
-                   Data > quantile(Data, probs = .75) + 1.5 * IQR(Data)) %>%
+            filter(Data < quantile(Data, probs = .25, type = 6) - 1.5 * IQR(Data, type = 6) |
+                   Data > quantile(Data, probs = .75, type = 6) + 1.5 * IQR(Data, type = 6)) %>%
             anti_join(wild_outliers, by = c("ID", "Data"))
           
           p <- ggplot(plot_data, aes(x = ID, y = Data))
