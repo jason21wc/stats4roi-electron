@@ -10,7 +10,7 @@
 | Name | stats4roi-electron |
 | Purpose | Electron wrapper for stats4ROI R Shiny application |
 | Target Platform | Apple Silicon Macs (ARM64) |
-| Current Version | 4.2.1 |
+| Current Version | 4.3.0 |
 | Status | Production |
 
 ## Specification Summary
@@ -75,6 +75,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Documentation | Complete | 2025-01-26 |
 | Upstream Sync v4.2.0 (DOE module) | Complete | 2026-04-25 |
 | Upstream Sync v4.2.1 (Taguchi optimization) | Complete | 2026-06-28 |
+| Upstream Sync v4.3.0 (Reliability + SPC expansion) | Built, pending hand-test | 2026-07-25 |
 
 ## Source Documents Registry
 

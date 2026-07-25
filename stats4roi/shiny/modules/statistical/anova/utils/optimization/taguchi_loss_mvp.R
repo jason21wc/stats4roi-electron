@@ -710,16 +710,10 @@ mf_apply_optimizer_blocked_factors <- function(fit_active, model_bundles, blocke
   if (length(factor_names) < 1L) {
     return(suppressWarnings(as.numeric(stats::predict(mod, newdata = grid))))
   }
-  nd <- as.data.frame(grid[, factor_names, drop = FALSE], stringsAsFactors = FALSE)
-  for (v in factor_names) {
-    xl <- mod$xlevels[[v]]
-    lv <- unique(c(xl, as.character(nd[[v]])))
-    nd[[v]] <- factor(as.character(nd[[v]]), levels = lv)
-    stats::contrasts(nd[[v]]) <- stats::contr.sum
-  }
+  nd <- multifactor_prepare_model_newdata(mod, grid, factor_names)
   # Optimizer evaluates one setting at a time; use predict only (no full-factorial emmeans).
   if (nrow(grid) == 1L) {
-    pred <- suppressWarnings(as.numeric(stats::predict(mod, newdata = nd)))
+    pred <- multifactor_predict_on_prepared_newdata(mod, nd)
     if (length(pred) >= 1L && is.finite(pred[[1L]])) {
       return(pred)
     }
@@ -757,7 +751,7 @@ mf_apply_optimizer_blocked_factors <- function(fit_active, model_bundles, blocke
       }
     }
   }
-  suppressWarnings(as.numeric(stats::predict(mod, newdata = nd)))
+  multifactor_predict_on_prepared_newdata(mod, nd)
 }
 
 #' One-row lm / EMM prediction.

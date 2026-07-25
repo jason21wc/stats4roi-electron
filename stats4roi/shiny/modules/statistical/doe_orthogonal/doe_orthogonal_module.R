@@ -37,6 +37,20 @@ create_doe_orthogonal_ui <- function(id) {
         p("Based on Tsui (1988), ", tags$a("Strategies for Planning Experiments Using Orthogonal Arrays and Confounding Tables", href = "https://doi.org/10.1002/qre.4680040207", target = "_blank"), ", Quality and Reliability Engineering International, 4, 113-122.")
       ),
       mainPanel(
+        conditionalPanel(
+          condition = sprintf("output['%s']", ns("design_computing")),
+          tags$div(
+            style = "text-align: center; padding: 1.5rem 1rem; margin-bottom: 0.5rem;",
+            tags$i(
+              class = "fa fa-spinner fa-spin-pulse fa-fw",
+              style = "color: #337ab7; font-size: 2.5rem;"
+            ),
+            tags$p(
+              style = "margin-top: 0.75rem; color: #555;",
+              "Finding a column assignment for your design\u2026"
+            )
+          )
+        ),
         # Status / errors in uiOutput; assignment + run sheet DT outputs are static so
         # DataTables initializes reliably (DT inside renderUI often shows headers-only).
         uiOutput(ns("design_status_ui")),
@@ -101,6 +115,10 @@ create_doe_orthogonal_server <- function(id, color_palette = NULL) {
     doe_setup_trigger <- create_doe_orthogonal_setup_trigger(input)
     committed_design_setup <- reactiveVal(NULL)
     design_result <- reactiveVal(NULL)
+    design_computing <- reactiveVal(FALSE)
+
+    output$design_computing <- reactive({ design_computing() })
+    outputOptions(output, "design_computing", suspendWhenHidden = FALSE)
 
     observeEvent(doe_setup_trigger(), {
       comm <- committed_design_setup()
@@ -309,20 +327,18 @@ create_doe_orthogonal_server <- function(id, color_palette = NULL) {
       n <- .doe_safe_n_factors(input$n_factors %||% 3)
       levels_vec <- vapply(seq_len(n), function(i) as.integer(input[[paste0("level_", i)]] %||% 2), integer(1))
       int_raw <- setdiff(input$interactions %||% character(0), DOE_INTERACTION_PLACEHOLDER_VALUE)
-      int_list <- list()
       fnames <- factor_names()
+      int_list <- list()
       for (s in int_raw) {
         s <- gsub("\u00D7", "x", s)
         for (i in seq_len(n - 1)) for (j in (i + 1):n) {
           if (s == paste0(fnames[i], "x", fnames[j])) int_list[[length(int_list) + 1]] <- c(i, j)
         }
       }
-      oa_choice <- input$array_choice %||% feasible()$possible_2level[1] %||% feasible()$possible_3level[1] %||% (feasible()$possible_mixed %||% character(0))[1]
-      if (is.null(oa_choice)) {
-        design_result(list(error = "Select an array"))
-        committed_design_setup(isolate(doe_setup_trigger()))
-        return(invisible(NULL))
-      }
+      feas <- feasible()
+      oa_choice <- input$array_choice %||% feas$possible_2level[1] %||% feas$possible_3level[1] %||% (feas$possible_mixed %||% character(0))[1]
+      lnames <- level_names()
+      setup_fp <- doe_setup_trigger()
 
       odd_merge <- list()
       for (i in seq_len(n)) {
@@ -336,24 +352,38 @@ create_doe_orthogonal_server <- function(id, color_palette = NULL) {
         }
       }
 
-      if (oa_choice %in% c("L4", "L8", "L12", "L16", "L32", "L64")) {
-        res <- doe_assign_2level(oa_choice, n, levels_vec, int_list, factor_names(), NULL, odd_merge)
-      } else if (oa_choice %in% names(DOE_OA_MIXED)) {
-        res <- doe_assign_mixed(oa_choice, n, levels_vec, int_list, factor_names(), NULL, odd_merge)
-      } else {
-        res <- doe_assign_3level(oa_choice, n, levels_vec, int_list, factor_names(), NULL, odd_merge)
-      }
-      if (is.null(res$error)) {
-        res$assignment_run_table <- doe_assignment_run_table(oa_choice, res$assignment_list, factor_names())
-        res$factor_names <- factor_names()
-        res$level_names <- level_names()
-        res$levels_vec <- levels_vec
-        res$oa_label <- oa_choice
-        res$required_interactions <- int_list
-      }
-      design_result(res)
-      clear_doe_alias_cache()
-      committed_design_setup(isolate(doe_setup_trigger()))
+      design_computing(TRUE)
+      session$onFlushed(function() {
+        on.exit(design_computing(FALSE), add = TRUE)
+        tryCatch({
+          if (is.null(oa_choice)) {
+            design_result(list(error = "Select an array"))
+            committed_design_setup(setup_fp)
+            return(invisible(NULL))
+          }
+          if (oa_choice %in% c("L4", "L8", "L12", "L16", "L32", "L64")) {
+            res <- doe_assign_2level(oa_choice, n, levels_vec, int_list, fnames, NULL, odd_merge)
+          } else if (oa_choice %in% names(DOE_OA_MIXED)) {
+            res <- doe_assign_mixed(oa_choice, n, levels_vec, int_list, fnames, NULL, odd_merge)
+          } else {
+            res <- doe_assign_3level(oa_choice, n, levels_vec, int_list, fnames, NULL, odd_merge)
+          }
+          if (is.null(res$error)) {
+            res$assignment_run_table <- doe_assignment_run_table(oa_choice, res$assignment_list, fnames)
+            res$factor_names <- fnames
+            res$level_names <- lnames
+            res$levels_vec <- levels_vec
+            res$oa_label <- oa_choice
+            res$required_interactions <- int_list
+          }
+          design_result(res)
+          clear_doe_alias_cache()
+          committed_design_setup(setup_fp)
+        }, error = function(e) {
+          design_result(list(error = conditionMessage(e)))
+          committed_design_setup(setup_fp)
+        })
+      }, once = TRUE)
     })
 
     # Alias table: compute each display mode at most once per design; toggle is cheap

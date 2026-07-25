@@ -733,7 +733,9 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
           return(fo)
         }
 
-        formula <- if (unbal == 2 && is.character(fo) && length(fo) == 1) {
+        formula <- if (length(pool_vars) >= 1L) {
+          reduced_formula_chr()
+        } else if (unbal == 2 && is.character(fo) && length(fo) == 1) {
           fo
         } else {
           reduced_formula_chr()
@@ -989,20 +991,22 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       aov_out_original <- aov_out_l
       data[, factors_names] <- lapply(data[, factors_id], factor)
 
-      # Monolithic L30616-30630: drop pool selections not present in the unpooled ANOVA
+      # Drop pool selections not present in the unpooled ANOVA (key-tolerant match).
       rn_aov <- row.names(aov_out_l)
-      rn_effects <- rn_aov[rn_aov != "Residuals" & rn_aov != "(Intercept)"]
-      if (length(pool_vars) > 0 && any(!(pool_vars %in% rn_effects))) {
-        anova_note(isolate(add_comment(anova_note(), ", the following effects selected to pool were not in the initial ANOVA and will be removed from the pooling list:<br>")))
-        anova_note(isolate(add_comment(anova_note(), pool_vars[!(pool_vars %in% rn_effects)])))
-        anova_note(isolate(add_comment(anova_note(), "<br>")))
-        pool_vars <- pool_vars[pool_vars %in% rn_aov]
-        if (length(pool_vars) == 0) {
-          anova_note(isolate(add_comment(anova_note(), "<br>All pooling variables removed")))
+      pool_vars_orig <- pool_vars
+      pool_vars_matched <- match_pool_vars_to_anova_rownames(pool_vars, rn_aov)
+      if (length(pool_vars_orig) > 0L && length(pool_vars_matched) < length(unique(pool_vars_orig))) {
+        dropped <- setdiff(unique(as.character(pool_vars_orig)), pool_vars_matched)
+        if (length(dropped) > 0L) {
+          anova_note(isolate(add_comment(anova_note(), ", the following effects selected to pool were not in the initial ANOVA and will be removed from the pooling list:<br>")))
+          anova_note(isolate(add_comment(anova_note(), dropped)))
+          anova_note(isolate(add_comment(anova_note(), "<br>")))
         }
       }
-
-      pool_vars <- pool_vars[pool_vars %in% row.names(aov_out_l)]
+      pool_vars <- pool_vars_matched
+      if (length(pool_vars) < 1L && length(pool_vars_orig) > 0L) {
+        anova_note(isolate(add_comment(anova_note(), "<br>All pooling variables removed")))
+      }
 
       if (length(pool_vars) == 0) {
         test_pool <- aov_out_l
@@ -1575,7 +1579,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
       if (length(main_effects) > 0) {
         for (i in main_effects) {
           plot_factor <- anova_effect_plot_factor(i)
-          plot_temp <- emmeans::emmip(model, formula(anova_effect_to_emmeans_rhs(i)), engine = "ggplot")
+          plot_temp <- multifactor_emmip_ggplot(model, anova_effect_to_emmeans_rhs(i))
           main_data <- ggplot_build(plot_temp)$data[[1]]
           main_data$x <- paste(i, "=", levels(plot_temp[["data"]][[plot_factor]])[main_data$x])
           main_data$group <- NA
@@ -1603,7 +1607,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
         }
         for (i in two_way_interactions) {
           factors <- strsplit(i, ":")[[1]]
-          plot_temp <- emmeans::emmip(model, formula(paste(factors[1], "~", factors[2])), engine = "ggplot")
+          plot_temp <- multifactor_emmip_ggplot(model, paste(factors[1], "~", factors[2]))
           int_data <- ggplot_build(plot_temp)$data[[1]]
           int_data$group <- paste(factors[1], "=", levels(plot_temp[["data"]][[factors[1]]])[int_data$group])
           int_data$x <- paste(factors[2], "=", levels(plot_temp[["data"]][[factors[2]]])[int_data$x])
@@ -1885,7 +1889,7 @@ create_multifactor_anova_worker <- function(id, filtered_data, core_input_values
           )
       } else {
         emm_rhs <- nested_effect_emmeans_rhs(effect_name)
-        plot_temp <- emmeans::emmip(model, formula(emm_rhs), engine = "ggplot")
+        plot_temp <- multifactor_emmip_ggplot(model, emm_rhs)
         p <- plot_temp +
           ggtitle(title_text) +
           labs(

@@ -11,6 +11,7 @@ library(lolcat)
 # Source global systems
 source("modules/config/global_config.R")
 source("modules/statistical/one_two_sample_tests/ots_group_utils.R")
+source("modules/statistical/one_two_sample_tests/utils/runs_test.R")
 
 # =============================================================================
 # WORKER SERVER FUNCTION
@@ -137,6 +138,17 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
           method = "Exact"
         )
       }
+      # Test 8: Runs test for randomness
+      else if (np_tests == 8) {
+        req(npUI2, npUI3)
+        results <- runs.test.simple(
+          n1 = npUI1,
+          n2 = npUI2,
+          runs = npUI3,
+          alternative = alt,
+          conf.level = conf
+        )
+      }
       
       # Return unrounded results - rounding happens at rendering stage
       results
@@ -197,20 +209,21 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
         if (np_tests_data == 1) {
           # One-sample sign test
           location <- inputs_vals$np_data_UI2
-          req(location)
+          # req(location) treats 0 as missing; M0 = 0 is a valid null location
+          req(!is.null(location), is.finite(as.numeric(location)[1L]))
           results <- median.test.onesample.signtest(
             x = x1,
-            null.hypothesis.location = location,
+            null.hypothesis.location = as.numeric(location)[1L],
             alternative = alt,
             conf.level = conf
           )
         } else if (np_tests_data == 2) {
           # One-sample Wilcoxon signed ranks test
           location <- inputs_vals$np_data_UI2
-          req(location)
+          req(!is.null(location), is.finite(as.numeric(location)[1L]))
           results <- wilcoxon.signed.ranks.onesample.test(
             x = x1,
-            null.hypothesis.location = location,
+            null.hypothesis.location = as.numeric(location)[1L],
             alternative = alt
           )
         } else if (np_tests_data == 3) {
@@ -284,6 +297,24 @@ create_nonparametric_server <- function(id, filtered_data, input_values, mann_wh
             c = c,
             alternative = alt,
             conf.level = conf
+          )
+        } else if (np_tests_data == 8) {
+          # One-sample runs test for randomness
+          cut_method <- inputs_vals$np_runs_cut_method
+          cut_value <- inputs_vals$np_runs_cut_value
+          req(cut_method)
+          if (identical(as.character(cut_method)[1L], "custom")) {
+            req(!is.null(cut_value), is.finite(as.numeric(cut_value)[1L]))
+          }
+          results <- tryCatch(
+            runs.test(
+              x = x1,
+              cut_method = as.character(cut_method)[1L],
+              cut_value = cut_value,
+              alternative = alt,
+              conf.level = conf
+            ),
+            error = function(e) NULL
           )
         }
       } else if (data_type == 2) {

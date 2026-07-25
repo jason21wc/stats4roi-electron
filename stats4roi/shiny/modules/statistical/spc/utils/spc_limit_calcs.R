@@ -17,6 +17,75 @@ c6 <- function(sample.size = 5) {
 }
 
 # Calculate the moving range across a designated span
+#' Evaluate dispersion-chart OOC rules on the sorted plot_data_disp rows.
+#' Return a dispersion-chart LCL, or NA when no lower limit exists (<= 0 or missing).
+spc_dispersion_lcl_value <- function(lcl) {
+  lcl <- suppressWarnings(as.numeric(lcl))
+  if (length(lcl) != 1L || is.na(lcl) || lcl <= 0) {
+    return(NA_real_)
+  }
+  lcl
+}
+
+spc_mr_lcl_value <- function(centerline_disp, disp_low) {
+  if (is.na(disp_low)) {
+    return(NA_real_)
+  }
+  spc_dispersion_lcl_value(centerline_disp - disp_low)
+}
+
+#' LCL passed to OOC rule evaluation when the plotted LCL is omitted (NA).
+spc_dispersion_lcl_for_rules <- function(lcl, disp_type = NULL) {
+  lcl <- as.numeric(lcl)
+  if (length(lcl) == 0L) {
+    return(lcl)
+  }
+  if (!is.null(disp_type) && as.numeric(disp_type) %in% c(1L, 4L)) {
+    missing_lcl <- is.na(lcl) | !is.finite(lcl) | lcl <= 0
+    lcl[missing_lcl] <- 0
+  }
+  lcl
+}
+
+#' Mean or median centerline for location limits; NA observations are omitted.
+spc_centerline_value <- function(values, center_type = 1) {
+  values <- as.numeric(values)
+  center_type <- as.numeric(center_type)
+  if (length(values) == 0L || all(is.na(values))) {
+    return(NA_real_)
+  }
+  if (identical(center_type, 2L)) {
+    return(stats::median(values, na.rm = TRUE))
+  }
+  mean(values, na.rm = TRUE)
+}
+
+spc_evaluate_dispersion_violations <- function(
+    plot_data_disp,
+    ooc_rules,
+    disp_type = NULL,
+    disp_lower_custom = NA) {
+  rules <- ooc_rules
+  if (!is.null(disp_type) && identical(as.numeric(disp_type), 4)) {
+    rules <- spc.rulesets.outside.limits()
+  }
+  cl_lcl_plot <- plot_data_disp$LCL2
+  cl_lcl <- spc_dispersion_lcl_for_rules(cl_lcl_plot, disp_type)
+  spc.controlviolation.evaluate.rules(
+    control.rules = rules,
+    chart.series = plot_data_disp$points_2,
+    center.line = plot_data_disp$centerline_2,
+    control.limits.ucl = plot_data_disp$UCL2,
+    zone.a.upper = plot_data_disp$zone_a_up_2,
+    zone.ab.upper = plot_data_disp$zone_ab_up_2,
+    zone.bc.upper = plot_data_disp$zone_bc_up_2,
+    control.limits.lcl = cl_lcl,
+    zone.a.lower = plot_data_disp$zone_a_low_2,
+    zone.ab.lower = plot_data_disp$zone_ab_low_2,
+    zone.bc.lower = plot_data_disp$zone_bc_low_2
+  )
+}
+
 MR_span <- function(data = NULL, span = 2) {
   n <- length(data)
   mr <- NULL

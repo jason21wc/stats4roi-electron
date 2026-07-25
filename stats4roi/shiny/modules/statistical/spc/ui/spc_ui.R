@@ -8,14 +8,20 @@ library(DT)
 library(shinyWidgets)
 
 # Source limits and capability UI
+source("modules/statistical/spc/utils/spc_constants.R")
 source("modules/statistical/spc/ui/spc_limits_ui.R")
 source("modules/statistical/spc/ui/spc_capability_ui.R")
+source("modules/statistical/spc/ui/spc_dfit_ui.R")
+source("modules/statistical/spc/ui/spc_chart_limits_ui.R")
+source("modules/statistical/spc/ui/spc_ppa_ui.R")
+source("modules/statistical/spc/ui/spc_cusum_ui.R")
 
 create_spc_ui_internal <- function(ns) {
   tabPanel(
-    title = "SPC",
-    h3("Control Charts"),
+    title = "SPC/Capability",
+    h3("Control Charts and Capability"),
     tabsetPanel(
+      id = ns("spc_tabs"),
       tabPanel(
         title = "Variables",
         sidebarLayout(
@@ -36,6 +42,8 @@ create_spc_ui_internal <- function(ns) {
             uiOutput(ns("spc_var_UI1")),
             uiOutput(ns("spc_var_UI2")),
             uiOutput(ns("spc_var_set")),
+            uiOutput(ns("spc_var_axis_label")),
+            uiOutput(ns("spc_var_order_note")),
             checkboxInput(inputId = ns("spc_runchart"), label = "Plot as run chart (no limits)?", value = FALSE),
             uiOutput(ns("spc_run_type")),
             conditionalPanel(
@@ -134,20 +142,8 @@ create_spc_ui_internal <- function(ns) {
                     uiOutput(ns("ooc_rules_x_ui")),
                     uiOutput(ns("ooc_rules_disp_ui")),
                     selectInput(inputId = ns("run_length_x"), label = "Run Length", choices = c(8, 9), selected = 8),
-                    checkboxGroupButtons(
-                      inputId = ns("x_chart_options"),
-                      label = "Graph Features",
-                      choices = c(
-                        "Connect Points" = 1,
-                        "Control Limits" = 2,
-                        "Center Line" = 3,
-                        "Show OOC Points" = 4,
-                        "Show OOC Labels" = 5,
-                        "Show Zones" = 6
-                      ),
-                      direction = "vertical",
-                      selected = c(1, 2, 3, 4)
-                    ),
+                    uiOutput(ns("x_chart_options_ui")),
+                    uiOutput(ns("x_chart_spec_limits_ui")),
                     circle = TRUE,
                     status = "success",
                     icon = icon("gear"),
@@ -204,6 +200,14 @@ create_spc_ui_internal <- function(ns) {
         )
       ),
       tabPanel(
+        title = "CUSUM",
+        create_spc_cusum_ui_internal(ns)
+      ),
+      tabPanel(
+        title = "EWMA",
+        create_spc_ewma_ui_internal(ns)
+      ),
+      tabPanel(
         title = "Attributes",
         sidebarLayout(
           sidebarPanel(
@@ -222,6 +226,8 @@ create_spc_ui_internal <- function(ns) {
               ),
               uiOutput(ns("spc_att_set"))
             ),
+            uiOutput(ns("spc_att_axis_label")),
+            uiOutput(ns("spc_att_order_note")),
             h4("2. Select Chart Types and Limits"),
             dropdown(
               fluidRow(
@@ -358,6 +364,14 @@ create_spc_ui_internal <- function(ns) {
       tabPanel(
         title = "Capability Calculations",
         create_spc_capability_ui_internal(ns)
+      ),
+      tabPanel(
+        title = "Distribution Fitting",
+        create_spc_dfit_ui_internal(ns)
+      ),
+      tabPanel(
+        title = "Process Performance Analysis",
+        create_spc_ppa_ui_internal(ns)
       )
     )
   )

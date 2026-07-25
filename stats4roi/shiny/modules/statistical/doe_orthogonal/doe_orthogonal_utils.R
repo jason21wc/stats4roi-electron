@@ -68,11 +68,31 @@ source("modules/statistical/doe_orthogonal/doe_orthogonal_data.R")
   .doe_reserved_main_mask(factor_col, tri, n_cols, n_factors)
 }
 
+# Interaction degrees of freedom for required 2fis on 2-level OAs (product of (levels-1)).
+.doe_required_interaction_df_2level <- function(levels_per_factor, interaction_pairs) {
+  n_int_cols <- 0L
+  for (p in interaction_pairs) {
+    if (length(p) != 2L) next
+    i <- as.integer(p[1L])
+    j <- as.integer(p[2L])
+    if (is.na(i) || is.na(j) || i < 1L || j < 1L ||
+        i > length(levels_per_factor) || j > length(levels_per_factor) || i == j) next
+    n_int_cols <- n_int_cols + (as.integer(levels_per_factor[i]) - 1L) * (as.integer(levels_per_factor[j]) - 1L)
+  }
+  n_int_cols
+}
+
 # Fast tier skip (necessary conditions only)
-.doe_2level_tier_impossible <- function(tier, n_factors, n_cols, n_pairs, res_iv, res_v_2fi) {
+.doe_2level_tier_impossible <- function(tier, n_factors, n_cols, n_pairs, res_iv, res_v_2fi,
+                                        main_cols = NULL, int_df = NULL) {
   if (n_factors + n_pairs > n_cols) return(TRUE)
   len_iv <- length(res_iv)
-  if (tier %in% c("V", "IV") && n_factors > len_iv) return(TRUE)
+  if (tier %in% c("V", "IV")) {
+    if (n_factors > len_iv) return(TRUE)
+    if (!is.null(main_cols) && main_cols > len_iv) return(TRUE)
+    # Fully saturated: no spare columns for clean Res IV/V separation.
+    if (!is.null(main_cols) && !is.null(int_df) && (main_cols + int_df) >= n_cols) return(TRUE)
+  }
   if (identical(tier, "V")) {
     if (length(res_v_2fi) == 0L) return(TRUE)
     if (n_pairs > length(res_v_2fi)) return(TRUE)
@@ -86,6 +106,108 @@ columns_for_level_2level <- function(levels) {
   if (levels <= 2L) return(1L)
   if (levels <= 4L) return(3L)
   return(7L)
+}
+
+# Independent generator columns used to decode factor levels (not interaction columns in the expansion).
+doe_n_generators_2level <- function(levels) {
+  lev <- as.integer(levels)[1L]
+  if (is.na(lev) || lev <= 2L) return(1L)
+  if (lev <= 4L) return(2L)
+  3L
+}
+
+# Recover generator columns from a sorted full main-set expansion (generators + internal folds).
+.doe_infer_generators_from_columns_2level <- function(cols, n_generators, tri, n_cols) {
+  cols <- sort(unique(as.integer(cols)))
+  cols <- cols[cols >= 1L & cols <= n_cols]
+  if (length(cols) == 0L) return(integer(0))
+  if (n_generators <= 1L) return(cols[1L])
+  if (length(cols) == n_generators) return(cols)
+  if (n_generators == 2L) {
+    for (ii in seq_along(cols)) {
+      for (jj in seq_along(cols)) {
+        if (ii >= jj) next
+        a <- cols[ii]; b <- cols[jj]
+        t <- tri[min(a, b), max(a, b)]
+        if (!is.na(t) && t %in% cols) return(c(a, b))
+      }
+    }
+    return(cols[seq_len(min(2L, length(cols)))])
+  }
+  nc <- length(cols)
+  for (ii in seq_len(nc - 2L)) {
+    for (jj in (ii + 1L):(nc - 1L)) {
+      for (kk in (jj + 1L):nc) {
+        g <- cols[c(ii, jj, kk)]
+        t12 <- tri[min(g[1L], g[2L]), max(g[1L], g[2L])]
+        t13 <- tri[min(g[1L], g[3L]), max(g[1L], g[3L])]
+        t23 <- tri[min(g[2L], g[3L]), max(g[2L], g[3L])]
+        if (any(is.na(c(t12, t13, t23)))) next
+        t123 <- tri[min(t12, g[3L]), max(t12, g[3L])]
+        if (is.na(t123)) next
+        if (all(c(t12, t13, t23, t123) %in% cols)) return(g)
+      }
+    }
+  }
+  cols[seq_len(min(3L, length(cols)))]
+}
+
+.doe_main_generators_2level <- function(a, tri, n_cols) {
+  if (!is.null(a$generators) && length(a$generators) > 0L) return(as.integer(a$generators))
+  cols <- as.integer(a$columns)
+  lev <- as.integer(a$levels)[1L]
+  n_gen <- doe_n_generators_2level(if (is.na(lev)) 2L else lev)
+  if (length(cols) == n_gen) return(cols)
+  .doe_infer_generators_from_columns_2level(cols, n_gen, tri, n_cols)
+}
+
+.doe_decode_run_levels_2level <- function(oa, generators) {
+  gens <- as.integer(generators)
+  if (length(gens) == 1L) return(oa[, gens[1L]])
+  if (length(gens) == 2L) {
+    v1 <- oa[, gens[1L]]; v2 <- oa[, gens[2L]]
+    return((v1 - 1L) * 2L + (v2 - 1L) + 1L)
+  }
+  v1 <- oa[, gens[1L]]; v2 <- oa[, gens[2L]]; v3 <- oa[, gens[3L]]
+  (v1 - 1L) * 4L + (v2 - 1L) * 2L + (v3 - 1L) + 1L
+}
+
+.doe_apply_odd_level_merge_2level <- function(vals, L, factor_idx, odd_level_merge) {
+  vals <- as.integer(vals)
+  if (L == 3L && !is.null(odd_level_merge) && !is.null(odd_level_merge[[as.character(factor_idx)]])) {
+    merge_into <- odd_level_merge[[as.character(factor_idx)]]
+    vals <- ifelse(vals == 4L, merge_into, vals)
+  } else if (L >= 5L && L <= 7L && !is.null(odd_level_merge) && !is.null(odd_level_merge[[as.character(factor_idx)]])) {
+    merge_into <- odd_level_merge[[as.character(factor_idx)]]
+    for (lev in (L + 1L):8L) vals <- ifelse(vals == lev, merge_into, vals)
+  }
+  vals
+}
+
+# Fill run_sheet from 2-level OA assignments (uses generator columns, not sorted expansion indices).
+doe_fill_run_sheet_2level <- function(run_sheet, oa, assignment, levels_per_factor,
+                                      odd_level_merge = NULL, tri = NULL, n_cols = ncol(oa)) {
+  if (is.null(tri) && exists("TRIANGLE_L64", inherits = TRUE)) {
+    tri <- get("TRIANGLE_L64", inherits = TRUE)
+  }
+  if (!is.null(tri)) tri <- tri[seq_len(n_cols), seq_len(n_cols), drop = FALSE]
+  n_factors <- ncol(run_sheet)
+  for (a in assignment) {
+    if (is.null(a$type) || a$type != "main") next
+    f <- as.integer(a$factor)[1L]
+    if (is.na(f) || f < 1L || f > n_factors) next
+    cols <- as.integer(a$columns)
+    if (length(cols) > 1L) {
+      if (is.null(tri)) return(run_sheet)
+      gens <- .doe_main_generators_2level(a, tri, n_cols)
+    } else {
+      gens <- cols[1L]
+    }
+    L <- levels_per_factor[f]
+    vals <- .doe_decode_run_levels_2level(oa, gens)
+    run_sheet[, f] <- .doe_apply_odd_level_merge_2level(vals, L, f, odd_level_merge)
+  }
+  run_sheet
 }
 
 # ---- Column count for a factor level (3-level OA) ----
@@ -113,13 +235,7 @@ doe_feasible_arrays <- function(n_factors, levels_per_factor, required_interacti
     main_cols <- sum(vapply(levels_per_factor, columns_for_level_2level, integer(1)))
     # Use interaction degrees-of-freedom as a lower bound for required interaction capacity.
     # This prevents under-counting (e.g., 3x3 interactions) from admitting infeasible 2-level OAs.
-    n_int_cols <- 0L
-    for (p in required_interactions) {
-      if (length(p) != 2L) next
-      i <- as.integer(p[1L]); j <- as.integer(p[2L])
-      if (is.na(i) || is.na(j) || i < 1L || j < 1L || i > length(levels_per_factor) || j > length(levels_per_factor) || i == j) next
-      n_int_cols <- n_int_cols + (as.integer(levels_per_factor[i]) - 1L) * (as.integer(levels_per_factor[j]) - 1L)
-    }
+    n_int_cols <- .doe_required_interaction_df_2level(levels_per_factor, required_interactions)
     total_needed <- main_cols + n_int_cols
     # Possible = array has enough columns (necessary condition). Assignment is run when user clicks "Design the Experiment".
     for (label in c("L4", "L8", "L16", "L32", "L64")) {
@@ -456,7 +572,7 @@ DOE_OA_ASSIGN_CATALOG <- list(
     assig <- list()
     for (f in seq_len(n_factors)) {
       c <- factor_col[f]
-      assig[[length(assig) + 1L]] <- list(factor = f, columns = c, type = "main")
+      assig[[length(assig) + 1L]] <- list(factor = f, columns = c, generators = c, type = "main")
     }
     for (c in seq_len(n_cols)) {
       key <- col_2fi_owner[c]
@@ -503,7 +619,8 @@ DOE_OA_ASSIGN_CATALOG <- list(
   for (use_pinning in c(TRUE, FALSE)) {
     for (tier in tiers_to_try) {
       if (identical(tier, "V") && (is.null(res_v_2fi) || length(res_v_2fi) == 0L)) next
-      if (.doe_2level_tier_impossible(tier, n_factors, n_cols, n_pairs, res_iv, res_v_2fi)) next
+      if (.doe_2level_tier_impossible(tier, n_factors, n_cols, n_pairs, res_iv, res_v_2fi,
+                                     main_cols = n_factors, int_df = n_pairs)) next
       factor_col[] <- 0L
       used[] <- 0L
       col_2fi_owner[] <- ""
@@ -539,6 +656,8 @@ DOE_OA_ASSIGN_CATALOG <- list(
   factor_order <- order(-degree, seq_len(n_factors))
   neighbors <- .doe_2fi_neighbors(n_factors, interaction_pairs)
   n_pairs <- length(interaction_pairs)
+  main_cols_total <- sum(main_cols_needed)
+  int_df <- .doe_required_interaction_df_2level(levels_per_factor, interaction_pairs)
 
   backtrack_nodes <- 0L
   MAX_BACKTRACK_NODES <- if (n_factors >= 8L) 50e6L else 10e6L
@@ -706,7 +825,7 @@ DOE_OA_ASSIGN_CATALOG <- list(
         main_set <- main_set_per_factor[[f]]
         if (is.null(main_set)) next
         cols <- columns_for_main_set(main_set)
-        assig[[length(assig) + 1L]] <- list(factor = f, columns = cols, type = "main")
+        assig[[length(assig) + 1L]] <- list(factor = f, columns = cols, generators = main_set, type = "main")
       }
       for (c in seq_len(n_cols)) {
         key <- col_2fi_owner[c]
@@ -734,7 +853,8 @@ DOE_OA_ASSIGN_CATALOG <- list(
 
   for (tier_try in c("V", "IV", "III")) {
     if (tier_try == "V" && (is.null(res_v_2fi) || length(res_v_2fi) == 0L)) next
-    if (.doe_2level_tier_impossible(tier_try, n_factors, n_cols, n_pairs, res_iv, res_v_2fi)) next
+    if (.doe_2level_tier_impossible(tier_try, n_factors, n_cols, n_pairs, res_iv, res_v_2fi,
+                                   main_cols = main_cols_total, int_df = int_df)) next
     tier <- tier_try
     backtrack_nodes <- 0L
     factor_col[] <- 0L
@@ -791,8 +911,10 @@ doe_assign_2level <- function(oa_label, n_factors, levels_per_factor, required_i
     if (!is.null(catalog_col)) {
       resolution_from_catalog <- TRUE
       assignment <- list()
-      for (f in seq_len(n_factors))
-        assignment[[length(assignment) + 1L]] <- list(factor = f, columns = catalog_col[f], type = "main")
+      for (f in seq_len(n_factors)) {
+        g <- as.integer(catalog_col[f])
+        assignment[[length(assignment) + 1L]] <- list(factor = f, columns = g, generators = g, type = "main")
+      }
       for (p in interaction_pairs) {
         ic <- get_interaction_columns(oa_label, catalog_col[p[1L]], catalog_col[p[2L]])
         for (cc in ic)
@@ -859,7 +981,7 @@ doe_assign_2level <- function(oa_label, n_factors, levels_per_factor, required_i
       } else main_set <- fm[seq_len(n_main_slots)]
       cols <- columns_for_main_set(main_set)
       for (c in cols) used[c] <- 1L
-      assignment[[length(assignment) + 1L]] <- list(factor = f, columns = cols, type = "main")
+      assignment[[length(assignment) + 1L]] <- list(factor = f, columns = cols, generators = main_set, type = "main")
       factor_col[f] <- main_set[1L]
     }
     design_resolution <- "IV"
@@ -878,38 +1000,11 @@ doe_assign_2level <- function(oa_label, n_factors, levels_per_factor, required_i
     a
   })
 
-  # Build run sheet: one column per factor (after merging multi-column factors)
+  # Build run sheet: decode each factor from its generator columns (not interaction folds in the expansion).
   run_sheet <- matrix(1L, nrow = info$n_runs, ncol = n_factors)
-  for (a in assignment) {
-    if (a$type != "main" || length(a$factor) > 1L) next
-    f <- a$factor
-    if (!is.integer(f) || f < 1L || f > n_factors) next
-    cols <- a$columns
-    L <- levels_per_factor[f]
-    if (length(cols) == 1L) {
-      run_sheet[, f] <- oa[, cols[1]]
-      if (L == 3L && !is.null(odd_level_merge) && !is.null(odd_level_merge[[as.character(f)]])) {
-        merge_into <- odd_level_merge[[as.character(f)]]
-        run_sheet[, f] <- ifelse(run_sheet[, f] == 4L, merge_into, run_sheet[, f])
-      }
-    } else if (length(cols) == 3L) {
-      # 4-level or 3-level (collapsed): (1,1)->1, (1,2)->2, (2,1)->3, (2,2)->4
-      v1 <- oa[, cols[1]]; v2 <- oa[, cols[2]]
-      run_sheet[, f] <- (v1 - 1L) * 2L + (v2 - 1L) + 1L  # 1..4
-      if (L == 3L && !is.null(odd_level_merge) && !is.null(odd_level_merge[[as.character(f)]])) {
-        merge_into <- odd_level_merge[[as.character(f)]]
-        run_sheet[, f] <- ifelse(run_sheet[, f] == 4L, merge_into, run_sheet[, f])
-      }
-    } else if (length(cols) == 7L) {
-      # 8-level or 5/6/7 (collapsed)
-      v1 <- oa[, cols[1]]; v2 <- oa[, cols[2]]; v3 <- oa[, cols[3]]
-      run_sheet[, f] <- (v1 - 1L) * 4L + (v2 - 1L) * 2L + (v3 - 1L) + 1L  # 1..8
-      if (L >= 5L && L <= 7L && !is.null(odd_level_merge) && !is.null(odd_level_merge[[as.character(f)]])) {
-        merge_into <- odd_level_merge[[as.character(f)]]
-        for (lev in (L + 1L):8L) run_sheet[, f] <- ifelse(run_sheet[, f] == lev, merge_into, run_sheet[, f])
-      }
-    }
-  }
+  tri_slice <- TRIANGLE_L64[seq_len(n_cols), seq_len(n_cols), drop = FALSE]
+  run_sheet <- doe_fill_run_sheet_2level(run_sheet, oa, assignment, levels_per_factor,
+                                         odd_level_merge, tri_slice, n_cols)
 
   # Apply level names if provided (run_sheet stays numeric 1,2,...; we'll map in UI or export)
   assign_df <- do.call(rbind, lapply(assignment, function(a) {

@@ -678,6 +678,8 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
     # then restore previously saved state for the newly active response.
     mf_results_state <- reactiveValues(by_response = list(), last_active = NULL)
     mf_anova_effect_ui_rev <- reactiveVal(0L)
+    # Bumped when draft-only pool state changes (strikethrough / checkbox overlay).
+    mf_pool_draft_rev <- reactiveVal(0L)
 
     # Set Up tab (mixed/random/nested) inputs are removed from Shiny input when the
     # navlistPanel switches to Results; persist them here for ANOVA + effect lists.
@@ -970,6 +972,27 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       any(vapply(pool_fx, function(p) identical(mf_effect_pool_key(p), key), logical(1)))
     }
 
+    #' Named logical lookup for pooled-effect keys (O(1) per row vs scanning 16k+ ids).
+    mf_pooled_key_set <- function(pool_fx) {
+      pool_fx <- as.character(pool_fx)
+      pool_fx <- pool_fx[!is.na(pool_fx) & nzchar(pool_fx)]
+      if (length(pool_fx) < 1L) return(setNames(logical(0), character(0)))
+      keys <- vapply(pool_fx, mf_effect_pool_key, character(1))
+      keys <- keys[nzchar(keys)]
+      if (length(keys) < 1L) return(setNames(logical(0), character(0)))
+      setNames(rep(TRUE, length(keys)), keys)
+    }
+
+    mf_key_set_has <- function(key_set, key) {
+      key <- as.character(key)[[1L]]
+      if (!nzchar(key) || length(key_set) < 1L) return(FALSE)
+      isTRUE(key_set[key])
+    }
+
+    mf_table_effect_is_pooled_keys <- function(effect_name, pooled_keys) {
+      mf_key_set_has(pooled_keys, mf_effect_pool_key(effect_name))
+    }
+
     mf_map_table_effect_to_fx <- function(effect_name, fx) {
       effect_name <- as.character(effect_name)
       fx <- as.character(fx)
@@ -998,6 +1021,75 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
     }
 
     mf_effect_pool_store <- reactiveVal(list())
+
+    # Cached design effect ids per (data_id, means|disp) — avoids recomputing on every checkbox toggle.
+    mf_anova_fx_cache <- reactiveValues()
+    mf_anova_fx_lookup_cache <- reactiveValues()
+    mf_setup_pool_cache <- reactiveValues()
+
+    mf_build_fx_key_lookup <- function(fx) {
+      fx <- as.character(fx)
+      fx <- fx[!is.na(fx) & nzchar(fx)]
+      if (length(fx) < 1L) return(setNames(character(0), character(0)))
+      keys <- if (exists("standardize_interaction", mode = "function")) {
+        vapply(fx, standardize_interaction, character(1))
+      } else {
+        fx
+      }
+      keep <- !duplicated(keys)
+      setNames(fx[keep], keys[keep])
+    }
+
+    mf_cache_fx_lookup_for_pooling <- function(did, is_dispersion, fx) {
+      k <- mf_effect_pool_slot_key(did, is_dispersion)
+      mf_anova_fx_lookup_cache[[k]] <- mf_build_fx_key_lookup(fx)
+      invisible(NULL)
+    }
+
+    mf_map_table_effect_to_fx_cached <- function(effect_name, did, is_dispersion) {
+      k <- mf_effect_pool_slot_key(did, is_dispersion)
+      lookup <- isolate(mf_anova_fx_lookup_cache[[k]])
+      if (is.null(lookup) || length(lookup) < 1L) return(NA_character_)
+      te <- as.character(effect_name)[[1L]]
+      if (te %in% lookup) return(te)
+      pk <- mf_effect_pool_key(te)
+      hit <- lookup[[pk]]
+      if (!is.null(hit) && nzchar(hit)) hit else NA_character_
+    }
+
+    mf_cache_setup_pool_for_slot <- function(did, is_dispersion, setup_pool) {
+      k <- mf_effect_pool_slot_key(did, is_dispersion)
+      mf_setup_pool_cache[[k]] <- as.character(setup_pool)
+      invisible(NULL)
+    }
+
+    mf_setup_pool_for_slot <- function(did, is_dispersion) {
+      k <- mf_effect_pool_slot_key(did, is_dispersion)
+      cached <- isolate(mf_setup_pool_cache[[k]])
+      if (!is.null(cached) && length(cached) >= 1L) return(as.character(cached))
+      character(0)
+    }
+
+    mf_fx_for_pooling <- function(did, is_dispersion, fallback = NULL) {
+      k <- mf_effect_pool_slot_key(did, is_dispersion)
+      cached <- isolate(mf_anova_fx_cache[[k]])
+      if (!is.null(cached) && length(cached) >= 1L) {
+        return(as.character(cached))
+      }
+      if (!is.null(fallback) && length(fallback) >= 1L) {
+        return(as.character(fallback))
+      }
+      as.character(isolate(current_effect_choices()))
+    }
+
+    mf_cache_fx_for_pooling <- function(did, is_dispersion, fx) {
+      fx <- as.character(fx)
+      fx <- fx[!is.na(fx) & nzchar(fx)]
+      if (length(fx) < 1L) return(invisible(NULL))
+      k <- mf_effect_pool_slot_key(did, is_dispersion)
+      mf_anova_fx_cache[[k]] <- fx
+      invisible(NULL)
+    }
 
     # Bumped only when the worker-facing applied pool changes (not draft-only edits).
     mf_applied_pool_rev <- reactiveVal(0L)
@@ -1098,15 +1190,31 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
     write_mf_effect_pool_entry <- function(key, ent, bump_applied = NA) {
       st <- isolate(mf_effect_pool_store())
       prev <- st[[key]]
-      if (!is.null(prev)) {
-        pa_prev <- sort(unique(as.character(if (is.null(prev$applied)) character(0) else prev$applied)))
-        pa_new <- sort(unique(as.character(if (is.null(ent$applied)) character(0) else ent$applied)))
-        dr_prev <- sort(unique(as.character(if (is.null(prev$draft)) character(0) else prev$draft)))
-        dr_new <- sort(unique(as.character(if (is.null(ent$draft)) character(0) else ent$draft)))
-        if (identical(pa_prev, pa_new) && identical(dr_prev, dr_new)) {
-          return(invisible(NULL))
+
+      mf_pool_entry_signature <- function(e) {
+        if (is.null(e)) {
+          return(list(setup = character(0), table_applied = character(0), table_draft = character(0)))
         }
+        if (!is.null(e$table_draft) || !is.null(e$table_applied) || !is.null(e$setup_pool)) {
+          return(list(
+            setup = sort(unique(as.character(if (is.null(e$setup_pool)) character(0) else e$setup_pool))),
+            table_applied = sort(unique(as.character(if (is.null(e$table_applied)) character(0) else e$table_applied))),
+            table_draft = sort(unique(as.character(if (is.null(e$table_draft)) character(0) else e$table_draft)))
+          ))
+        }
+        list(
+          setup = character(0),
+          table_applied = sort(unique(as.character(if (is.null(e$applied)) character(0) else e$applied))),
+          table_draft = sort(unique(as.character(if (is.null(e$draft)) character(0) else e$draft)))
+        )
       }
+
+      sig_prev <- mf_pool_entry_signature(prev)
+      sig_new <- mf_pool_entry_signature(ent)
+      if (identical(sig_prev, sig_new)) {
+        return(invisible(NULL))
+      }
+
       st[[key]] <- ent
       mf_effect_pool_store(st)
 
@@ -1115,12 +1223,102 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       } else if (isTRUE(bump_applied)) {
         bump_it <- TRUE
       } else {
-        pa <- if (!is.null(prev) && !is.null(prev$applied)) sort(unique(as.character(prev$applied))) else NULL
-        na <- if (!is.null(ent) && !is.null(ent$applied)) sort(unique(as.character(ent$applied))) else character(0)
-        bump_it <- is.null(pa) || !identical(pa, na)
+        bump_it <- !identical(sig_prev$setup, sig_new$setup) ||
+          !identical(sig_prev$table_applied, sig_new$table_applied)
       }
       if (isTRUE(bump_it)) mf_applied_pool_rev(isolate(mf_applied_pool_rev()) + 1L)
+      if (!identical(sig_prev$table_draft, sig_new$table_draft)) {
+        mf_pool_draft_rev(isolate(mf_pool_draft_rev()) + 1L)
+      }
       invisible(NULL)
+    }
+
+    mf_default_pool_entry <- function(setup_pool) {
+      list(
+        setup_pool = as.character(setup_pool),
+        table_applied = character(0),
+        table_draft = character(0)
+      )
+    }
+
+    mf_normalize_pool_entry <- function(ent, setup_pool) {
+      setup_pool <- as.character(setup_pool)
+      if (is.null(ent)) return(mf_default_pool_entry(setup_pool))
+      if (!is.null(ent$table_draft) || !is.null(ent$table_applied) || !is.null(ent$setup_pool)) {
+        return(list(
+          setup_pool = if (length(ent$setup_pool) >= 1L) as.character(ent$setup_pool) else setup_pool,
+          table_applied = if (!is.null(ent$table_applied)) as.character(ent$table_applied) else character(0),
+          table_draft = if (!is.null(ent$table_draft)) as.character(ent$table_draft) else character(0)
+        ))
+      }
+      mf_default_pool_entry(setup_pool)
+    }
+
+    mf_merge_pool_for_worker <- function(setup_pool, table_pool_rows, fx) {
+      setup_pool <- as.character(setup_pool)
+      setup_pool <- setup_pool[!is.na(setup_pool) & nzchar(setup_pool)]
+      tbl_fx <- mf_resolve_table_effects_to_fx(as.character(table_pool_rows), fx)
+      unique(c(setup_pool, tbl_fx))
+    }
+
+    mf_row_pool_display_keys <- function(setup_pool, table_draft) {
+      keys <- mf_pooled_key_set(setup_pool)
+      td_keys <- mf_pooled_key_set(table_draft)
+      if (length(td_keys) >= 1L) {
+        keys[names(td_keys)] <- TRUE
+      }
+      keys
+    }
+
+    mf_table_strike_effects <- function(table_draft, table_applied, display_row_names) {
+      res_nm <- c("Residuals", "Residual", "Within Cells", "(Intercept)")
+      table_eff <- setdiff(as.character(display_row_names), res_nm)
+      pending_keys <- setdiff(
+        names(mf_pooled_key_set(table_draft)),
+        names(mf_pooled_key_set(table_applied))
+      )
+      if (length(pending_keys) < 1L || length(table_eff) < 1L) return(character(0))
+      table_eff[vapply(table_eff, function(te) mf_effect_pool_key(te) %in% pending_keys, logical(1))]
+    }
+
+    compute_table_pool_draft_from_inputs <- function(
+        toggle_fx,
+        table_draft,
+        table_applied,
+        setup_pool,
+        did,
+        is_dispersion) {
+      setup_keys <- mf_pooled_key_set(setup_pool)
+      out <- as.character(table_draft)
+      out <- out[!is.na(out) & nzchar(out)]
+      draft_keys <- mf_pooled_key_set(out)
+      toggle_fx <- as.character(toggle_fx)
+      toggle_fx <- toggle_fx[!is.na(toggle_fx) & nzchar(toggle_fx)]
+      for (eff in toggle_fx) {
+        cb_id <- effect_toggle_input_id(eff, did, is_dispersion)
+        vid <- input[[cb_id]]
+        pk <- mf_effect_pool_key(eff)
+        if (mf_key_set_has(setup_keys, pk)) next
+        if (!is.null(vid) && isTRUE(vid)) {
+          if (mf_key_set_has(draft_keys, pk)) {
+            out <- out[vapply(out, function(p) mf_effect_pool_key(p) != pk, logical(1))]
+            draft_keys <- mf_pooled_key_set(out)
+          }
+          next
+        }
+        should_pool <- if (!is.null(vid)) {
+          !isTRUE(vid)
+        } else if (length(table_applied) >= 1L) {
+          mf_table_effect_is_pooled_keys(eff, mf_pooled_key_set(table_applied))
+        } else {
+          FALSE
+        }
+        if (isTRUE(should_pool) && !mf_key_set_has(draft_keys, pk)) {
+          out <- c(out, eff)
+          draft_keys[[pk]] <- TRUE
+        }
+      }
+      unique(out)
     }
 
     ensure_mf_effect_pool_slot <- function(did, is_dispersion, fx) {
@@ -1134,54 +1332,10 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       setup <- mf_setup_pool_for_effects(fx)
       write_mf_effect_pool_entry(
         k,
-        list(applied = setup, draft = setup),
+        mf_default_pool_entry(setup),
         bump_applied = FALSE
       )
       invisible(NULL)
-    }
-
-    mf_applied_pool_without_table_checkbox <- function(did, is_dispersion, fx, toggle_fx) {
-      fx <- as.character(fx)
-      applied <- applied_effect_pool_for_did_mode(did, is_dispersion, fx)
-      setup <- mf_setup_pool_for_effects(fx)
-      applied_extra <- setdiff(applied, setup)
-      if (length(applied_extra) < 1L) return(character(0))
-      toggle_fx <- as.character(toggle_fx)
-      toggle_fx <- toggle_fx[!is.na(toggle_fx) & nzchar(toggle_fx)]
-      if (length(toggle_fx) < 1L) return(applied_extra)
-      toggle_keys <- unique(vapply(toggle_fx, mf_effect_pool_key, character(1)))
-      toggle_keys <- toggle_keys[nzchar(toggle_keys)]
-      applied_extra[vapply(applied_extra, function(p) {
-        pk <- mf_effect_pool_key(p)
-        !nzchar(pk) || !(pk %in% toggle_keys)
-      }, logical(1))]
-    }
-
-    compute_effect_pool_from_checkbox_inputs <- function(fx, setup_pool, did, is_dispersion = FALSE, checkbox_fx = NULL) {
-      fx <- as.character(fx)
-      setup_pool <- intersect(as.character(setup_pool), fx)
-      # Set Up exclusions are always pooled; only track live checkboxes for table rows.
-      pooled <- setup_pool
-      display_fx <- setdiff(fx, setup_pool)
-      toggle_fx <- if (!is.null(checkbox_fx) && length(checkbox_fx) >= 1L) {
-        as.character(checkbox_fx)
-      } else {
-        display_fx
-      }
-      preserve_applied <- mf_applied_pool_without_table_checkbox(did, is_dispersion, fx, toggle_fx)
-      if (length(preserve_applied) >= 1L) {
-        pooled <- c(pooled, preserve_applied)
-      }
-      for (eff in toggle_fx) {
-        cb_id <- effect_toggle_input_id(eff, did, is_dispersion)
-        vid <- input[[cb_id]]
-        fx_eff <- mf_map_table_effect_to_fx(eff, fx)
-        pool_nm <- if (!is.na(fx_eff) && nzchar(fx_eff)) fx_eff else eff
-        if (!is.null(vid) && !isTRUE(vid)) {
-          pooled <- c(pooled, pool_nm)
-        }
-      }
-      unique(intersect(as.character(pooled), fx))
     }
 
     applied_effect_pool_for_did_mode <- function(did, is_dispersion_mode, fx) {
@@ -1191,8 +1345,8 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       setup <- mf_setup_pool_for_effects(fx)
       key <- mf_effect_pool_slot_key(did, is_dispersion_mode)
       ent <- isolate(mf_effect_pool_store())[[key]]
-      ap <- if (!is.null(ent) && !is.null(ent$applied)) as.character(ent$applied) else setup
-      intersect(ap, fx)
+      norm <- mf_normalize_pool_entry(ent, setup)
+      intersect(mf_merge_pool_for_worker(norm$setup_pool, norm$table_applied, fx), fx)
     }
 
     #' Pooling for dispersion commit — matches Results \code{ems_pooled} / live \code{ems_pool} picker.
@@ -1234,7 +1388,7 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
             setup <- mf_setup_pool_for_effects(fx)
             write_mf_effect_pool_entry(
               k,
-              list(applied = setup, draft = setup),
+              mf_default_pool_entry(setup),
               bump_applied = FALSE
             )
           }
@@ -1395,8 +1549,9 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
 
     # Pooled ANOVA is expensive; multiple UI paths used to re-invoke it per flush:
     # - ems_table + ems_table_pooled (conditionalPanel does not suspend by default)
-    # - mf_effect_pool_store() updates (draft checkboxes) re-render tables but must not
-    #   re-fit ANOVA until Recalculate changes multifactor_core_inputs()$ems_pool.
+    # - mf_effect_pool_store() draft updates re-render tables for strikethrough/checkboxes only;
+    #   numeric body (ICC, omega^2, %RFC) is served from ems_anova_*_table_bundle bindCache.
+    # - ANOVA refit still waits until Apply pooling changes multifactor_core_inputs()$ems_pool.
     ems_anova_pooled_tab <- shiny::bindCache(
       reactive({
         if (isTRUE(input$ems_disp)) {
@@ -1415,6 +1570,442 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       multifactor_anova_cache_key()
     )
 
+    ems_anova_main_table_cache_key <- reactive({
+      fx <- isolate(current_effect_choices())
+      did <- active_data_ems()
+      use_pooled <- if (length(fx) >= 1L && !is.null(did)) {
+        mf_anova_applied_pool_active(did, isTRUE(input$ems_disp), fx)
+      } else {
+        FALSE
+      }
+      list(
+        base = multifactor_anova_cache_key(),
+        ui_rev = mf_anova_effect_ui_rev(),
+        did = did,
+        conf = input$ems_conf,
+        R = input$ems_dec,
+        show_rfc = isTRUE(input$ems_show_rfc),
+        show_ems = input$ems_ems,
+        disp = isTRUE(input$ems_disp),
+        disp_type = input$ems_disp_type,
+        use_pooled = use_pooled,
+        view = "main"
+      )
+    })
+
+    ems_anova_pooled_table_cache_key <- reactive({
+      list(
+        base = multifactor_anova_cache_key(),
+        ui_rev = mf_anova_effect_ui_rev(),
+        did = active_data_ems(),
+        conf = input$ems_conf,
+        R = input$ems_dec,
+        show_rfc = isTRUE(input$ems_show_rfc),
+        show_ems = input$ems_ems,
+        disp = isTRUE(input$ems_disp),
+        disp_type = input$ems_disp_type,
+        view = "pooled"
+      )
+    })
+
+    mf_ems_anova_build_display_bundle <- function(
+        aov_out_l,
+        data,
+        data_id,
+        factors_id,
+        conf,
+        R,
+        show_ems,
+        disp,
+        disp_type,
+        show_rfc,
+        fx_all,
+        use_pooled_source = FALSE,
+        prefer_within_cells = FALSE,
+        multifactor_worker,
+        disp_warning_msg = NULL) {
+      if (is.character(aov_out_l) && length(aov_out_l) == 1) {
+        if (grepl("can't calculate", aov_out_l, fixed = TRUE)) {
+          return(list(early_html = aov_out_l))
+        }
+        if (grepl("~", aov_out_l, fixed = TRUE)) {
+          return(list(early_html = paste0(
+            "<p>Orthogonal design with odd levels (dummy levels): the unpooled table is completed using the same reduced model on the ",
+            "<b>Pooled ANOVA</b> tab. Reduced model: <code>",
+            htmltools::htmlEscape(aov_out_l),
+            "</code></p>"
+          )))
+        }
+        return(list(early_html = aov_out_l))
+      }
+      if (!is.data.frame(aov_out_l)) {
+        return(list(early_html = NULL))
+      }
+
+      if (!use_pooled_source) {
+        kept_fx <- setdiff(fx_all, applied_effect_pool_for_did_mode(data_id, disp, fx_all))
+        if (length(kept_fx) >= 1L) {
+          rn_all <- rownames(aov_out_l)
+          res_nm <- c("Residuals", "Residual", "Within Cells")
+          allow <- (rn_all %in% kept_fx) | (rn_all %in% res_nm)
+          if ("(Intercept)" %in% rn_all && !("(Intercept)" %in% kept_fx)) {
+            allow <- allow & !(rn_all %in% "(Intercept)")
+          }
+          keep_ord <- rn_all[allow]
+          if (length(keep_ord) >= 1L && length(keep_ord) < length(rn_all)) {
+            aov_out_l <- aov_out_l[keep_ord, , drop = FALSE]
+          }
+        }
+      }
+
+      residual_row <- anova_table_residual_row_name(aov_out_l, prefer_within_cells)
+      build_eff_types_fn <- function(metric_rows) {
+        build_eff_types_for_rows_fast(metric_rows, factors_id, data)
+      }
+      aug <- mf_ems_anova_augment_importance_columns(
+        aov_out_l = aov_out_l,
+        data = data,
+        conf = conf,
+        R = R,
+        show_rfc = show_rfc,
+        residual_row = residual_row,
+        build_eff_types_fn = build_eff_types_fn,
+        placeholder = !is.null(disp_warning_msg)
+      )
+      aov_out_l <- aug$aov_out
+      aov_out_for_r2 <- aug$aov_out_for_r2
+
+      if (disp) {
+        type_name <- c("ADA", "ADM", "ADM<sub>(n-1)</sub>")
+        disp_type <- as.numeric(disp_type)
+        header <- paste0("Dependent Variable: ", names(data)[data_id], "<br>Dispersion Analysis based on ", type_name[disp_type])
+      } else {
+        header <- paste0("Dependent Variable: ", names(data)[data_id], "<br>Means Analysis")
+      }
+      notes <- mf_anova_notes_from_table(aov_out_l, multifactor_worker$anova_notes())
+      if (isTruthy(notes)) {
+        header <- paste0(header, "<br>ANOVA Notes: ", notes)
+      }
+      if (isTruthy(disp_warning_msg)) {
+        header <- paste0(header, "<br><span style='color:#b45309;'><b>Warning:</b> ", disp_warning_msg, "</span>")
+      }
+
+      ghost_eff <- mf_anova_pooled_ghost_effects(data_id, disp, fx_all, rownames(aov_out_l))
+      display_row_names <- mf_anova_table_display_row_names(rownames(aov_out_l), ghost_eff)
+      rfc_th <- if (show_rfc) ems_anova_rfc_header() else ""
+
+      if (!is.logical(show_ems)) {
+        unbal <- as.numeric(show_ems)
+        approach <- if (unbal == 1) {
+          "Unbalanced Design: Unweighted Analysis"
+        } else if (unbal == 2) {
+          "Unbalanced Design: Orthogonal design odd levels - Dummy column(s) subtracted from error term"
+        } else {
+          "Unbalanced Design: Weighted Analysis"
+        }
+        header <- paste0(header, "<br>", approach)
+        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp"), show_rfc)
+        table_open <- paste(
+          header,
+          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
+          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
+          rfc_th
+        )
+      } else if (isTRUE(show_ems)) {
+        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp", "EMS"), show_rfc)
+        table_open <- paste(
+          header,
+          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
+          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
+          rfc_th,
+          "<th><b>EMS</b></th>"
+        )
+      } else {
+        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp"), show_rfc)
+        table_open <- paste(
+          header,
+          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
+          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
+          rfc_th
+        )
+      }
+
+      aov_out_r <- lolcat::round.object(aov_out_l, R)
+      mod_r2 <- tryCatch(multifactor_worker$aov_model(), error = function(e) NULL)
+      r2_html <- mf_html_r2_line_for_ems_table_model(mod_r2, R, aov_table = aov_out_for_r2, n_obs = nrow(data))
+
+      row_data_html <- mf_ems_anova_precompute_row_data_html(
+        display_row_names = display_row_names,
+        aov_out_r = aov_out_r,
+        out_col = out_col,
+        conf = conf,
+        ghost_eff = ghost_eff
+      )
+
+      setup_pool <- mf_setup_pool_for_effects(fx_all)
+      mf_cache_fx_for_pooling(data_id, disp, fx_all)
+      mf_cache_fx_lookup_for_pooling(data_id, disp, fx_all)
+      mf_cache_setup_pool_for_slot(data_id, disp, setup_pool)
+      ensure_mf_effect_pool_slot(data_id, disp, fx_all)
+      table_cb_fx <- mf_pooling_checkbox_effects_from_table(display_row_names, ghost_eff)
+      mf_write_table_checkbox_effects(data_id, disp, table_cb_fx)
+
+      list(
+        early_html = NULL,
+        aov_out_r = aov_out_r,
+        table_open = table_open,
+        out_col = out_col,
+        display_row_names = display_row_names,
+        ghost_eff = ghost_eff,
+        fx_all = fx_all,
+        r2_html = r2_html,
+        data_id = data_id,
+        disp = disp,
+        row_data_html = row_data_html
+      )
+    }
+
+    mf_ems_anova_precompute_row_data_html <- function(
+        display_row_names,
+        aov_out_r,
+        out_col,
+        conf,
+        ghost_eff) {
+      out <- stats::setNames(vector("list", length(display_row_names)), display_row_names)
+      for (effect_name in display_row_names) {
+        if (effect_name %in% ghost_eff) {
+          cells <- vapply(out_col, function(j) "<td></td>", character(1))
+          out[[effect_name]] <- paste(cells, collapse = "")
+          next
+        }
+        i <- match(effect_name, rownames(aov_out_r))
+        if (is.na(i)) {
+          out[[effect_name]] <- ""
+          next
+        }
+        cells <- vapply(out_col, function(j) {
+          if (rownames(aov_out_r)[i] == "(Intercept)" && (j %in% c("imp", "rfc"))) return("<td></td>")
+          if (rownames(aov_out_r)[i] %in% c("Residuals", "Residual", "Within Cells") && (j %in% c("Fvalue", "Pvalue", "imp", "rfc"))) {
+            return("<td></td>")
+          }
+          if (j == "Pvalue" && (aov_out_r[i, j] == "" || is.na(aov_out_r[i, j]))) return("<td></td>")
+          if (is.nan(aov_out_r[i, j])) return("<td>NaN</td>")
+          if (j == "Pvalue" && as.numeric(gsub(pattern = "<", replacement = "", x = aov_out_r[i, j])) < (1 - conf)) {
+            return(paste0("<td bgcolor='yellow'>", aov_out_r[i, j], "*</td>"))
+          }
+          paste0("<td>", aov_out_r[i, j], "</td>")
+        }, character(1))
+        out[[effect_name]] <- paste(cells, collapse = "")
+      }
+      out
+    }
+
+    mf_ems_anova_append_effect_rows_html <- function(
+        html,
+        display_row_names,
+        aov_out_r,
+        out_col,
+        conf,
+        ghost_eff,
+        strike_eff,
+        effect_keep_cell,
+        row_data_html = NULL) {
+      row_pieces <- character(length(display_row_names))
+      for (idx in seq_along(display_row_names)) {
+        effect_name <- display_row_names[[idx]]
+        if (effect_name %in% ghost_eff) {
+          eff_esc <- htmltools::htmlEscape(effect_name)
+          eff_cell <- paste0(
+            "<b>", eff_esc,
+            "</b> <span class=\"text-muted\" style=\"font-size:0.78em\">(pooled)</span>"
+          )
+          data_html <- if (!is.null(row_data_html) && !is.null(row_data_html[[effect_name]])) {
+            row_data_html[[effect_name]]
+          } else {
+            ""
+          }
+          row_pieces[[idx]] <- paste0(
+            "<tr style=\"opacity:0.75;background-color:#f8f9fa;\"><td></td><td>", eff_cell, "</td>",
+            data_html, "</tr>"
+          )
+          next
+        }
+        i <- match(effect_name, rownames(aov_out_r))
+        if (is.na(i)) {
+          row_pieces[[idx]] <- ""
+          next
+        }
+        eff_esc <- htmltools::htmlEscape(effect_name)
+        if (effect_name %in% strike_eff) {
+          eff_cell <- paste0(
+            "<span style=\"text-decoration:line-through;opacity:0.82\">", eff_esc,
+            "</span> <span class=\"text-muted\" style=\"font-size:0.78em\">(will pool)</span>"
+          )
+        } else {
+          eff_cell <- paste0("<b>", eff_esc, "</b>")
+        }
+        row_style <- if (effect_name %in% strike_eff) {
+          " style=\"text-decoration:line-through;opacity:0.82;background-color:#f8f9fa;\""
+        } else {
+          ""
+        }
+        data_html <- if (!is.null(row_data_html) && !is.null(row_data_html[[effect_name]])) {
+          row_data_html[[effect_name]]
+        } else {
+          cells <- vapply(out_col, function(j) {
+            if (rownames(aov_out_r)[i] == "(Intercept)" && (j %in% c("imp", "rfc"))) return("<td></td>")
+            if (rownames(aov_out_r)[i] %in% c("Residuals", "Residual", "Within Cells") && (j %in% c("Fvalue", "Pvalue", "imp", "rfc"))) {
+              return("<td></td>")
+            }
+            if (j == "Pvalue" && (aov_out_r[i, j] == "" || is.na(aov_out_r[i, j]))) return("<td></td>")
+            if (is.nan(aov_out_r[i, j])) return("<td>NaN</td>")
+            if (j == "Pvalue" && as.numeric(gsub(pattern = "<", replacement = "", x = aov_out_r[i, j])) < (1 - conf)) {
+              return(paste0("<td bgcolor='yellow'>", aov_out_r[i, j], "*</td>"))
+            }
+            paste0("<td>", aov_out_r[i, j], "</td>")
+          }, character(1))
+          paste(cells, collapse = "")
+        }
+        row_pieces[[idx]] <- paste0(
+          "<tr", row_style, "><td>", effect_keep_cell(effect_name), "</td><td>", eff_cell, "</td>",
+          data_html, "</tr>"
+        )
+      }
+      paste(c(html, row_pieces[row_pieces != ""]), collapse = "")
+    }
+
+    ems_anova_main_table_bundle <- shiny::bindCache(
+      reactive({
+        data <- filtered_data()
+        data_id <- as.numeric(active_data_ems())
+        factors_id <- as.numeric(input$factors_ems)
+        req(data, data_id, factors_id)
+        req(data_id >= 1L && data_id <= ncol(data))
+        req(all(factors_id >= 1L & factors_id <= ncol(data)))
+        req(length(factors_id) >= 2L)
+        conf <- input$ems_conf
+        R <- input$ems_dec
+        show_ems <- input$ems_ems
+        disp <- isTRUE(input$ems_disp)
+        show_rfc <- isTRUE(input$ems_show_rfc)
+        req(conf, R)
+
+        fx_all <- current_effect_choices()
+        mf_cache_fx_for_pooling(data_id, disp, fx_all)
+        use_pooled_source <- mf_anova_applied_pool_active(data_id, disp, fx_all)
+        disp_type <- input$ems_disp_type
+        aov_out_l <- if (use_pooled_source) {
+          ems_anova_pooled_tab()
+        } else {
+          ems_anova_source_tab()
+        }
+
+        disp_warning_msg <- NULL
+        if (is.null(aov_out_l)) {
+          disp_warning_msg <- "Not enough samples within cell to calculate dispersion. Table shown as placeholder so effects can be pooled."
+          fx <- setdiff(fx_all, applied_effect_pool_for_did_mode(data_id, disp, fx_all))
+          if (length(fx) < 1L) fx <- character(0)
+          rn <- c(fx, "Residuals")
+          aov_out_l <- data.frame(
+            SS = rep(NA_real_, length(rn)),
+            Df = rep(NA_real_, length(rn)),
+            MS = rep(NA_real_, length(rn)),
+            Fvalue = rep(NA_real_, length(rn)),
+            Pvalue = rep(NA_real_, length(rn)),
+            stringsAsFactors = FALSE
+          )
+          rownames(aov_out_l) <- rn
+        }
+        if (!is.null(disp_warning_msg) && isTRUE(disp)) {
+          cs_tbl <- tryCatch(multifactor_worker$factorial_cell_summary(), error = function(e) NULL)
+          dt_tbl <- format_factorial_cell_diag_html(cs_tbl)
+          if (nzchar(dt_tbl)) disp_warning_msg <- paste0(disp_warning_msg, dt_tbl)
+        }
+
+        out <- mf_ems_anova_build_display_bundle(
+          aov_out_l = aov_out_l,
+          data = data,
+          data_id = data_id,
+          factors_id = factors_id,
+          conf = conf,
+          R = R,
+          show_ems = show_ems,
+          disp = disp,
+          disp_type = disp_type,
+          show_rfc = show_rfc,
+          fx_all = fx_all,
+          use_pooled_source = use_pooled_source,
+          prefer_within_cells = FALSE,
+          multifactor_worker = multifactor_worker,
+          disp_warning_msg = disp_warning_msg
+        )
+        out
+      }),
+      ems_anova_main_table_cache_key()
+    )
+
+    ems_anova_pooled_table_bundle <- shiny::bindCache(
+      reactive({
+        data <- filtered_data()
+        data_id <- as.numeric(active_data_ems())
+        factors_id <- as.numeric(input$factors_ems)
+        req(data, data_id, factors_id)
+        req(data_id >= 1L && data_id <= ncol(data))
+        req(all(factors_id >= 1L & factors_id <= ncol(data)))
+        req(length(factors_id) >= 2L)
+        conf <- input$ems_conf
+        R <- input$ems_dec
+        show_ems <- input$ems_ems
+        disp <- isTRUE(input$ems_disp)
+        show_rfc <- isTRUE(input$ems_show_rfc)
+        disp_type <- input$ems_disp_type
+        req(conf, R)
+
+        fx_all <- current_effect_choices()
+        aov_out_l <- ems_anova_pooled_tab()
+        disp_warning_msg <- NULL
+        if (is.null(aov_out_l)) {
+          disp_warning_msg <- "Not enough samples within cell to calculate dispersion. Table shown as placeholder so effects can be pooled."
+          fx <- setdiff(fx_all, applied_effect_pool_for_did_mode(data_id, disp, fx_all))
+          if (length(fx) < 1L) fx <- character(0)
+          rn <- c(fx, "Residuals")
+          aov_out_l <- data.frame(
+            SS = rep(NA_real_, length(rn)),
+            Df = rep(NA_real_, length(rn)),
+            MS = rep(NA_real_, length(rn)),
+            Fvalue = rep(NA_real_, length(rn)),
+            Pvalue = rep(NA_real_, length(rn)),
+            stringsAsFactors = FALSE
+          )
+          rownames(aov_out_l) <- rn
+        }
+        if (!is.null(disp_warning_msg) && isTRUE(disp)) {
+          cs_p <- tryCatch(multifactor_worker$factorial_cell_summary(), error = function(e) NULL)
+          dt_p <- format_factorial_cell_diag_html(cs_p)
+          if (nzchar(dt_p)) disp_warning_msg <- paste0(disp_warning_msg, dt_p)
+        }
+
+        mf_ems_anova_build_display_bundle(
+          aov_out_l = aov_out_l,
+          data = data,
+          data_id = data_id,
+          factors_id = factors_id,
+          conf = conf,
+          R = R,
+          show_ems = show_ems,
+          disp = disp,
+          disp_type = disp_type,
+          show_rfc = show_rfc,
+          fx_all = fx_all,
+          use_pooled_source = TRUE,
+          prefer_within_cells = TRUE,
+          multifactor_worker = multifactor_worker,
+          disp_warning_msg = disp_warning_msg
+        )
+      }),
+      ems_anova_pooled_table_cache_key()
+    )
+
     #' Effects that have a Use checkbox in the current ANOVA table (not all design ids).
     mf_pooling_table_checkbox_effects <- function(fx, setup_pool, aov_rownames = NULL) {
       fx <- as.character(fx)
@@ -1428,8 +2019,7 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       intersect(display_fx, tbl_fx)
     }
 
-    mf_pooling_checkbox_effects_for_did <- function(did, is_dispersion, fx) {
-      mf_table_checkbox_effects_rev()
+    mf_pooling_checkbox_effects_for_did <- function(did, is_dispersion, fx = NULL) {
       mf_read_table_checkbox_effects(did, is_dispersion)
     }
 
@@ -1498,55 +2088,84 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       setdiff(effects, current_applied_effect_pool())
     })
 
-    observe({
+    pool_checkbox_trigger <- reactive({
       did <- active_data_ems()
       req(did)
-      fx <- current_effect_choices()
-      req(length(fx) >= 1L)
       is_disp <- isTRUE(input$ems_disp)
-      k <- mf_effect_pool_slot_key(did, is_disp)
-      setup <- mf_setup_pool_for_effects(fx)
-      ensure_mf_effect_pool_slot(did, is_disp, fx)
-      toggle_fx <- mf_pooling_checkbox_effects_for_did(did, is_disp, fx)
-      if (length(toggle_fx) < 1L) return(invisible(NULL))
-      for (eff in toggle_fx) input[[effect_toggle_input_id(eff, did, is_disp)]]
-      pooled_draft <- compute_effect_pool_from_checkbox_inputs(fx, setup, did, is_disp, checkbox_fx = toggle_fx)
-      # After switching means/disp, table checkboxes may not exist yet — do not overwrite draft.
-      if (length(toggle_fx) > 0L) {
-        bound_cb <- vapply(
-          toggle_fx,
-          function(eff) !is.null(input[[effect_toggle_input_id(eff, did, is_disp)]]),
-          logical(1)
-        )
-        if (!any(bound_cb)) {
-          return(invisible(NULL))
-        }
-      }
-      st <- isolate(mf_effect_pool_store())
-      ent <- st[[k]]
+      toggle_fx <- mf_pooling_checkbox_effects_for_did(did, is_disp)
+      if (length(toggle_fx) < 1L) return(NULL)
+      vals <- vapply(
+        toggle_fx,
+        function(eff) {
+          vid <- input[[effect_toggle_input_id(eff, did, is_disp)]]
+          if (is.null(vid)) NA else isTRUE(vid)
+        },
+        logical(1)
+      )
+      if (!any(!is.na(vals))) return(NULL)
+      list(did = did, is_disp = is_disp, toggle_fx = toggle_fx, vals = vals)
+    })
 
-      if (is.null(ent)) {
-        write_mf_effect_pool_entry(k, list(applied = setup, draft = pooled_draft), bump_applied = FALSE)
-        return(invisible(NULL))
-      }
-      cur_draft <- if (!is.null(ent$draft) && length(ent$draft) >= 1L) as.character(ent$draft) else character(0)
-      if (!identical(sort(cur_draft), sort(pooled_draft))) {
-        write_mf_effect_pool_entry(k, list(applied = ent$applied, draft = pooled_draft), bump_applied = FALSE)
+    observe({
+      tri <- pool_checkbox_trigger()
+      req(tri)
+      did <- tri$did
+      is_disp <- tri$is_disp
+      toggle_fx <- tri$toggle_fx
+      k <- mf_effect_pool_slot_key(did, is_disp)
+      setup <- mf_setup_pool_for_slot(did, is_disp)
+      st <- isolate(mf_effect_pool_store())
+      ent <- mf_normalize_pool_entry(st[[k]], setup)
+      table_draft_new <- compute_table_pool_draft_from_inputs(
+        toggle_fx = toggle_fx,
+        table_draft = ent$table_draft,
+        table_applied = ent$table_applied,
+        setup_pool = ent$setup_pool,
+        did = did,
+        is_dispersion = is_disp
+      )
+      if (!identical(sort(ent$table_draft), sort(table_draft_new))) {
+        write_mf_effect_pool_entry(
+          k,
+          list(
+            setup_pool = ent$setup_pool,
+            table_applied = ent$table_applied,
+            table_draft = table_draft_new
+          ),
+          bump_applied = FALSE
+        )
       }
     })
 
     observeEvent(input$ems_recalc_anova, {
       did <- active_data_ems()
       req(did)
-      fx <- isolate(current_effect_choices())
+      is_disp <- isTRUE(isolate(input$ems_disp))
+      fx <- mf_fx_for_pooling(did, is_disp)
       req(length(fx) >= 1L)
       setup <- mf_setup_pool_for_effects(fx)
-      is_disp <- isTRUE(isolate(input$ems_disp))
       k <- mf_effect_pool_slot_key(did, is_disp)
       ensure_mf_effect_pool_slot(did, is_disp, fx)
-      toggle_fx <- mf_pooling_checkbox_effects_for_did(did, is_disp, fx)
-      pooled <- compute_effect_pool_from_checkbox_inputs(fx, setup, did, is_disp, checkbox_fx = toggle_fx)
-      write_mf_effect_pool_entry(k, list(applied = pooled, draft = pooled), bump_applied = TRUE)
+      toggle_fx <- mf_pooling_checkbox_effects_for_did(did, is_disp)
+      st <- isolate(mf_effect_pool_store())
+      ent <- mf_normalize_pool_entry(st[[k]], setup)
+      table_draft <- compute_table_pool_draft_from_inputs(
+        toggle_fx = toggle_fx,
+        table_draft = ent$table_draft,
+        table_applied = ent$table_applied,
+        setup_pool = setup,
+        did = did,
+        is_dispersion = is_disp
+      )
+      write_mf_effect_pool_entry(
+        k,
+        list(
+          setup_pool = setup,
+          table_applied = table_draft,
+          table_draft = table_draft
+        ),
+        bump_applied = TRUE
+      )
       mf_anova_effect_ui_rev(isolate(mf_anova_effect_ui_rev()) + 1L)
     }, ignoreNULL = TRUE)
 
@@ -1557,7 +2176,7 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       req(length(fx) >= 1L)
       setup <- mf_setup_pool_for_effects(fx)
       k <- mf_effect_pool_slot_key(did, isTRUE(isolate(input$ems_disp)))
-      write_mf_effect_pool_entry(k, list(applied = setup, draft = setup), bump_applied = NA)
+      write_mf_effect_pool_entry(k, mf_default_pool_entry(setup), bump_applied = NA)
       mf_anova_effect_ui_rev(isolate(mf_anova_effect_ui_rev()) + 1L)
     }, ignoreNULL = TRUE)
     
@@ -2010,19 +2629,16 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       )
     }
 
-    mf_effective_checkbox_pool_for_table <- function(data_id, is_dispersion) {
+    mf_effective_checkbox_pool_for_table <- function(data_id, is_dispersion, fx_all = NULL) {
       if (is.null(data_id) || length(data_id) < 1L || !is.finite(as.numeric(data_id[[1L]]))) return(character(0))
       data_id <- as.integer(data_id[[1L]])
-      fx <- isolate(current_effect_choices())
+      fx <- if (is.null(fx_all)) isolate(current_effect_choices()) else as.character(fx_all)
       if (length(fx) < 1L) return(character(0))
       k <- mf_effect_pool_slot_key(data_id, is_dispersion)
       ent <- mf_effect_pool_store()[[k]]
-      if (is.null(ent)) {
-        return(mf_setup_pool_for_effects(fx))
-      }
-      if (length(ent$draft) >= 1L) return(as.character(ent$draft))
-      if (!is.null(ent$applied)) return(as.character(ent$applied))
-      character(0)
+      setup <- mf_setup_pool_for_effects(fx)
+      norm <- mf_normalize_pool_entry(ent, setup)
+      mf_merge_pool_for_worker(norm$setup_pool, norm$table_draft, fx)
     }
 
     mf_pooling_pending_differs <- function(data_id, is_dispersion) {
@@ -2033,42 +2649,30 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       k <- mf_effect_pool_slot_key(data_id, is_dispersion)
       ent <- isolate(mf_effect_pool_store())[[k]]
       if (is.null(ent)) return(FALSE)
-      ap <- if (is.null(ent$applied)) character(0) else as.character(ent$applied)
-      dr <- if (is.null(ent$draft)) character(0) else as.character(ent$draft)
-      !identical(sort(unique(ap)), sort(unique(dr)))
+      setup <- mf_setup_pool_for_effects(fx)
+      norm <- mf_normalize_pool_entry(ent, setup)
+      !identical(sort(unique(norm$table_applied)), sort(unique(norm$table_draft)))
     }
 
-    mf_strike_pool_pending_effects <- function(data_id, is_dispersion, table_row_names = NULL) {
+    mf_strike_pool_pending_effects <- function(data_id, is_dispersion, table_row_names = NULL, fx_all = NULL) {
       if (is.null(data_id) || length(data_id) < 1L || !is.finite(as.numeric(data_id[[1L]]))) return(character(0))
       data_id <- as.integer(data_id[[1L]])
-      fx <- current_effect_choices()
-      if (length(fx) < 1L) return(character(0))
-      ap <- applied_effect_pool_for_did_mode(data_id, is_dispersion, fx)
-      dr <- mf_effective_checkbox_pool_for_table(data_id, is_dispersion)
-      pending_fx <- unique(as.character(setdiff(dr, ap)))
-      if (length(pending_fx) < 1L) return(character(0))
-      if (is.null(table_row_names) || length(table_row_names) < 1L) return(pending_fx)
-      res_nm <- c("Residuals", "Residual", "Within Cells", "(Intercept)")
-      table_eff <- setdiff(as.character(table_row_names), res_nm)
-      if (length(table_eff) < 1L) return(character(0))
-      pending_keys <- unique(vapply(pending_fx, mf_effect_pool_key, character(1)))
-      table_eff[vapply(
-        table_eff,
-        function(te) {
-          k <- mf_effect_pool_key(te)
-          nzchar(k) && k %in% pending_keys
-        },
-        logical(1)
-      )]
+      k <- mf_effect_pool_slot_key(data_id, is_dispersion)
+      ent <- isolate(mf_effect_pool_store())[[k]]
+      setup <- if (is.null(fx_all)) mf_setup_pool_for_slot(data_id, is_dispersion) else mf_setup_pool_for_effects(fx_all)
+      norm <- mf_normalize_pool_entry(ent, setup)
+      mf_table_strike_effects(norm$table_draft, norm$table_applied, table_row_names)
     }
 
     mf_results_applied_pool_only <- function(data_id, is_dispersion, fx) {
       fx <- as.character(fx)
       fx <- fx[!is.na(fx) & nzchar(fx)]
       if (length(fx) < 1L) return(character(0))
-      ap <- applied_effect_pool_for_did_mode(data_id, is_dispersion, fx)
+      k <- mf_effect_pool_slot_key(data_id, is_dispersion)
+      ent <- isolate(mf_effect_pool_store())[[k]]
       setup <- mf_setup_pool_for_effects(fx)
-      unique(as.character(setdiff(ap, setup)))
+      norm <- mf_normalize_pool_entry(ent, setup)
+      mf_resolve_table_effects_to_fx(norm$table_applied, fx)
     }
 
     mf_anova_pooled_ghost_effects <- function(data_id, is_dispersion, fx_all, aov_rownames) {
@@ -2218,10 +2822,9 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       if (length(fx) < 1L) return(NULL)
       k <- mf_effect_pool_slot_key(did, isTRUE(input$ems_disp))
       ent <- mf_effect_pool_store()[[k]]
-      if (is.null(ent)) return(NULL)
-      ap <- if (is.null(ent$applied)) character(0) else unique(as.character(ent$applied))
-      dr <- if (is.null(ent$draft)) character(0) else unique(as.character(ent$draft))
-      if (identical(sort(ap), sort(dr))) return(NULL)
+      setup <- mf_setup_pool_for_effects(fx)
+      norm <- mf_normalize_pool_entry(ent, setup)
+      if (identical(sort(unique(norm$table_applied)), sort(unique(norm$table_draft)))) return(NULL)
       shiny::tags$p(
         class = "text-warning",
         style = "font-size:0.88em; margin:0.25em 0;",
@@ -2235,577 +2838,118 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
 
     output$ems_table <- renderUI({
       mf_anova_effect_ui_rev()
+      mf_pool_draft_rev()
       active_data_ems()
       conf <- input$ems_conf
-      R <- input$ems_dec
-      show_ems <- input$ems_ems
-      disp <- isTRUE(input$ems_disp)
-      show_rfc <- isTRUE(input$ems_show_rfc)
-      rfc_th <- if (show_rfc) ems_anova_rfc_header() else ""
-      
-      req(conf, R)
-      
-      data <- filtered_data()
-      data_id <- as.numeric(active_data_ems())
-      factors_id <- as.numeric(input$factors_ems)
-      req(data, data_id, factors_id)
-      req(data_id >= 1L && data_id <= ncol(data))
-      req(all(factors_id >= 1L & factors_id <= ncol(data)))
-      req(length(factors_id) >= 2L)
+      req(conf, input$ems_dec)
 
-      checkbox_pool <- mf_effective_checkbox_pool_for_table(data_id, disp)
-
-      fx_all <- current_effect_choices()
-      use_pooled_source <- mf_anova_applied_pool_active(data_id, disp, fx_all)
-
-      aov_out_l <- if (use_pooled_source) {
-        ems_anova_pooled_tab()
-      } else {
-        ems_anova_source_tab()
+      bundle <- ems_anova_main_table_bundle()
+      if (!is.null(bundle$early_html)) {
+        return(HTML(bundle$early_html))
       }
-      disp_warning_msg <- NULL
-      if (is.null(aov_out_l)) {
-        disp_warning_msg <- "Not enough samples within cell to calculate dispersion. Table shown as placeholder so effects can be pooled."
-        fx <- current_effect_display_choices()
-        if (length(fx) < 1L) {
-          fx <- character(0)
-        }
-        rn <- c(fx, "Residuals")
-        aov_out_l <- data.frame(
-          SS = rep(NA_real_, length(rn)),
-          Df = rep(NA_real_, length(rn)),
-          MS = rep(NA_real_, length(rn)),
-          Fvalue = rep(NA_real_, length(rn)),
-          Pvalue = rep(NA_real_, length(rn)),
-          stringsAsFactors = FALSE
-        )
-        rownames(aov_out_l) <- rn
-      }
-      if (!is.null(disp_warning_msg) && isTRUE(disp)) {
-        cs_tbl <- tryCatch(multifactor_worker$factorial_cell_summary(), error = function(e) NULL)
-        dt_tbl <- format_factorial_cell_diag_html(cs_tbl)
-        if (nzchar(dt_tbl)) disp_warning_msg <- paste0(disp_warning_msg, dt_tbl)
-      }
-      
-      # Propagate worker error strings; odd-level reduced model is a formula string (see ems_pooled)
-      if (is.character(aov_out_l) && length(aov_out_l) == 1) {
-        if (grepl("can't calculate", aov_out_l, fixed = TRUE)) {
-          return(HTML(aov_out_l))
-        }
-        if (grepl("~", aov_out_l, fixed = TRUE)) {
-          return(HTML(paste0(
-            "<p>Orthogonal design with odd levels (dummy levels): the unpooled table is completed using the same reduced model on the ",
-            "<b>Pooled ANOVA</b> tab. Reduced model: <code>",
-            htmltools::htmlEscape(aov_out_l),
-            "</code></p>"
-          )))
-        }
-        return(HTML(aov_out_l))
-      }
-      
-      req(is.data.frame(aov_out_l))
+      req(bundle$aov_out_r)
 
-      # If still on unpooled EMSanova (no Set Up exclusions), subset to active effects only when
-      # the worker table is larger (avoids NA aliased rows from saturated factorial fits).
-      kept_fx <- current_effect_display_choices()
-      if (!use_pooled_source && length(kept_fx) >= 1L) {
-        rn_all <- rownames(aov_out_l)
-        res_nm <- c("Residuals", "Residual", "Within Cells")
-        allow <- (rn_all %in% kept_fx) | (rn_all %in% res_nm)
-        if ("(Intercept)" %in% rn_all && !("(Intercept)" %in% kept_fx)) {
-          allow <- allow & !(rn_all %in% "(Intercept)")
-        }
-        keep_ord <- rn_all[allow]
-        if (length(keep_ord) >= 1L && length(keep_ord) < length(rn_all)) {
-          aov_out_l <- aov_out_l[keep_ord, , drop = FALSE]
-        }
-      }
-
-      # Determine residual row name used by this table
-      residual_row <- if ("Residuals" %in% rownames(aov_out_l)) "Residuals" else "Residual"
-      
-      if (is.null(disp_warning_msg)) {
-        # Effect size calculations (intercept excluded from omega^2 / ICC / %RFC metric rows)
-        msw <- aov_out_l[residual_row, "MS"]
-        omega <- anova_table_omega_squared_values(aov_out_l, residual_row)
-
-        effect_rows <- anova_table_effect_rows(aov_out_l, residual_row)
-        metric_rows <- anova_table_metric_rows(aov_out_l, residual_row)
-
-        # ICC calculations for random effects (metric rows only)
-        msb <- aov_out_l$MS[metric_rows]
-        J <- rep(NA_real_, length(metric_rows))
-        sum_n <- rep(NA_real_, length(metric_rows))
-        sum_nsq <- rep(NA_real_, length(metric_rows))
-        for (i in seq_along(metric_rows)) {
-          combo <- c(str_split(metric_rows[i], ":", simplify = TRUE))
-          combo <- gsub("\\([^)]+\\)", "", x = combo)
-          combo <- trimws(combo)
-          combo <- combo[combo != ""]
-          if (length(combo) == 0) next
-
-          J[i] <- nrow(unique(data[combo]))
-          counts <- data %>% count(across(all_of(combo)))
-          sum_n[i] <- sum(counts$n)
-          sum_nsq[i] <- sum(counts$n^2)
-        }
-        K_prime <- (1 / (J - 1)) * (sum_n - (sum_nsq / sum_n))
-        bcv <- (msb - msw) / K_prime
-        ICC <- c(100 * bcv / (bcv + msw))
-        names(ICC) <- metric_rows
-
-        effects_f_r <- build_eff_types_for_rows_fast(metric_rows, factors_id, data)
-        if (is.null(effects_f_r) || nrow(effects_f_r) < 1L) {
-          effects_f_r <- data.frame(
-            effect = metric_rows,
-            type = rep("F", length(metric_rows)),
-            type_code = rep(1L, length(metric_rows)),
-            stringsAsFactors = FALSE,
-            row.names = metric_rows
-          )
-        }
-        type_before <- rep("F", length(effect_rows))
-        names(type_before) <- effect_rows
-        type_before[metric_rows] <- effects_f_r$type
-        imp_before <- rep(NA_real_, length(effect_rows))
-        names(imp_before) <- effect_rows
-        imp_before[metric_rows] <- ifelse(effects_f_r$type_code == 1L, omega[metric_rows], ICC)
-
-        pvals <- anova_pvalue_numeric(aov_out_l$Pvalue)
-        names(pvals) <- rownames(aov_out_l)
-        for (nm in metric_rows) {
-          if (!is.na(pvals[nm]) && pvals[nm] >= (1 - conf)) {
-            imp_before[nm] <- 0
-          }
-        }
-        imp_before[imp_before < 0] <- 0
-        imp_before[is.na(imp_before)] <- 0
-        imp_fmt <- rep("", length(effect_rows))
-        names(imp_fmt) <- effect_rows
-        imp_fmt[metric_rows] <- paste0(as.character(ro(as.numeric(imp_before[metric_rows]), R)), "%")
-
-        aov_out_l$Type <- c(type_before, "R")
-        aov_out_l$imp <- c(imp_fmt, "")
-
-        if (show_rfc) {
-          rfc_numeric <- compute_percent_rfc(aov_out_l, effects_f_r, conf, residual_rows = residual_row)
-          aov_out_l$rfc <- format_anova_rfc_column(rfc_numeric, R, ro_fun = ro)
-        }
-      } else {
-        aov_out_l$Type <- c(rep("F", max(nrow(aov_out_l) - 1L, 0L)), "R")
-        aov_out_l$imp <- rep("", nrow(aov_out_l))
-      }
-      aov_out_for_r2 <- aov_out_l
-      aov_out_l <- anova_table_strip_intercept_for_display(aov_out_l)
-      t_after_metrics <- Sys.time()
-      
-      # Header text
-      if (disp) {
-        type_name <- c("ADA", "ADM", "ADM<sub>(n-1)</sub>")
-        disp_type <- as.numeric(input$ems_disp_type)
-        header <- paste0("Dependent Variable: ", names(data)[data_id], "<br>Dispersion Analysis based on ", type_name[disp_type])
-      } else {
-        header <- paste0("Dependent Variable: ", names(data)[data_id], "<br>Means Analysis")
-      }
-
-      # ANOVA Notes (ported behavior) — prefer notes bundled on the cached table
-      notes <- mf_anova_notes_from_table(aov_out_l, multifactor_worker$anova_notes())
-      if (isTruthy(notes)) {
-        header <- paste0(header, "<br>ANOVA Notes: ", notes)
-      }
-      if (isTruthy(disp_warning_msg)) {
-        header <- paste0(header, "<br><span style='color:#b45309;'><b>Warning:</b> ", disp_warning_msg, "</span>")
-      }
-      
-      out_row <- seq_len(nrow(aov_out_l))
-      cbp <- checkbox_pool
-      ghost_eff <- mf_anova_pooled_ghost_effects(data_id, disp, fx_all, rownames(aov_out_l))
-      display_row_names <- mf_anova_table_display_row_names(rownames(aov_out_l), ghost_eff)
-      table_cb_fx <- mf_pooling_checkbox_effects_from_table(display_row_names, ghost_eff)
-      mf_write_table_checkbox_effects(data_id, disp, table_cb_fx)
-      strike_eff <- mf_strike_pool_pending_effects(data_id, disp, display_row_names)
-      ensure_mf_effect_pool_slot(data_id, disp, fx_all)
+      data_id <- bundle$data_id
+      disp <- bundle$disp
+      fx_all <- bundle$fx_all
+      pool_slot <- isolate(mf_effect_pool_store()[[mf_effect_pool_slot_key(data_id, disp)]])
+      setup_pool <- mf_setup_pool_for_slot(data_id, disp)
+      norm <- mf_normalize_pool_entry(pool_slot, setup_pool)
+      display_pool_keys <- mf_row_pool_display_keys(norm$setup_pool, norm$table_draft)
+      strike_eff <- mf_table_strike_effects(
+        norm$table_draft,
+        norm$table_applied,
+        bundle$display_row_names
+      )
       effect_keep_cell <- function(effect_name) {
         if (effect_name %in% c("Residuals", "Residual", "Within Cells", "(Intercept)")) return("")
-        if (effect_name %in% ghost_eff) return("")
+        if (effect_name %in% bundle$ghost_eff) return("")
         id <- effect_toggle_input_id(effect_name, data_id, disp)
-        checked <- !mf_table_effect_is_pooled(effect_name, cbp)
+        input_val <- input[[id]]
+        checked <- if (!is.null(input_val)) {
+          isTRUE(input_val)
+        } else {
+          !mf_table_effect_is_pooled_keys(effect_name, display_pool_keys)
+        }
         mf_effect_keep_checkbox_cell(id, checked, ns)
       }
-      if (!is.logical(show_ems)) {
-        # Unbalanced analysis selection (1/2/3)
-        unbal <- as.numeric(show_ems)
-        approach <- if (unbal == 1) {
-          "Unbalanced Design: Unweighted Analysis"
-        } else if (unbal == 2) {
-          "Unbalanced Design: Orthogonal design odd levels - Dummy column(s) subtracted from error term"
-        } else {
-          "Unbalanced Design: Weighted Analysis"
-        }
-        header <- paste0(header, "<br>", approach)
-        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp"), show_rfc)
-        html <- paste(
-          header,
-          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
-          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
-          rfc_th
-        )
-      } else if (isTRUE(show_ems)) {
-        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp", "EMS"), show_rfc)
-        html <- paste(
-          header,
-          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
-          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
-          rfc_th,
-          "<th><b>EMS</b></th>"
-        )
-      } else {
-        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp"), show_rfc)
-        html <- paste(
-          header,
-          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
-          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
-          rfc_th
-        )
-      }
-      
-      # Match monolithic behavior: round once, then paste values into HTML
-      # (monolithic uses `ro <- round.object` from lolcat)
-      aov_out_r <- lolcat::round.object(aov_out_l, R)
 
-      for (effect_name in display_row_names) {
-        if (effect_name %in% ghost_eff) {
-          eff_esc <- htmltools::htmlEscape(effect_name)
-          eff_cell <- paste0(
-            "<b>", eff_esc,
-            "</b> <span class=\"text-muted\" style=\"font-size:0.78em\">(pooled)</span>"
-          )
-          html <- paste0(
-            html,
-            "<tr style=\"opacity:0.75;background-color:#f8f9fa;\"><td></td><td>", eff_cell, "</td>"
-          )
-          for (j in out_col) {
-            html <- paste(html, "<td></td>")
-          }
-          html <- paste(html, "</tr>")
-          next
-        }
-        i <- match(effect_name, rownames(aov_out_r))
-        if (is.na(i)) next
-        eff_esc <- htmltools::htmlEscape(effect_name)
-        if (effect_name %in% strike_eff) {
-          eff_cell <- paste0(
-            "<span style=\"text-decoration:line-through;opacity:0.82\">", eff_esc,
-            "</span> <span class=\"text-muted\" style=\"font-size:0.78em\">(will pool)</span>"
-          )
-        } else {
-          eff_cell <- paste0("<b>", eff_esc, "</b>")
-        }
-        row_style <- if (effect_name %in% strike_eff) {
-          " style=\"text-decoration:line-through;opacity:0.82;background-color:#f8f9fa;\""
-        } else {
-          ""
-        }
-        html <- paste0(html, "<tr", row_style, "><td>", effect_keep_cell(effect_name), "</td><td>", eff_cell, "</td>")
-        for (j in out_col) {
-          if (rownames(aov_out_r)[i] == "(Intercept)" && (j %in% c("imp", "rfc"))) {
-            html <- paste(html, "<td></td>")
-            next
-          }
-          if (rownames(aov_out_r)[i] %in% c("Residuals", "Residual") && (j %in% c("Fvalue", "Pvalue", "imp", "rfc"))) {
-            html <- paste(html, "<td></td>")
-            next
-          }
-          if ((j == "Pvalue" && (aov_out_r[i, j] == "" || is.na(aov_out_r[i, j])))) {
-            html <- paste(html, "<td></td>")
-            next
-          }
-          if (j == "Pvalue" && as.numeric(gsub(pattern = "<", replacement = "", x = aov_out_r[i, j])) < (1 - conf)) {
-            # Use paste0 to avoid inserting a space that can wrap the "*" to a new line
-            html <- paste0(html, "<td bgcolor='yellow'>", aov_out_r[i, j], "*</td>")
-          } else {
-            html <- paste(html, "<td>", aov_out_r[i, j], "</td>")
-          }
-        }
-        html <- paste(html, "</tr>")
-      }
+      html <- mf_ems_anova_append_effect_rows_html(
+        html = bundle$table_open,
+        display_row_names = bundle$display_row_names,
+        aov_out_r = bundle$aov_out_r,
+        out_col = bundle$out_col,
+        conf = conf,
+        ghost_eff = bundle$ghost_eff,
+        strike_eff = strike_eff,
+        effect_keep_cell = effect_keep_cell,
+        row_data_html = bundle$row_data_html
+      )
 
-      mod_r2 <- tryCatch(multifactor_worker$aov_model(), error = function(e) NULL)
-      r2_html <- mf_html_r2_line_for_ems_table_model(mod_r2, R, aov_table = aov_out_for_r2, n_obs = nrow(data))
-
-      HTML(paste0(paste(html, "</table>"), r2_html))
+      HTML(paste0(paste(html, "</table>"), bundle$r2_html))
     })
     
     output$ems_table_pooled <- renderUI({
       mf_anova_effect_ui_rev()
+      mf_pool_draft_rev()
       active_data_ems()
       conf <- input$ems_conf
-      R <- input$ems_dec
-      disp <- isTRUE(input$ems_disp)
-      show_ems <- input$ems_ems
-      show_rfc <- isTRUE(input$ems_show_rfc)
-      rfc_th <- if (show_rfc) ems_anova_rfc_header() else ""
-      req(conf, R)
+      req(conf, input$ems_dec)
       fx_req <- isolate(current_effect_choices())
       req(length(fx_req) >= 1L)
       did_req <- active_data_ems()
       req(did_req)
       req(mf_anova_applied_pool_active(did_req, isTRUE(input$ems_disp), fx_req))
-      
-      data <- filtered_data()
-      data_id <- as.numeric(active_data_ems())
-      factors_id <- as.numeric(input$factors_ems)
-      req(data, data_id, factors_id)
-      req(data_id >= 1L && data_id <= ncol(data))
-      req(all(factors_id >= 1L & factors_id <= ncol(data)))
-      req(length(factors_id) >= 2L)
 
-      checkbox_pool <- mf_effective_checkbox_pool_for_table(data_id, disp)
-
-      aov_out_l <- ems_anova_pooled_tab()
-      disp_warning_msg <- NULL
-      if (is.null(aov_out_l)) {
-        disp_warning_msg <- "Not enough samples within cell to calculate dispersion. Table shown as placeholder so effects can be pooled."
-        fx <- current_effect_display_choices()
-        if (length(fx) < 1L) {
-          fx <- character(0)
-        }
-        rn <- c(fx, "Residuals")
-        aov_out_l <- data.frame(
-          SS = rep(NA_real_, length(rn)),
-          Df = rep(NA_real_, length(rn)),
-          MS = rep(NA_real_, length(rn)),
-          Fvalue = rep(NA_real_, length(rn)),
-          Pvalue = rep(NA_real_, length(rn)),
-          stringsAsFactors = FALSE
-        )
-        rownames(aov_out_l) <- rn
+      bundle <- ems_anova_pooled_table_bundle()
+      if (!is.null(bundle$early_html)) {
+        return(HTML(bundle$early_html))
       }
-      if (!is.null(disp_warning_msg) && isTRUE(disp)) {
-        cs_p <- tryCatch(multifactor_worker$factorial_cell_summary(), error = function(e) NULL)
-        dt_p <- format_factorial_cell_diag_html(cs_p)
-        if (nzchar(dt_p)) disp_warning_msg <- paste0(disp_warning_msg, dt_p)
-      }
-      if (is.character(aov_out_l) && length(aov_out_l) == 1) {
-        return(HTML(aov_out_l))
-      }
-      req(is.data.frame(aov_out_l))
-      
-      residual_row <- if ("Within Cells" %in% rownames(aov_out_l)) {
-        "Within Cells"
-      } else if ("Residuals" %in% rownames(aov_out_l)) {
-        "Residuals"
-      } else {
-        "Residual"
-      }
-      
-      if (is.null(disp_warning_msg)) {
-        msw <- aov_out_l[residual_row, "MS"]
-        omega <- anova_table_omega_squared_values(aov_out_l, residual_row)
+      req(bundle$aov_out_r)
 
-        effect_rows <- anova_table_effect_rows(aov_out_l, residual_row)
-        metric_rows <- anova_table_metric_rows(aov_out_l, residual_row)
-
-        msb <- aov_out_l$MS[metric_rows]
-        J <- rep(NA_real_, length(metric_rows))
-        sum_n <- rep(NA_real_, length(metric_rows))
-        sum_nsq <- rep(NA_real_, length(metric_rows))
-        for (i in seq_along(metric_rows)) {
-          combo <- c(str_split(metric_rows[i], ":", simplify = TRUE))
-          combo <- gsub("\\([^)]+\\)", "", x = combo)
-          combo <- trimws(combo)
-          combo <- combo[combo != ""]
-          if (length(combo) == 0) next
-
-          test <- try(nrow(unique(data[combo])), silent = TRUE)
-          if (inherits(test, "try-error")) {
-            J[i] <- 0
-            sum_n[i] <- 0
-            sum_nsq[i] <- 0
-            next
-          }
-
-          J[i] <- nrow(unique(data[combo]))
-          counts <- data %>% count(across(all_of(combo)))
-          sum_n[i] <- sum(counts$n)
-          sum_nsq[i] <- sum(counts$n^2)
-        }
-        K_prime <- (1 / (J - 1)) * (sum_n - (sum_nsq / sum_n))
-        bcv <- (msb - msw) / K_prime
-        ICC <- c(100 * bcv / (bcv + msw))
-        names(ICC) <- metric_rows
-
-        effects_f_r <- build_eff_types_for_rows_fast(metric_rows, factors_id, data)
-        if (is.null(effects_f_r) || nrow(effects_f_r) < 1L) {
-          effects_f_r <- data.frame(
-            effect = metric_rows,
-            type = rep("F", length(metric_rows)),
-            type_code = rep(1L, length(metric_rows)),
-            stringsAsFactors = FALSE,
-            row.names = metric_rows
-          )
-        }
-
-        type_before <- rep("F", length(effect_rows))
-        names(type_before) <- effect_rows
-        type_before[metric_rows] <- effects_f_r$type
-        imp_before <- rep(NA_real_, length(effect_rows))
-        names(imp_before) <- effect_rows
-        imp_before[metric_rows] <- ifelse(effects_f_r$type_code == 1L, omega[metric_rows], ICC)
-
-        pvals <- anova_pvalue_numeric(aov_out_l$Pvalue)
-        names(pvals) <- rownames(aov_out_l)
-        for (nm in metric_rows) {
-          if (!is.na(pvals[nm]) && pvals[nm] >= (1 - conf)) {
-            imp_before[nm] <- 0
-          }
-        }
-        imp_before[imp_before < 0] <- 0
-        imp_before[is.na(imp_before)] <- 0
-        imp_fmt <- rep("", length(effect_rows))
-        names(imp_fmt) <- effect_rows
-        imp_fmt[metric_rows] <- paste0(as.character(ro(as.numeric(imp_before[metric_rows]), R)), "%")
-
-        aov_out_l$Type <- c(type_before, "R")
-        aov_out_l$imp <- c(imp_fmt, "")
-
-        if (show_rfc) {
-          rfc_numeric <- compute_percent_rfc(aov_out_l, effects_f_r, conf, residual_rows = residual_row)
-          aov_out_l$rfc <- format_anova_rfc_column(rfc_numeric, R, ro_fun = ro)
-        }
-      } else {
-        aov_out_l$Type <- c(rep("F", max(nrow(aov_out_l) - 1L, 0L)), "R")
-        aov_out_l$imp <- rep("", nrow(aov_out_l))
-      }
-      aov_out_for_r2 <- aov_out_l
-      aov_out_l <- anova_table_strip_intercept_for_display(aov_out_l)
-      
-      # Header text
-      if (disp) {
-        type_name <- c("ADA", "ADM", "ADM<sub>(n-1)</sub>")
-        disp_type <- as.numeric(input$ems_disp_type)
-        header <- paste0("Dependent Variable: ", names(data)[data_id], "<br>Dispersion Analysis based on ", type_name[disp_type])
-      } else {
-        header <- paste0("Dependent Variable: ", names(data)[data_id], "<br>Means Analysis")
-      }
-
-      # ANOVA Notes (ported behavior) — prefer notes bundled on the cached table
-      notes <- mf_anova_notes_from_table(aov_out_l, multifactor_worker$anova_notes())
-      if (isTruthy(notes)) {
-        header <- paste0(header, "<br>ANOVA Notes: ", notes)
-      }
-      if (isTruthy(disp_warning_msg)) {
-        header <- paste0(header, "<br><span style='color:#b45309;'><b>Warning:</b> ", disp_warning_msg, "</span>")
-      }
-      
-      out_row <- seq_len(nrow(aov_out_l))
-      cbp <- checkbox_pool
-      fx_all <- current_effect_choices()
-      ghost_eff <- mf_anova_pooled_ghost_effects(data_id, disp, fx_all, rownames(aov_out_l))
-      display_row_names <- mf_anova_table_display_row_names(rownames(aov_out_l), ghost_eff)
-      table_cb_fx <- mf_pooling_checkbox_effects_from_table(display_row_names, ghost_eff)
-      mf_write_table_checkbox_effects(data_id, disp, table_cb_fx)
-      strike_eff <- mf_strike_pool_pending_effects(data_id, disp, display_row_names)
-      ensure_mf_effect_pool_slot(data_id, disp, fx_all)
+      data_id <- bundle$data_id
+      disp <- bundle$disp
+      fx_all <- bundle$fx_all
+      pool_slot <- isolate(mf_effect_pool_store()[[mf_effect_pool_slot_key(data_id, disp)]])
+      setup_pool <- mf_setup_pool_for_slot(data_id, disp)
+      norm <- mf_normalize_pool_entry(pool_slot, setup_pool)
+      display_pool_keys <- mf_row_pool_display_keys(norm$setup_pool, norm$table_draft)
+      strike_eff <- mf_table_strike_effects(
+        norm$table_draft,
+        norm$table_applied,
+        bundle$display_row_names
+      )
       effect_keep_cell <- function(effect_name) {
         if (effect_name %in% c("Residuals", "Residual", "Within Cells", "(Intercept)")) return("")
-        if (effect_name %in% ghost_eff) return("")
+        if (effect_name %in% bundle$ghost_eff) return("")
         id <- effect_toggle_input_id(effect_name, data_id, disp)
-        checked <- !mf_table_effect_is_pooled(effect_name, cbp)
+        input_val <- input[[id]]
+        checked <- if (!is.null(input_val)) {
+          isTRUE(input_val)
+        } else {
+          !mf_table_effect_is_pooled_keys(effect_name, display_pool_keys)
+        }
         mf_effect_keep_checkbox_cell(id, checked, ns)
       }
-      if (is.logical(show_ems) && isTRUE(show_ems)) {
-        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp", "EMS"), show_rfc)
-        html <- paste(
-          header,
-          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
-          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
-          rfc_th,
-          "<th><b>EMS</b></th>"
-        )
-      } else {
-        out_col <- ems_anova_append_rfc_column(c("SS", "Df", "MS", "Fvalue", "Pvalue", "Type", "imp"), show_rfc)
-        html <- paste(
-          header,
-          "<table><tr><th><b>Use</b></th><th><b>Source</b></th><th><b>SS</b></th><th><b>df</b></th><th><b>MS</b></th><th><b>F</b></th><th><b>p</b></th><th><b>Type(F/R)</b></th><th><b>",
-          withMathJax("$$\\omega^2$$"), " or ICC</b></th>",
-          rfc_th
-        )
-      }
-      
-      # Match monolithic behavior: round once, then paste values into HTML
-      # (monolithic uses `ro <- round.object` from lolcat)
-      aov_out_r <- lolcat::round.object(aov_out_l, R)
-      for (effect_name in display_row_names) {
-        if (effect_name %in% ghost_eff) {
-          eff_esc <- htmltools::htmlEscape(effect_name)
-          eff_cell <- paste0(
-            "<b>", eff_esc,
-            "</b> <span class=\"text-muted\" style=\"font-size:0.78em\">(pooled)</span>"
-          )
-          html <- paste0(
-            html,
-            "<tr style=\"opacity:0.75;background-color:#f8f9fa;\"><td></td><td>", eff_cell, "</td>"
-          )
-          for (j in out_col) {
-            html <- paste(html, "<td></td>")
-          }
-          html <- paste(html, "</tr>")
-          next
-        }
-        i <- match(effect_name, rownames(aov_out_r))
-        if (is.na(i)) next
-        eff_esc <- htmltools::htmlEscape(effect_name)
-        if (effect_name %in% strike_eff) {
-          eff_cell <- paste0(
-            "<span style=\"text-decoration:line-through;opacity:0.82\">", eff_esc,
-            "</span> <span class=\"text-muted\" style=\"font-size:0.78em\">(will pool)</span>"
-          )
-        } else {
-          eff_cell <- paste0("<b>", eff_esc, "</b>")
-        }
-        row_style <- if (effect_name %in% strike_eff) {
-          " style=\"text-decoration:line-through;opacity:0.82;background-color:#f8f9fa;\""
-        } else {
-          ""
-        }
-        html <- paste0(html, "<tr", row_style, "><td>", effect_keep_cell(effect_name), "</td><td>", eff_cell, "</td>")
-        for (j in out_col) {
-          if (rownames(aov_out_r)[i] == "(Intercept)" && (j %in% c("imp", "rfc"))) {
-            html <- paste(html, "<td></td>")
-            next
-          }
-          if (rownames(aov_out_r)[i] %in% c("Residuals", "Residual", "Within Cells") && (j %in% c("Fvalue", "Pvalue", "imp", "rfc"))) {
-            html <- paste(html, "<td></td>")
-            next
-          }
-          if (j == "Pvalue" && (aov_out_r[i, j] == "" || is.na(aov_out_r[i, j]))) {
-            html <- paste(html, "<td></td>")
-            next
-          }
-          if (is.nan(aov_out_r[i, j])) {
-            html <- paste(html, "<td>NaN</td>")
-            next
-          }
-          if (j == "Pvalue" && as.numeric(gsub(pattern = "<", replacement = "", x = aov_out_r[i, j])) < (1 - conf)) {
-            # Use paste0 to avoid inserting a space that can wrap the "*" to a new line
-            html <- paste0(html, "<td bgcolor='yellow'>", aov_out_r[i, j], "*</td>")
-          } else {
-            html <- paste(html, "<td>", aov_out_r[i, j], "</td>")
-          }
-        }
-        html <- paste(html, "</tr>")
-      }
 
-      mod_r2p <- tryCatch(multifactor_worker$aov_model(), error = function(e) NULL)
-      r2_htmlp <- mf_html_r2_line_for_ems_table_model(mod_r2p, R, aov_table = aov_out_for_r2, n_obs = nrow(data))
-      pool_show <- applied_effect_pool_for_did_mode(data_id, disp, current_effect_choices())
+      html <- mf_ems_anova_append_effect_rows_html(
+        html = bundle$table_open,
+        display_row_names = bundle$display_row_names,
+        aov_out_r = bundle$aov_out_r,
+        out_col = bundle$out_col,
+        conf = conf,
+        ghost_eff = bundle$ghost_eff,
+        strike_eff = strike_eff,
+        effect_keep_cell = effect_keep_cell,
+        row_data_html = bundle$row_data_html
+      )
 
+      pool_show <- applied_effect_pool_for_did_mode(data_id, disp, fx_all)
       if (isTRUE(input$ems_show_pool)) {
         pool_txt <- if (length(pool_show) > 0L) paste0(pool_show, collapse = " || ") else "(none)"
-        HTML(paste0(paste(html, "</table>"), r2_htmlp, "<br><br><br><b><u>Pooled Effects</u></b><br><br>", pool_txt))
+        HTML(paste0(paste(html, "</table>"), bundle$r2_html, "<br><br><br><b><u>Pooled Effects</u></b><br><br>", pool_txt))
       } else {
-        HTML(paste0(paste(html, "</table>"), r2_htmlp))
+        HTML(paste0(paste(html, "</table>"), bundle$r2_html))
       }
     })
     shiny::outputOptions(output, "ems_table", suspendWhenHidden = TRUE)

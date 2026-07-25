@@ -490,6 +490,164 @@ anova_table_metric_rows <- function(aov_out_l, residual_row) {
   setdiff(anova_table_effect_rows(aov_out_l, residual_row), "(Intercept)")
 }
 
+#' Residual/error row label for multifactor ANOVA display tables.
+anova_table_residual_row_name <- function(aov_out_l, prefer_within_cells = FALSE) {
+  rn <- rownames(aov_out_l)
+  if (is.null(rn) || length(rn) < 1L) {
+    return("Residual")
+  }
+  if (isTRUE(prefer_within_cells) && "Within Cells" %in% rn) {
+    return("Within Cells")
+  }
+  if ("Residuals" %in% rn) {
+    return("Residuals")
+  }
+  if ("Residual" %in% rn) {
+    return("Residual")
+  }
+  if ("Within Cells" %in% rn) {
+    return("Within Cells")
+  }
+  rn[[length(rn)]]
+}
+
+#' Standardized key for matching pool selections to ANOVA row names.
+anova_effect_pool_key <- function(effect_name) {
+  nm <- as.character(effect_name)
+  if (length(nm) < 1L || !nzchar(nm[[1L]])) return("")
+  if (exists("standardize_interaction", mode = "function")) {
+    return(standardize_interaction(nm[[1L]]))
+  }
+  nm[[1L]]
+}
+
+#' Map pool effect ids to names appearing in an ANOVA table (tolerant of spelling).
+match_pool_vars_to_anova_rownames <- function(pool_vars, aov_rownames) {
+  pool_vars <- as.character(pool_vars)
+  pool_vars <- pool_vars[!is.na(pool_vars) & nzchar(pool_vars)]
+  if (length(pool_vars) < 1L) return(character(0))
+  rn <- as.character(aov_rownames)
+  rn <- rn[!is.na(rn) & nzchar(rn)]
+  if (length(rn) < 1L) return(character(0))
+  res_nm <- c("Residuals", "Residual", "Within Cells", "(Intercept)")
+  rn_eff <- setdiff(rn, res_nm)
+  if (length(rn_eff) < 1L) return(character(0))
+  out <- character(0)
+  for (pv in pool_vars) {
+    if (pv %in% rn) {
+      out <- c(out, pv)
+      next
+    }
+    pk <- anova_effect_pool_key(pv)
+    if (!nzchar(pk)) next
+    hits <- rn_eff[vapply(
+      rn_eff,
+      function(te) identical(anova_effect_pool_key(te), pk),
+      logical(1)
+    )]
+    if (length(hits) >= 1L) {
+      out <- c(out, hits[[1L]])
+    }
+  }
+  unique(intersect(out, rn))
+}
+
+#' Append Type, imp, and optional %RFC columns for EMS ANOVA table display.
+#' @param build_eff_types_fn function(metric_rows) -> data.frame with columns type, type_code
+#' @keywords internal
+mf_ems_anova_augment_importance_columns <- function(
+    aov_out_l,
+    data,
+    conf,
+    R,
+    show_rfc,
+    residual_row,
+    build_eff_types_fn,
+    ro_fun = ro,
+    placeholder = FALSE) {
+  if (isTRUE(placeholder)) {
+    aov_out_l$Type <- c(rep("F", max(nrow(aov_out_l) - 1L, 0L)), "R")
+    aov_out_l$imp <- rep("", nrow(aov_out_l))
+    return(list(aov_out = aov_out_l, aov_out_for_r2 = aov_out_l, residual_row = residual_row))
+  }
+
+  msw <- aov_out_l[residual_row, "MS"]
+  omega <- anova_table_omega_squared_values(aov_out_l, residual_row)
+  effect_rows <- anova_table_effect_rows(aov_out_l, residual_row)
+  metric_rows <- anova_table_metric_rows(aov_out_l, residual_row)
+
+  msb <- aov_out_l$MS[metric_rows]
+  J <- rep(NA_real_, length(metric_rows))
+  sum_n <- rep(NA_real_, length(metric_rows))
+  sum_nsq <- rep(NA_real_, length(metric_rows))
+  for (i in seq_along(metric_rows)) {
+    combo <- c(str_split(metric_rows[i], ":", simplify = TRUE))
+    combo <- gsub("\\([^)]+\\)", "", x = combo)
+    combo <- trimws(combo)
+    combo <- combo[combo != ""]
+    if (length(combo) == 0) next
+
+    test <- try(nrow(unique(data[combo])), silent = TRUE)
+    if (inherits(test, "try-error")) {
+      J[i] <- 0
+      sum_n[i] <- 0
+      sum_nsq[i] <- 0
+      next
+    }
+
+    J[i] <- nrow(unique(data[combo]))
+    counts <- data %>% count(across(all_of(combo)))
+    sum_n[i] <- sum(counts$n)
+    sum_nsq[i] <- sum(counts$n^2)
+  }
+  K_prime <- (1 / (J - 1)) * (sum_n - (sum_nsq / sum_n))
+  bcv <- (msb - msw) / K_prime
+  ICC <- c(100 * bcv / (bcv + msw))
+  names(ICC) <- metric_rows
+
+  effects_f_r <- build_eff_types_fn(metric_rows)
+  if (is.null(effects_f_r) || nrow(effects_f_r) < 1L) {
+    effects_f_r <- data.frame(
+      effect = metric_rows,
+      type = rep("F", length(metric_rows)),
+      type_code = rep(1L, length(metric_rows)),
+      stringsAsFactors = FALSE,
+      row.names = metric_rows
+    )
+  }
+  type_before <- rep("F", length(effect_rows))
+  names(type_before) <- effect_rows
+  type_before[metric_rows] <- effects_f_r$type
+  imp_before <- rep(NA_real_, length(effect_rows))
+  names(imp_before) <- effect_rows
+  imp_before[metric_rows] <- ifelse(effects_f_r$type_code == 1L, omega[metric_rows], ICC)
+
+  pvals <- anova_pvalue_numeric(aov_out_l$Pvalue)
+  names(pvals) <- rownames(aov_out_l)
+  for (nm in metric_rows) {
+    if (!is.na(pvals[nm]) && pvals[nm] >= (1 - conf)) {
+      imp_before[nm] <- 0
+    }
+  }
+  imp_before[imp_before < 0] <- 0
+  imp_before[is.na(imp_before)] <- 0
+  imp_fmt <- rep("", length(effect_rows))
+  names(imp_fmt) <- effect_rows
+  imp_fmt[metric_rows] <- paste0(as.character(ro_fun(as.numeric(imp_before[metric_rows]), R)), "%")
+
+  aov_out_l$Type <- c(type_before, "R")
+  aov_out_l$imp <- c(imp_fmt, "")
+
+  if (isTRUE(show_rfc)) {
+    rfc_numeric <- compute_percent_rfc(aov_out_l, effects_f_r, conf, residual_rows = residual_row)
+    aov_out_l$rfc <- format_anova_rfc_column(rfc_numeric, R, ro_fun = ro_fun)
+  }
+
+  aov_out_for_r2 <- aov_out_l
+  aov_out_l <- anova_table_strip_intercept_for_display(aov_out_l)
+  list(aov_out = aov_out_l, aov_out_for_r2 = aov_out_for_r2, residual_row = residual_row)
+}
+
 #' Remove the intercept row from an ANOVA source table for UI display.
 #' R² and other totals should be computed from the table *before* calling this.
 anova_table_strip_intercept_for_display <- function(aov_table) {
@@ -1213,6 +1371,103 @@ multifactor_model_factor_names <- function(model) {
   unique(unlist(strsplit(labels, ":", fixed = TRUE)))
 }
 
+#' Default emmeans reference-grid row limit (see ?ref_grid).
+multifactor_emmeans_rg_limit <- function() {
+  default_limit <- 10000L
+  if (!requireNamespace("emmeans", quietly = TRUE)) {
+    return(default_limit)
+  }
+  opts <- tryCatch(emmeans::emm_options(), error = function(e) list())
+  lim <- opts$rg.limit
+  if (is.numeric(lim) && length(lim) == 1L && is.finite(lim) && lim > 0) {
+    return(as.integer(lim))
+  }
+  default_limit
+}
+
+#' Row count for the full factorial grid of model factor levels.
+multifactor_emmeans_grid_nrows <- function(model, factor_names = NULL) {
+  if (is.null(model)) {
+    return(0L)
+  }
+  if (is.null(factor_names)) {
+    factor_names <- multifactor_model_factor_names(model)
+  }
+  if (length(factor_names) == 0L) {
+    return(0L)
+  }
+  xlev <- model$xlevels
+  if (is.null(xlev)) {
+    return(0L)
+  }
+  fns <- intersect(factor_names, names(xlev))
+  if (length(fns) == 0L) {
+    return(0L)
+  }
+  as.integer(prod(vapply(fns, function(f) length(xlev[[f]]), integer(1L))))
+}
+
+#' Full factorial grid over \code{model$xlevels} for the given factors.
+multifactor_factor_level_grid <- function(model, factor_names) {
+  if (is.null(model) || length(factor_names) == 0L) {
+    return(data.frame())
+  }
+  xlev <- model$xlevels
+  if (is.null(xlev)) {
+    return(data.frame())
+  }
+  fns <- intersect(factor_names, names(xlev))
+  if (length(fns) == 0L) {
+    return(data.frame())
+  }
+  grid <- do.call(expand.grid, c(xlev[fns], stringsAsFactors = FALSE))
+  colnames(grid) <- fns
+  grid
+}
+
+#' Factorize grid columns with sum-to-zero contrasts (matches reduced-model lm fit).
+multifactor_prepare_model_newdata <- function(model, grid, factor_names) {
+  nd <- as.data.frame(grid[, factor_names, drop = FALSE], stringsAsFactors = FALSE)
+  for (v in factor_names) {
+    xl <- model$xlevels[[v]]
+    lv <- unique(c(xl, as.character(nd[[v]])))
+    nd[[v]] <- factor(as.character(nd[[v]]), levels = lv)
+    stats::contrasts(nd[[v]]) <- stats::contr.sum
+  }
+  nd
+}
+
+#' \code{predict()} on contrast-prepared newdata.
+multifactor_predict_on_prepared_newdata <- function(model, newdata) {
+  suppressWarnings(as.numeric(stats::predict(model, newdata = newdata)))
+}
+
+#' Joint cell predictions on the full factor-level grid via \code{predict()}.
+multifactor_predict_on_factor_grid <- function(model, factor_names = NULL) {
+  if (is.null(model)) {
+    return(data.frame())
+  }
+  if (is.null(factor_names)) {
+    factor_names <- multifactor_model_factor_names(model)
+  }
+  if (length(factor_names) == 0L) {
+    return(data.frame())
+  }
+  fns <- intersect(factor_names, names(model$xlevels))
+  if (length(fns) == 0L) {
+    return(data.frame())
+  }
+  grid <- multifactor_factor_level_grid(model, fns)
+  if (nrow(grid) == 0L) {
+    return(data.frame())
+  }
+  nd <- multifactor_prepare_model_newdata(model, grid, fns)
+  preds <- multifactor_predict_on_prepared_newdata(model, nd)
+  out <- as.data.frame(grid, stringsAsFactors = FALSE)
+  out$emmean <- preds
+  out
+}
+
 #' emmeans specs formula for the full factorial grid of model factors.
 multifactor_emmeans_specs <- function(model) {
   fns <- multifactor_model_factor_names(model)
@@ -1222,13 +1477,152 @@ multifactor_emmeans_specs <- function(model) {
   stats::as.formula(paste("~", paste(fns, collapse = " * ")))
 }
 
-multifactor_emmeans_summary <- function(model) {
+#' Cell-level EMM grid (emmeans or predict fallback).
+multifactor_emmeans_cell_grid <- function(model) {
   specs <- multifactor_emmeans_specs(model)
   if (is.null(specs)) {
     return(data.frame())
   }
-  df <- as.data.frame(summary(emmeans::emmeans(object = model, specs = specs)), stringsAsFactors = FALSE)
-  df
+  fns <- multifactor_model_factor_names(model)
+  if (multifactor_emmeans_grid_nrows(model, fns) > multifactor_emmeans_rg_limit()) {
+    return(multifactor_predict_on_factor_grid(model, fns))
+  }
+  tryCatch(
+    as.data.frame(summary(emmeans::emmeans(object = model, specs = specs)), stringsAsFactors = FALSE),
+    error = function(e) multifactor_predict_on_factor_grid(model, fns)
+  )
+}
+
+#' TRUE when the model factor-level grid exceeds emmeans \code{rg.limit}.
+multifactor_emmeans_grid_exceeds_limit <- function(model) {
+  fns <- multifactor_model_factor_names(model)
+  multifactor_emmeans_grid_nrows(model, fns) > multifactor_emmeans_rg_limit()
+}
+
+#' Average cell predictions over factors not listed in \code{by_factors}.
+multifactor_marginal_emmeans <- function(model, by_factors) {
+  cell_df <- multifactor_emmeans_cell_grid(model)
+  if (nrow(cell_df) == 0L || !("emmean" %in% names(cell_df))) {
+    return(data.frame())
+  }
+  by_factors <- intersect(as.character(by_factors), names(cell_df))
+  by_factors <- setdiff(by_factors, "emmean")
+  if (length(by_factors) == 0L) {
+    return(data.frame(emmean = mean(cell_df$emmean, na.rm = TRUE)))
+  }
+  for (f in by_factors) {
+    if (f %in% names(model$xlevels)) {
+      cell_df[[f]] <- factor(as.character(cell_df[[f]]), levels = model$xlevels[[f]])
+    }
+  }
+  stats::aggregate(
+    emmean ~ .,
+    data = cell_df[, c(by_factors, "emmean"), drop = FALSE],
+    FUN = mean,
+    na.rm = TRUE
+  )
+}
+
+#' Parse an emmeans / emmip RHS string.
+multifactor_parse_emmeans_rhs <- function(rhs) {
+  rhs <- trimws(as.character(rhs))
+  if (grepl("|", rhs, fixed = TRUE)) {
+    parts <- strsplit(rhs, "|", fixed = TRUE)[[1L]]
+    left <- trimws(sub("^~\\s*", "", parts[[1L]]))
+    right <- trimws(parts[[2L]])
+    child <- trimws(strsplit(left, "+", fixed = TRUE)[[1L]])
+    parents <- trimws(strsplit(right, "+", fixed = TRUE)[[1L]])
+    return(list(type = "nested", child = child, parents = parents))
+  }
+  if (grepl("~", rhs) && !grepl("^~", rhs)) {
+    parts <- strsplit(rhs, "~", fixed = TRUE)[[1L]]
+    trace <- trimws(strsplit(parts[[1L]], "+", fixed = TRUE)[[1L]])
+    x <- trimws(strsplit(trimws(parts[[2L]]), "+", fixed = TRUE)[[1L]])
+    return(list(type = "interaction", trace = trace, x = x))
+  }
+  vars <- trimws(strsplit(sub("^~\\s*", "", rhs), "+", fixed = TRUE)[[1L]])
+  list(type = "main", vars = vars)
+}
+
+#' Normalize emmip RHS to a character formula string.
+multifactor_emmeans_rhs_as_string <- function(rhs) {
+  if (inherits(rhs, "formula")) {
+    return(trimws(paste(deparse(rhs, width.cutoff = 500L), collapse = " ")))
+  }
+  trimws(as.character(rhs))
+}
+
+#' Predict-based \code{emmip} replacement for large reference grids.
+multifactor_emmip_ggplot_predict <- function(model, rhs) {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("ggplot2 is required for predict-based EMM plots.", call. = FALSE)
+  }
+  parsed <- multifactor_parse_emmeans_rhs(rhs)
+  if (identical(parsed$type, "main")) {
+    var <- parsed$vars[[1L]]
+    df <- multifactor_marginal_emmeans(model, var)
+    df[[var]] <- factor(as.character(df[[var]]), levels = model$xlevels[[var]])
+    p <- ggplot2::ggplot(df, ggplot2::aes(x = .data[[var]], y = .data$emmean, group = 1)) +
+      ggplot2::geom_line() +
+      ggplot2::geom_point()
+    p$data <- df
+    return(p)
+  }
+  if (identical(parsed$type, "interaction")) {
+    trace <- parsed$trace[[1L]]
+    xvar <- parsed$x[[1L]]
+    df <- multifactor_marginal_emmeans(model, c(trace, xvar))
+    df[[trace]] <- factor(as.character(df[[trace]]), levels = model$xlevels[[trace]])
+    df[[xvar]] <- factor(as.character(df[[xvar]]), levels = model$xlevels[[xvar]])
+    p <- ggplot2::ggplot(
+      df,
+      ggplot2::aes(
+        x = .data[[xvar]],
+        y = .data$emmean,
+        color = .data[[trace]],
+        group = .data[[trace]]
+      )
+    ) +
+      ggplot2::geom_line() +
+      ggplot2::geom_point()
+    p$data <- df
+    return(p)
+  }
+  child <- parsed$child[[1L]]
+  parents <- parsed$parents
+  df <- multifactor_marginal_emmeans(model, c(child, parents))
+  df[[child]] <- factor(as.character(df[[child]]), levels = model$xlevels[[child]])
+  for (p in parents) {
+    df[[p]] <- factor(as.character(df[[p]]), levels = model$xlevels[[p]])
+  }
+  facet_formula <- stats::reformulate(parents)
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = .data[[child]], y = .data$emmean, group = 1)) +
+    ggplot2::geom_line() +
+    ggplot2::geom_point() +
+    ggplot2::facet_grid(facet_formula)
+  p$data <- df
+  p
+}
+
+#' \code{emmip} with predict fallback when the reference grid is too large.
+multifactor_emmip_ggplot <- function(model, rhs) {
+  rhs <- multifactor_emmeans_rhs_as_string(rhs)
+  use_emmeans <- !multifactor_emmeans_grid_exceeds_limit(model) &&
+    requireNamespace("emmeans", quietly = TRUE)
+  if (use_emmeans) {
+    out <- tryCatch(
+      emmeans::emmip(model, stats::as.formula(rhs), engine = "ggplot"),
+      error = function(e) NULL
+    )
+    if (!is.null(out)) {
+      return(out)
+    }
+  }
+  multifactor_emmip_ggplot_predict(model, rhs)
+}
+
+multifactor_emmeans_summary <- function(model) {
+  multifactor_emmeans_cell_grid(model)
 }
 
 multifactor_drop_emm_interval_cols <- function(df) {

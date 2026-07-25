@@ -8,7 +8,7 @@ Electron-wrapped R Shiny statistical analysis application for Apple Silicon Macs
 
 This repository packages Steve's stats4ROI application as a standalone Electron app for **Apple Silicon Macs** (M1/M2/M3/M4). The R Shiny application code is entirely Steve's work — we simply wrapped it in Electron for easy distribution.
 
-**Version:** 4.2.1 (UI displays "stats4ROI v4.2")
+**Version:** 4.3.0 (UI displays "stats4ROI v4.3")
 **Upstream:** [professorperegrine/stats4ROI](https://github.com/ProfessorPeregrine/stats4ROI)
 
 ## Features
@@ -16,7 +16,12 @@ This repository packages Steve's stats4ROI application as a standalone Electron 
 - **Distributions:** Binomial, Normal, Poisson, Hypergeometric, Geometric, Exponential, Weibull, F Distribution
 - **Statistical Analysis:** EDA, ANOVA (incl. Taguchi loss optimization), Crosstabs, Correlation/Association
 - **Design of Experiments:** DOE with Orthogonal Arrays (L4–L64)
-- **Quality Tools:** SPC (Statistical Process Control), MSA (Measurement System Analysis)
+- **Quality Tools:** SPC — variables/attributes charts, CUSUM, EWMA, Process Performance
+  Analysis, capability and distribution fitting; MSA (Measurement System Analysis)
+- **Reliability:** Reliability Calculator (series-of-parallels), Growth Analysis
+  (Crow-AMSAA), Weibull life-data analysis
+- **Time Series:** Autocorrelation analysis (ACF/PACF)
+- **Nonparametrics:** Runs tests, sign test, Wilcoxon
 - **Learning Simulators:** CLT, Power, and ANOVA teaching demos
 - **Data Tools:** Import, filtering, variable transformation
 - **Sample Size/Power** calculations
@@ -79,7 +84,7 @@ stats4roi-electron/
 ├── stats4roi/              # Electron application
 │   ├── shiny/              # R Shiny app (modular architecture)
 │   │   ├── app.R           # Entry point
-│   │   └── modules/        # 85 R module files
+│   │   └── modules/        # 169 R module files
 │   ├── src/                # Electron source
 │   ├── r-mac/              # Bundled R runtime (not in repo)
 │   └── package.json        # Electron config

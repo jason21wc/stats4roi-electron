@@ -96,10 +96,12 @@ choice_np_alt_text <- c(
   "M\U2081 is not equal to M\U2082", "M\U2081 is less than M\U2082", "M\U2081 of sample is greater than M\U2082",
   "x\U2099 - y\U2099 is not equal to 0", "x\U2099 - y\U2099 is less than 0", "x\U2099 - y\U2099 is greater than 0",
   "x\U2099 - y\U2099 is not equal to 0", "x\U2099 - y\U2099 is less than 0", "x\U2099 - y\U2099 is greater than 0",
-  "Pass\U2081 Fail\U2082 is not equal to Fail\U2081 Pass\U2082", "Pass\U2081 Fail\U2082 is less than Fail\U2081 Pass\U2082", "Pass\U2081 Fail\U2082 is greater than Fail\U2081 Pass\U2082"
+  "Pass\U2081 Fail\U2082 is not equal to Fail\U2081 Pass\U2082", "Pass\U2081 Fail\U2082 is less than Fail\U2081 Pass\U2082", "Pass\U2081 Fail\U2082 is greater than Fail\U2081 Pass\U2082",
+  "Sequence is not random", "Too few runs (clustering)", "Too many runs (oscillation)"
 )
 
 source("modules/statistical/one_two_sample_tests/ots_group_utils.R")
+source("modules/statistical/one_two_sample_tests/utils/runs_test.R")
 
 # Source sub-module UI components - Adding back step by step
 source("modules/statistical/one_two_sample_tests/ui/test_reference_ui.R")
@@ -3587,7 +3589,9 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           data_choice_g2_np = input$data_choice_g2_np,
           np_data_UI2 = input$np_data_UI2,
           np_mc_pass = input$np_mc_pass,
-          np_data_u_go = input$np_data_u_go
+          np_data_u_go = input$np_data_u_go,
+          np_runs_cut_method = input$np_runs_cut_method,
+          np_runs_cut_value = input$np_runs_cut_value
         )
       })
     )
@@ -3601,8 +3605,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(one_or_two_np)
       
       if (one_or_two_np == 1) {
-        np_test_choice <- c(1, 2)
-        names(np_test_choice) <- c("Sign Test for Location", "Wilcoxon Test for Location")
+        np_test_choice <- c(1, 2, 8)
+        names(np_test_choice) <- c("Sign Test for Location", "Wilcoxon Test for Location", "Runs Test for Randomness")
       } else if (one_or_two_np == 2) {
         np_test_choice <- c(3, 4)
         names(np_test_choice) <- c("Wilcoxon-Mann-Whitney U", "Two-Sample Median")
@@ -3643,6 +3647,9 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       } else if (np_tests == 7) {
         title <- "McNemar's Test of Change"
         text_out <- HTML("McNemar's Test of Change is used on paired dichotomous data. It is commonly used to determine if there is a difference is caused by some treatment. The same units are classified before the intervention, then afterward. The test only concerns the two cells P1F2 and F1P2 and is a binomial test to determine of the probability of these events has changed. If the probabilities are significantly different, the conclusion is that the treatment has caused a some change, for good or bad. </br></br>For more information see <a href='https://en.wikipedia.org/wiki/McNemar%27s_test'>Wikipedia</a>")
+      } else if (np_tests == 8) {
+        title <- "Runs Test for Randomness"
+        text_out <- HTML("The Wald–Wolfowitz runs test assesses whether a two-valued sequence is produced randomly (elements mutually independent given the counts of each type). A numeric series is dichotomized about a cut point (median, mean, or a custom value in Use Data); values equal to the cut are omitted. Too few runs suggest clustering; too many suggest oscillation. Exact Swed–Eisenhart p-values and critical values are used when either count is ≤ 10; otherwise the NIST normal approximation for the number of runs is used (no continuity correction).</br></br>For more information see <a href='https://www.itl.nist.gov/div898/handbook/eda/section3/eda35d.htm'>NIST</a> and <a href='https://en.wikipedia.org/wiki/Wald%E2%80%93Wolfowitz_runs_test'>Wikipedia</a>")
       }
       
       sendSweetAlert(session = session, title = title, text = text_out, html = TRUE, 
@@ -3679,6 +3686,9 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       } else if (np_tests_data == 7) {
         title <- "McNemar's Test of Change"
         text_out <- HTML("McNemar's Test of Change is used on paired dichotomous data. It is commonly used to determine if there is a difference is caused by some treatment. The same units are classified before the intervention, then afterward. The test only concerns the two cells P1F2 and F1P2 and is a binomial test to determine of the probability of these events has changed. If the probabilities are significantly different, the conclusion is that the treatment has caused a some change, for good or bad. </br></br>For more information see <a href='https://en.wikipedia.org/wiki/McNemar%27s_test'>Wikipedia</a>")
+      } else if (np_tests_data == 8) {
+        title <- "Runs Test for Randomness"
+        text_out <- HTML("The Wald–Wolfowitz runs test assesses whether a two-valued sequence is produced randomly (elements mutually independent given the counts of each type). Values above the cut are coded +, below are coded −, and values equal to the cut are omitted. <b>Row order is the sequence order</b> — reordering the data changes the test. Choose the cut as the median, mean, or a custom number. Exact inference is used when either side has ≤ 10 observations; otherwise the NIST normal approximation is used.</br></br>For more information see <a href='https://www.itl.nist.gov/div898/handbook/eda/section3/eda35d.htm'>NIST</a> and <a href='https://en.wikipedia.org/wiki/Wald%E2%80%93Wolfowitz_runs_test'>Wikipedia</a>")
       }
       
       sendSweetAlert(session = session, title = title, text = text_out, html = TRUE, 
@@ -3719,6 +3729,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         numericInput(inputId = ns("npUI1"), label = withMathJax("$S^{+}:{ }$"), value = 27, min = 0, step = 1, width = "150px")
       } else if (np_tests == 7) {
         HTML("<p style='text-align:center'><b>Pass 2</b></p>")
+      } else if (np_tests == 8) {
+        numericInput(inputId = ns("npUI1"), label = withMathJax("$n_{+}:{ }$"), value = 13, min = 0, step = 1, width = "150px")
       }
     })
     
@@ -3738,6 +3750,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         NULL
       } else if (np_tests == 7) {
         HTML("<p style='text-align:center'><b>Fail 2</b></p>")
+      } else if (np_tests == 8) {
+        numericInput(inputId = ns("npUI2"), label = withMathJax("$n_{-}:{ }$"), value = 8, min = 0, step = 1, width = "150px")
       }
     })
     
@@ -3759,6 +3773,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         numericInput(inputId = ns("npUI3"), label = withMathJax("$S^{-}:{ }$"), value = 18, min = 0, step = 1, width = "150px")
       } else if (np_tests == 7) {
         numericInput(inputId = ns("npUI3"), label = "Pass 1", value = 56, min = 0, step = 1, width = "150px")
+      } else if (np_tests == 8) {
+        numericInput(inputId = ns("npUI3"), label = withMathJax("$R:{ }$"), value = 6, min = 2, step = 1, width = "150px")
       }
     })
     
@@ -4112,6 +4128,60 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "</table>"
         ))
       }
+      # Test 8: Runs test for randomness
+      else if (np_tests == 8) {
+        is_exact <- identical(resultsR$inference_mode, "exact")
+        crit_row <- if (is_exact) {
+          c(
+            "<tr>",
+            "<td>", paste(withMathJax("$R_{L} = $"), resultsR$estimate[["critical.lower"]]), "</td>",
+            "<td>", "</td>",
+            "<td>", paste(withMathJax("$R_{U} = $"), resultsR$estimate[["critical.upper"]]), "</td>",
+            "</tr>"
+          )
+        } else {
+          character(0)
+        }
+        stat_label <- if (is_exact) {
+          paste(withMathJax("$R = $"), resultsR$estimate[["runs"]])
+        } else {
+          paste(withMathJax("$Z = $"), resultsR$estimate[["Z"]])
+        }
+        HTML(c(
+          paste("<b>Runs Test for Randomness</b><br>", "<b>", "Method: ", resultsR$method, "</b>"),
+          "<br><br>",
+          "<table>",
+          "<tr>",
+          "<td>", paste(withMathJax("$n_{+} = $"), resultsR$estimate[["n1"]]), "</td>",
+          "<td>", "</td>",
+          "<td>", paste(withMathJax("$n_{-} = $"), resultsR$estimate[["n2"]]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste(withMathJax("$R = $"), resultsR$estimate[["runs"]]), "</td>",
+          "<td>", "</td>",
+          "<td>", paste(withMathJax("$\\bar{R} = $"), resultsR$estimate[["expected.runs"]]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste(withMathJax("$s_{R} = $"), resultsR$estimate[["sd.runs"]]), "</td>",
+          "<td>", "</td>",
+          "<td>", paste(withMathJax("$Z = $"), resultsR$estimate[["Z"]], if (is_exact) " (large-sample approx.)"), "</td>",
+          "</tr>",
+          crit_row,
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste(conf * 100, "% confidence; inference: ", resultsR$inference_mode), "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("Test for ", choice_np_alt_text[3 * (as.numeric(np_tests) - 1) + alt_num], ": "), "</td>",
+          "<td>", stat_label, "</td>",
+          "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
+          "</tr>",
+          "</table>"
+        ))
+      }
     })
     
     # =========================================================================
@@ -4152,33 +4222,10 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       data <- filtered_data()
       req(data, input$data_type_np)
       np_tests <- input$np_tests_data
-      two_sample_np <- !is.null(np_tests) && np_tests %in% c(3L, 4L, 5L, 6L, 7L)
-      two_col <- if (as.integer(input$data_type_np)[1L] == 1L) {
-        if (two_sample_np) {
-          ots_column_mode_ready(
-            col_g1 = input$np_data_col_g1,
-            col_g2 = input$np_data_col_g2,
-            two_sample = TRUE
-          )
-        } else {
-          ots_column_mode_ready(col_g1 = input$np_data_col_g1, two_sample = FALSE)
-        }
-      } else if (two_sample_np) {
-        ots_reference_mode_ready(
-          input$data_choice_ref_np,
-          input$data_choice_data_np,
-          input$data_choice_g1_np,
-          input$data_choice_g2_np,
-          two_sample = TRUE
-        )
-      } else {
-        ots_reference_mode_ready(
-          input$data_choice_ref_np,
-          input$data_choice_data_np,
-          input$data_choice_g1_np,
-          two_sample = FALSE
-        )
-      }
+      # Semantic one- vs two-sample flag (not input-readiness). Passing readiness
+      # as two_sample made one-column Sign/Wilcoxon resolve as two-sample and
+      # return NULL when Group 2 was blank — blank results despite valid calc.
+      two_sample_np <- !is.null(np_tests) && as.integer(np_tests)[1L] %in% c(3L, 4L, 5L, 6L, 7L)
       ots_groups_from_inputs(
         data,
         mode = input$data_type_np,
@@ -4188,7 +4235,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         data_col = input$data_choice_data_np,
         level_g1 = input$data_choice_g1_np,
         level_g2 = input$data_choice_g2_np,
-        two_sample = two_col
+        two_sample = two_sample_np
       )
     })
     
@@ -4228,8 +4275,8 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       req(type, num_selected_columns)
       
       if (num_selected_columns == 1 && type == 1) {
-        np_test_choice <- c(1, 2)
-        names(np_test_choice) <- c("Sign Test for Location", "Wilcoxon Test for Location")
+        np_test_choice <- c(1, 2, 8)
+        names(np_test_choice) <- c("Sign Test for Location", "Wilcoxon Test for Location", "Runs Test for Randomness")
       } else if (num_selected_columns == 2 || type == 2) {
         req(dep_or_indep)
         if (dep_or_indep == 1) {
@@ -4373,6 +4420,30 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         med <- median(na.omit(groups$g1$x))
         if (!is.null(R)) med <- ro(med, R)
         ots_stat_value_html("\\widetilde{X}", groups$g1, med)
+      } else if (np_tests == 8L) {
+        req(groups, groups$g1)
+        cut_method <- input$np_runs_cut_method
+        cut_value <- input$np_runs_cut_value
+        if (is.null(cut_method)) cut_method <- "median"
+        x1 <- na.omit(groups$g1$x)
+        req(length(x1) > 0, is.numeric(x1))
+        cut <- tryCatch(
+          resolve_runs_cutpoint(x1, cut_method = as.character(cut_method)[1L], cut_value = cut_value),
+          error = function(e) NA_real_
+        )
+        dich <- tryCatch(dichotomize_for_runs(x1, cut), error = function(e) NULL)
+        if (is.null(dich)) {
+          HTML("<p class='help-block'>Need observations on both sides of the cut.</p>")
+        } else {
+          n1_disp <- dich$n1
+          if (!is.null(R)) {
+            cut <- ro(cut, R)
+          }
+          tagList(
+            HTML(paste0(withMathJax("$n_{+} = $"), n1_disp)),
+            HTML(paste0("<br/>", withMathJax("$\\mathrm{cut} = $"), cut))
+          )
+        }
       } else if (np_tests %in% c(3L, 4L)) {
         req(groups, groups$g1)
         med <- median(na.omit(groups$g1$x))
@@ -4437,6 +4508,29 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           step = 1,
           width = "150px"
         )
+      } else if (np_tests == 8L) {
+        tagList(
+          radioButtons(
+            inputId = ns("np_runs_cut_method"),
+            label = "Cut point",
+            choices = c("Median" = "median", "Mean" = "mean", "Custom" = "custom"),
+            selected = "median"
+          ),
+          conditionalPanel(
+            condition = paste0("input['", ns("np_runs_cut_method"), "'] == 'custom'"),
+            numericInput(
+              inputId = ns("np_runs_cut_value"),
+              label = "Custom cut value",
+              value = 0,
+              width = "150px"
+            )
+          ),
+          tags$p(
+            class = "help-block text-muted",
+            style = "font-size: 0.85em;",
+            "Values equal to the cut are omitted. Row order is the sequence order."
+          )
+        )
       } else if (np_tests %in% c(3L, 4L)) {
         req(groups, groups$g2)
         med <- median(na.omit(groups$g2$x))
@@ -4476,6 +4570,28 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       if (np_tests %in% c(1L, 2L)) {
         req(groups, groups$g1)
         ots_n_sub_html(group = groups$g1, value = length(na.omit(groups$g1$x)))
+      } else if (np_tests == 8L) {
+        req(groups, groups$g1)
+        cut_method <- input$np_runs_cut_method
+        cut_value <- input$np_runs_cut_value
+        if (is.null(cut_method)) cut_method <- "median"
+        x1 <- na.omit(groups$g1$x)
+        req(length(x1) > 0, is.numeric(x1))
+        cut <- tryCatch(
+          resolve_runs_cutpoint(x1, cut_method = as.character(cut_method)[1L], cut_value = cut_value),
+          error = function(e) NA_real_
+        )
+        dich <- tryCatch(dichotomize_for_runs(x1, cut), error = function(e) NULL)
+        if (is.null(dich)) {
+          NULL
+        } else {
+          R_obs <- count_runs(dich$signs)
+          HTML(paste0(
+            withMathJax("$n_{-} = $"), dich$n2, "<br/>",
+            withMathJax("$n_{=} = $"), dich$n.equal, " (omitted)<br/>",
+            withMathJax("$R = $"), R_obs
+          ))
+        }
       } else if (np_tests %in% c(3L, 4L)) {
         req(groups, groups$g1)
         ots_n_sub_html(group = groups$g1, value = length(na.omit(groups$g1$x)))
@@ -4654,6 +4770,110 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "</table>"
         )), ns("np_data_mj")))
       }
+      # Test 2: One-sample Wilcoxon signed ranks test
+      else if (np_tests == 2) {
+        req(np_groups, np_groups$g1)
+        req(resultsR$method, resultsR$estimate, resultsR$statistic, resultsR$p.value)
+        len <- length(na.omit(np_groups$g1$x))
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
+          paste("<b>", "Method: ", resultsR$method, "</b>"),
+          "<br><br>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("$S^{+} =$", resultsR$estimate[1]), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$S^{-} =$", resultsR$estimate[2]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", ots_mj_paste_stat("n", np_groups$g1, len), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$n_{Adj.} =$", resultsR$estimate[3]), "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste(conf * 100, "% confidence"), "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("Test for ", choice_np_alt_text[3 * (as.numeric(np_tests) - 1) + alt_num], ": "), "</td>",
+          "<td>", paste("W = ", resultsR$statistic), "</td>",
+          "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
+          "</tr>",
+          "</table>"
+        )), ns("np_data_mj")))
+      }
+      # Test 8: Runs test for randomness
+      else if (np_tests == 8) {
+        req(resultsR$method, resultsR$estimate, resultsR$p.value, resultsR$inference_mode)
+        req(np_groups, np_groups$g1)
+        is_exact <- identical(resultsR$inference_mode, "exact")
+        cut_method_label <- if (!is.null(resultsR$cut_method)) resultsR$cut_method else input$np_runs_cut_method
+        cut_val <- resultsR$estimate[["cut"]]
+        n_eq <- resultsR$estimate[["n.equal"]]
+        crit_row <- if (is_exact) {
+          c(
+            "<tr>",
+            "<td>", paste("$R_{L} =$", resultsR$estimate[["critical.lower"]]), "</td>",
+            "<td>", "</td>",
+            "<td>", paste("$R_{U} =$", resultsR$estimate[["critical.upper"]]), "</td>",
+            "</tr>"
+          )
+        } else {
+          character(0)
+        }
+        stat_label <- if (is_exact) {
+          paste("$R =$", resultsR$estimate[["runs"]])
+        } else {
+          paste("$Z =$", resultsR$estimate[["Z"]])
+        }
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
+          paste("<b>Runs Test for Randomness</b><br>", "<b>", "Method: ", resultsR$method, "</b>"),
+          "<br><br>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("Cut method:", cut_method_label), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$\\mathrm{cut} =$", cut_val), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$n_{+} =$", resultsR$estimate[["n1"]]), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$n_{-} =$", resultsR$estimate[["n2"]]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$n_{=} =$", n_eq, "(omitted)"), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$R =$", resultsR$estimate[["runs"]]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$\\bar{R} =$", resultsR$estimate[["expected.runs"]]), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$s_{R} =$", resultsR$estimate[["sd.runs"]]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$Z =$", resultsR$estimate[["Z"]], if (is_exact) "(large-sample approx.)"), "</td>",
+          "</tr>",
+          crit_row,
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste(conf * 100, "% confidence; inference: ", resultsR$inference_mode), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", "Note: row order is the sequence order.", "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("Test for ", choice_np_alt_text[3 * (as.numeric(np_tests) - 1) + alt_num], ": "), "</td>",
+          "<td>", stat_label, "</td>",
+          "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
+          "</tr>",
+          "</table>"
+        )), ns("np_data_mj")))
+      }
       # Test 3: Two-sample Mann-Whitney U test
       else if (np_tests == 3) {
         # Validate results structure
@@ -4754,6 +4974,92 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<table>",
           "<tr>",
           "<td>", paste("Test for ", choice_np_alt_text[3 * (as.numeric(np_tests) - 1) + alt_num], ": "), "</td>",
+          "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
+          "</tr>",
+          "</table>"
+        )), ns("np_data_mj")))
+      }
+      # Test 5: Two-sample dependent sign test
+      else if (np_tests == 5) {
+        req(np_groups, np_groups$g2)
+        req(resultsR$method, resultsR$estimate, resultsR$statistic, resultsR$p.value, resultsR$conf.int)
+        len2 <- length(na.omit(np_groups$g2$x))
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
+          paste("<b>Two-Sample Dependent Sign Test for Location</b><br>", "<b>", "Method: ", resultsR$method, "</b>"),
+          "<br>",
+          paste("Direction assessed by subtracting ", np_groups$g2$name, " from ", np_groups$g1$name),
+          "<br><br>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("$n^{+} =$", resultsR$estimate[3]), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$p^{+} =$", resultsR$statistic), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$n^{=} =$", len2 - resultsR$estimate[2]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$n^{-} =$", resultsR$estimate[2] - resultsR$estimate[3]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$n_{observed} =$", len2), "</td>",
+          "<td>", "</td>",
+          "<td>", paste("$n_{included} =$", resultsR$estimate[2]), "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("Test for the probability that the difference in each pair is positive = ", resultsR$parameter), "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste(conf * 100, "% confidence interval for $\\pi^{+} :$"), "</td>",
+          "<td>", resultsR$conf.int[1], "</td>",
+          "<td>", " to ", "</td>",
+          "<td>", resultsR$conf.int[2], "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("Test for ", choice_np_alt_text[3 * (as.numeric(np_tests) - 1) + alt_num], ": "), "</td>",
+          "<td>", paste("$p^{+} =$", resultsR$statistic), "</td>",
+          "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
+          "</tr>",
+          "</table>",
+          "<table><tr><td>", beta_statement, resultsR$estimate[4], "</td></tr>",
+          "</table>"
+        )), ns("np_data_mj")))
+      }
+      # Test 6: Two-sample dependent Wilcoxon signed ranks test
+      else if (np_tests == 6) {
+        req(np_groups, np_groups$g2)
+        req(resultsR$method, resultsR$estimate, resultsR$statistic, resultsR$p.value)
+        return(ots_results_mathjax_wrap(ots_html_flatten(c(
+          paste("<b>", "Method: Dependent ", resultsR$method, "</b>"),
+          "<br>",
+          paste("Direction assessed by subtracting ", np_groups$g2$name, " from ", np_groups$g1$name),
+          "<br><br>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("$S^{+} =$", resultsR$estimate[1]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$S^{-} =$", resultsR$estimate[2]), "</td>",
+          "</tr>",
+          "<tr>",
+          "<td>", paste("$n =$", resultsR$estimate[3]), "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste(conf * 100, "% confidence"), "</td>",
+          "</tr>",
+          "</table>",
+          "<table>",
+          "<tr>",
+          "<td>", paste("Test for ", choice_np_alt_text[3 * (as.numeric(np_tests) - 1) + alt_num], ": "), "</td>",
+          "<td>", paste("W = ", resultsR$statistic), "</td>",
           "<td>", paste("p = ", resultsR$p.value, if (!is.na(resultsR$p.value) && resultsR$p.value < 1 - conf) {"*"}), "</td>",
           "</tr>",
           "</table>"

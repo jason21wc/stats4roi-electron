@@ -22,6 +22,11 @@ source("modules/config/global_data_invalidation.R")
 source("modules/statistical/spc/ui/spc_ui.R")
 source("modules/statistical/spc/ui/spc_limits_ui.R")
 source("modules/statistical/spc/ui/spc_capability_ui.R")
+source("modules/statistical/spc/ui/spc_dfit_ui.R")
+source("modules/statistical/spc/ui/spc_chart_limits_ui.R")
+source("modules/statistical/spc/ui/spc_ppa_ui.R")
+source("modules/statistical/spc/ui/spc_cusum_ui.R")
+source("modules/statistical/spc/ui/spc_ewma_ui.R")
 
 # Source worker modules (stubs initially; implemented in later todos)
 # source("modules/statistical/spc/server/spc_variables_server.R")
@@ -30,11 +35,32 @@ source("modules/statistical/spc/ui/spc_capability_ui.R")
 
 # Source SPC constants
 source("modules/statistical/spc/utils/spc_constants.R")
+source("modules/statistical/spc/utils/spc_limit_choice_helpers.R")
 source("modules/statistical/spc/utils/spc_limit_calcs.R")
+source("modules/statistical/spc/utils/spc_axis_labels.R")
+source("modules/statistical/spc/utils/spc_att_limit_summary.R")
+source("modules/statistical/spc/utils/spc_cusum_calcs.R")
+source("modules/statistical/spc/utils/spc_cusum_graphics.R")
+source("modules/statistical/spc/utils/spc_cusum_summary.R")
+source("modules/statistical/spc/utils/spc_ewma_calcs.R")
+source("modules/statistical/spc/utils/spc_ewma_graphics.R")
+source("modules/statistical/spc/utils/spc_ewma_summary.R")
+# Shared ACF significance helper (also used by Autocorrelation module)
+source("modules/statistical/autocorrelation/utils/acf_analysis.R")
 
 # Source worker modules
 source("modules/statistical/spc/server/spc_limits_server.R")
 source("modules/statistical/spc/server/spc_capability_server.R")
+source("modules/statistical/spc/server/spc_dfit_server.R")
+source("modules/statistical/spc/utils/spc_sigma_from_limits.R")
+source("modules/statistical/spc/utils/ppa_control_chart_limits.R")
+source("modules/statistical/spc/utils/ppa_data_prep.R")
+source("modules/statistical/spc/utils/ppa_calculations.R")
+source("modules/statistical/spc/utils/ppa_graphics.R")
+source("modules/statistical/spc/server/spc_ppa_readiness.R")
+source("modules/statistical/spc/server/spc_ppa_server.R")
+source("modules/statistical/spc/server/spc_cusum_server.R")
+source("modules/statistical/spc/server/spc_ewma_server.R")
 
 # =============================================================================
 # COORDINATOR UI FUNCTION
@@ -51,6 +77,18 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
+    limit_selections <- reactiveValues(
+      loc_lim = 1L,
+      disp_lim = 1L
+    )
+    dfit_nt_transfer_pending <- reactiveVal(FALSE)
+
+    apply_disp_type_limit_defaults <- function(disp_type) {
+      defaults <- spc_default_limits_for_disp_type(disp_type)
+      limit_selections$loc_lim <- defaults$loc_lim
+      limit_selections$disp_lim <- defaults$disp_lim
+    }
+
     # =========================================================================
     # REGISTER MODULE WITH GLOBAL DATA INVALIDATION SYSTEM
     # =========================================================================
@@ -65,12 +103,14 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         updatePickerInput(session, "spc_att_UI2", selected = character(0))
         updatePickerInput(session, "spc_att_set", selected = 0)
 
+        updateSelectInput(session, "spc_var_axis_label", selected = "Sample")
+        updateSelectInput(session, "spc_att_axis_label", selected = "Sample")
+
         updateSelectInput(session, "spc_var_data_type", selected = 1)
         updateSelectInput(session, "spc_att_data_type", selected = 1)
         updateSelectInput(session, "spc_var_loc_type", selected = 1)
         updateSelectInput(session, "spc_att_loc_type", selected = 1)
-        updateSelectInput(session, "spc_var_loc_lim", selected = 1)
-        updateSelectInput(session, "spc_var_disp_lim", selected = 1)
+        apply_disp_type_limit_defaults(1)
         updateSelectInput(session, "spc_att_loc_lim", selected = 1)
         updateSelectInput(session, "spc_x_loc", selected = 1)
         updateSelectInput(session, "spc_x_disp", selected = 1)
@@ -86,6 +126,25 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         # Reset limits calculations inputs
         updateSelectInput(session, "kappa_limits_k", selected = character(0))
         updateSelectInput(session, "kappa_limits_v", selected = character(0))
+
+        # Reset Distribution Fitting inputs
+        updatePickerInput(session, "dfit_column", selected = character(0))
+        updateNumericInput(session, "dfit_lsl", value = NA)
+        updateNumericInput(session, "dfit_target", value = NA)
+        updateNumericInput(session, "dfit_usl", value = NA)
+        updateSelectInput(session, "dfit_distribution", selected = 0)
+        updateSelectInput(session, "dfit_plot_tab", selected = "histogram")
+
+        # Reset Process Performance Analysis inputs
+        updateCheckboxInput(session, "ppa_show_spec_limits", value = TRUE)
+        updateCheckboxInput(session, "ppa_run_chart", value = FALSE)
+        updateNumericInput(session, "ppa_lsl", value = NA)
+        updateNumericInput(session, "ppa_target", value = NA)
+        updateNumericInput(session, "ppa_usl", value = NA)
+        updatePickerInput(session, "ppa_response", selected = character(0))
+        updatePickerInput(session, "ppa_sample_id", selected = ppa_sample_time_order_id())
+        updatePickerInput(session, "ppa_stream_factors", selected = character(0))
+        updateRadioButtons(session, "ppa_multiple_measures", selected = "sample_items")
       },
       validation_function = function(data) {
         if (is.null(data) || nrow(data) == 0) {
@@ -106,7 +165,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       names(choices) <- names(data)
 
       data_type <- input$spc_var_data_type
-      ind_chart <- input$spc_var_ind_or_mean
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
 
       if (isTRUE(ind_chart)) {
         return(pickerInput(
@@ -129,12 +188,15 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       }
 
       if (identical(data_type, 2L) || identical(as.numeric(data_type), 2)) {
-        return(pickerInput(
-          inputId = ns("spc_var_UI1"),
-          label = "Select Sample Column",
-          multiple = FALSE,
-          options = list(`actions-box` = TRUE),
-          choices = choices
+        return(tagList(
+          pickerInput(
+            inputId = ns("spc_var_UI1"),
+            label = "Select Sample Column",
+            multiple = FALSE,
+            options = list(`actions-box` = TRUE),
+            choices = choices
+          ),
+          helpText("Rows with the same sample value are combined into one subgroup.")
         ))
       }
 
@@ -151,7 +213,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       data_type <- input$spc_var_data_type
       UI1 <- input$spc_var_UI1
       req(UI1)
-      ind_chart <- input$spc_var_ind_or_mean
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
 
       if (isTRUE(ind_chart)) return(NULL)
 
@@ -187,7 +249,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       UI2 <- as.numeric(input$spc_var_UI2)
       req(UI1)
 
-      ind_chart <- input$spc_var_ind_or_mean
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
 
       if (identical(as.numeric(data_type), 1) || isTRUE(ind_chart)) {
         fact_selected <- c(UI1)
@@ -223,36 +285,133 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       NULL
     })
 
-    output$spc_var_loc_type <- renderUI({
-      ind_chart <- input$spc_var_ind_or_mean
-      if (isTRUE(ind_chart)) {
-        return(selectInput(inputId = ns("spc_var_loc_type"), label = "Location", choices = c("X" = 2)))
+    output$spc_var_axis_label <- renderUI({
+      data <- filtered_data()
+      req(data)
+      tagList(
+        selectInput(
+          inputId = ns("spc_var_axis_label"),
+          label = "Axis Label",
+          choices = spc_axis_label_choices(data),
+          selected = "Sample"
+        ),
+        helpText("Choose a column for x-axis labels. Default 'Sample' uses the subgroup column (or row number for wide-form data).")
+      )
+    })
+
+    output$spc_var_order_note <- renderUI({
+      data <- filtered_data()
+      req(data)
+      axis_label_input <- input$spc_var_axis_label
+      if (is.null(axis_label_input)) axis_label_input <- "Sample"
+      data_type <- input$spc_var_data_type
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
+      UI1 <- input$spc_var_UI1
+      if (!spc_show_order_note(data, axis_label_input, data_type, ind_chart, UI1)) {
+        return(NULL)
       }
-      selectInput(inputId = ns("spc_var_loc_type"), label = "Location", choices = c("X-bar" = 1))
+      helpText(
+        "Subgroup order follows the order values first appear in your data (top to bottom). ",
+        "Chart x-axis labels are shown as text. If you need chronological or custom order, ",
+        "sort your data or create an ordered sample column before charting."
+      )
+    })
+
+    output$spc_att_axis_label <- renderUI({
+      data <- filtered_data()
+      req(data)
+      tagList(
+        selectInput(
+          inputId = ns("spc_att_axis_label"),
+          label = "Axis Label",
+          choices = spc_axis_label_choices(data),
+          selected = "Sample"
+        ),
+        helpText("Choose a column for x-axis labels. Default 'Sample' uses row numbers.")
+      )
+    })
+
+    output$spc_att_order_note <- renderUI({
+      axis_label_input <- input$spc_att_axis_label
+      if (is.null(axis_label_input)) axis_label_input <- "Sample"
+      if (identical(axis_label_input, "Sample")) {
+        return(NULL)
+      }
+      helpText(
+        "Chart x-axis labels are shown as text in data row order (top to bottom). ",
+        "Sort your data first if you need a different sequence."
+      )
+    })
+
+    output$spc_var_loc_type <- renderUI({
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
+      if (isTRUE(ind_chart)) {
+        return(selectInput(inputId = ns("spc_var_loc_type"), label = "Location", choices = c("X" = 2), selected = 2))
+      }
+      selectInput(inputId = ns("spc_var_loc_type"), label = "Location", choices = c("X-bar" = 1), selected = 1)
     })
 
     output$spc_var_disp_type <- renderUI({
       x_type <- input$spc_var_loc_type
       req(x_type)
       if (identical(as.numeric(x_type), 1)) {
-        return(selectInput(inputId = ns("spc_var_disp_type"), label = "Dispersion", choices = choice_disp_spc[1:3]))
+        return(selectInput(inputId = ns("spc_var_disp_type"), label = "Dispersion", choices = choice_disp_spc[1:3], selected = 1))
       }
       if (identical(as.numeric(x_type), 2)) {
-        return(selectInput(inputId = ns("spc_var_disp_type"), label = "Dispersion", choices = choice_disp_spc[4]))
+        return(selectInput(inputId = ns("spc_var_disp_type"), label = "Dispersion", choices = choice_disp_spc[4], selected = 4))
       }
       NULL
     })
 
+    observeEvent(input$spc_var_disp_type, {
+      disp_type <- suppressWarnings(as.numeric(input$spc_var_disp_type))
+      req(!is.na(disp_type))
+      if (isTRUE(dfit_nt_transfer_pending())) {
+        limit_selections$loc_lim <- 12L
+        defaults <- spc_default_limits_for_disp_type(disp_type)
+        limit_selections$disp_lim <- defaults$disp_lim
+        dfit_nt_transfer_pending(FALSE)
+      } else {
+        apply_disp_type_limit_defaults(disp_type)
+      }
+    }, ignoreInit = FALSE)
+
+    observeEvent(input$spc_var_ind_or_mean, {
+      if (spc_is_switch_on(input$spc_var_ind_or_mean)) {
+        apply_disp_type_limit_defaults(4)
+      }
+    }, ignoreInit = TRUE)
+
+    observeEvent(input$spc_var_loc_lim, {
+      val <- suppressWarnings(as.numeric(input$spc_var_loc_lim))
+      if (!is.na(val) && !identical(val, isolate(limit_selections$loc_lim))) {
+        limit_selections$loc_lim <- val
+      }
+    }, ignoreInit = TRUE)
+
+    observeEvent(input$spc_var_disp_lim, {
+      val <- suppressWarnings(as.numeric(input$spc_var_disp_lim))
+      if (!is.na(val) && !identical(val, isolate(limit_selections$disp_lim))) {
+        limit_selections$disp_lim <- val
+      }
+    }, ignoreInit = TRUE)
+
     output$spc_var_loc_lim <- renderUI({
       x_type <- input$spc_var_loc_type
       req(x_type)
-      ind_chart <- input$spc_var_ind_or_mean
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
 
       if (!isTRUE(ind_chart)) {
+        selected_loc <- spc_resolve_limit_selection(
+          limit_selections$loc_lim,
+          limit_selections$loc_lim,
+          choice_x_bar_limits2
+        )
         return(selectInput(
           inputId = ns("spc_var_loc_lim"),
           label = "X-bar Limit Calculation",
-          choices = choice_x_bar_limits2
+          choices = choice_x_bar_limits2,
+          selected = selected_loc
         ))
       }
 
@@ -269,10 +428,17 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         "Known \u03c3",
         "Custom"
       )
+      x_lim_choices <- choice[6:10]
+      selected_loc <- spc_resolve_limit_selection(
+        limit_selections$loc_lim,
+        limit_selections$loc_lim,
+        x_lim_choices
+      )
       selectInput(
         inputId = ns("spc_var_loc_lim"),
         label = "X Limit Calculation",
-        choices = choice[6:10]
+        choices = x_lim_choices,
+        selected = selected_loc
       )
     })
 
@@ -334,18 +500,31 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       }
 
       if (identical(as.numeric(x_type), 1)) {
+        selected_disp <- spc_resolve_limit_selection(
+          limit_selections$disp_lim,
+          limit_selections$disp_lim,
+          choice_r_limits2_local
+        )
         return(selectInput(
           inputId = ns("spc_var_disp_lim"),
           label = paste(choice_disp_xbar[disp_type], " Limit Calculation"),
-          choices = choice_r_limits2_local
+          choices = choice_r_limits2_local,
+          selected = selected_disp
         ))
       }
 
       if (identical(as.numeric(x_type), 2)) {
+        disp_lim_choices <- choice_r_limits2_local[6:10]
+        selected_disp <- spc_resolve_limit_selection(
+          limit_selections$disp_lim,
+          limit_selections$disp_lim,
+          disp_lim_choices
+        )
         return(selectInput(
           inputId = ns("spc_var_disp_lim"),
           label = paste(choice_disp_x, " Limit Calculations"),
-          choices = choice_r_limits2_local[6:10]
+          choices = disp_lim_choices,
+          selected = selected_disp
         ))
       }
 
@@ -356,7 +535,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       runchart <- input$spc_runchart
       if (!isTRUE(runchart)) return(NULL)
 
-      if (!isTRUE(input$spc_var_ind_or_mean)) {
+      if (!spc_is_switch_on(input$spc_var_ind_or_mean)) {
         return(tags$div(
           tags$p("Run chart of:"),
           materialSwitch(inputId = ns("spc_run_loc"), label = "Means", value = FALSE, inline = TRUE),
@@ -383,7 +562,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       req(data)
 
       color <- reactive_color_palette()
-      if (is.null(color) || length(color) < 4) color <- palette.colors(8)
+      if (is.null(color) || length(color) < 6) color <- palette.colors(8)
 
       data_type <- input$spc_var_data_type
       UI1 <- as.numeric(input$spc_var_UI1)
@@ -391,7 +570,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       req(UI1)
 
       runchart <- input$spc_runchart
-      ind_chart <- input$spc_var_ind_or_mean
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
       run_loc <- input$spc_run_loc
       font_size <- as.numeric(input$spc_font_size)
       if (is.na(font_size)) font_size <- 11
@@ -399,6 +578,12 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       sets <- as.numeric(input$spc_var_set)
       if (is.null(sets) || length(sets) == 0 || all(is.na(sets))) sets <- 0
       if (!is.null(sets) && !is.na(sets) && sets > ncol(data)) sets <- 0
+
+      axis_label_input <- input$spc_var_axis_label
+      if (is.null(axis_label_input)) axis_label_input <- "Sample"
+      axis_title <- spc_axis_title_from_input(axis_label_input, data)
+      sample_groups <- NULL
+      column_defined_subgroups <- !isTRUE(ind_chart) && identical(as.numeric(data_type), 2)
 
       if (any(is.na(UI1)) || any(UI1 < 1) || any(UI1 > ncol(data))) {
         plot_data_r(NULL)
@@ -465,6 +650,20 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         }
       }
 
+      if (isTRUE(column_defined_subgroups)) {
+        sample_groups <- spc_assign_sample_groups(d$Sample)
+        d$SampleRaw <- d$Sample
+        d$Sample <- sample_groups$row_group_id
+        k_obs <- sample_groups$k_obs
+      } else if (!isTRUE(ind_chart) && identical(as.numeric(data_type), 1)) {
+        # Wide-form: preserve row order; Sample is row index
+      } else {
+        # Individuals: preserve row order
+      }
+
+      # Sort by subgroup id so aggregate() and spc.preprocess.data() see contiguous
+      # blocks. For column-defined subgroups, ids follow first-appearance order, so
+      # chart x order is unchanged while stats are computed per subgroup.
       d <- d[order(d$Sample), ]
 
       # Ensure required columns are atomic numeric vectors (avoid mean/var on non-numeric)
@@ -490,37 +689,74 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         if (is.factor(d$Sets)) d$Sets <- as.character(d$Sets)
         d$Sets <- suppressWarnings(as.numeric(d$Sets))
       }
+      d <- spc_ensure_set_column(d)
+
+      if (isTRUE(column_defined_subgroups)) {
+        d$x_pos <- d$Sample
+        if (identical(axis_label_input, "Sample")) {
+          d$x_label <- spc_format_axis_text(d$SampleRaw)
+        } else {
+          label_col <- as.integer(axis_label_input)
+          d$x_label <- spc_map_row_labels_to_subgroups(
+            data[[label_col]],
+            sample_groups$row_group_id,
+            sample_groups$k_obs
+          )
+        }
+      } else {
+        d$x_pos <- d$Sample
+        if (identical(axis_label_input, "Sample")) {
+          d$x_label <- as.character(d$Sample)
+        } else {
+          label_col <- as.integer(axis_label_input)
+          if (!isTRUE(ind_chart) && identical(as.numeric(data_type), 1)) {
+            d$x_label <- spc_format_axis_text(data[[label_col]][d$Sample])
+          } else {
+            d$x_label <- spc_format_axis_text(data[[label_col]])
+          }
+        }
+      }
 
       # Run chart branch (exact monolithic behavior)
       if (isTRUE(runchart)) {
-        names(d)[names(d) == "Sample"] <- "x_label"
         names(d)[names(d) == "Data"] <- "measure"
+        run_chart_labels <- spc_build_chart_point_labels(
+          data = data,
+          axis_label_input = axis_label_input,
+          data_type = data_type,
+          ind_chart = ind_chart,
+          k_obs = k_obs,
+          sample_groups = sample_groups
+        )
+        run_x_angle <- if (k_obs > 15) 45 else NULL
 
         if (sets == 0) {
           d <- cbind(d, "Sets" = 1)
           if (isTRUE(run_loc)) {
             d <- cbind(d, "loc" = median(d$measure))
-            p <- ggplot(data = d, aes(x = x_label, y = measure)) +
+            p <- ggplot(data = d, aes(x = x_pos, y = measure)) +
               stat_summary(geom = "point", fun = "median", color = color[4]) +
               stat_summary(geom = "line", fun = "median", color = color[4]) +
               geom_hline(aes(yintercept = median(measure)), color = color[3]) +
               theme_gray(base_size = font_size)
+            p <- spc_add_subgroup_axis_scale(p, run_chart_labels, k_obs, angle = run_x_angle)
             if (isTRUE(ind_chart)) {
-              p <- p + ggtitle("Run Chart, Median Centerline") + labs(x = "Samples", y = names(data)[UI1])
+              p <- p + ggtitle("Run Chart, Median Centerline") + labs(x = axis_title, y = names(data)[UI1])
             } else {
-              p <- p + ggtitle("Run Chart of Medians") + labs(x = "Samples", y = "Data")
+              p <- p + ggtitle("Run Chart of Medians") + labs(x = axis_title, y = "Data")
             }
           } else {
             d <- cbind(d, "loc" = mean(d$measure))
-            p <- ggplot(data = d, aes(x = x_label, y = measure)) +
+            p <- ggplot(data = d, aes(x = x_pos, y = measure)) +
               stat_summary(geom = "point", fun = "mean", color = color[4]) +
               stat_summary(geom = "line", fun = "mean", color = color[4]) +
               geom_hline(aes(yintercept = mean(measure)), color = color[3]) +
               theme_gray(base_size = font_size)
+            p <- spc_add_subgroup_axis_scale(p, run_chart_labels, k_obs, angle = run_x_angle)
             if (isTRUE(ind_chart)) {
-              p <- p + ggtitle("Run Chart, Mean Centerline") + labs(x = "Samples", y = names(data)[UI1])
+              p <- p + ggtitle("Run Chart, Mean Centerline") + labs(x = axis_title, y = names(data)[UI1])
             } else {
-              p <- p + ggtitle("Run Chart of Means") + labs(x = "Samples", y = "Data")
+              p <- p + ggtitle("Run Chart of Means") + labs(x = axis_title, y = "Data")
             }
           }
         } else {
@@ -541,37 +777,39 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             group_medians <- aggregate(d$measure, list(d$Set), FUN = median)
             names(group_medians) <- c("Sets", "loc")
             d <- merge(d, group_medians, sort = FALSE)
-            p <- ggplot(data = d, aes(x = x_label, y = measure, group = diff_run)) +
+            p <- ggplot(data = d, aes(x = x_pos, y = measure, group = diff_run)) +
               stat_summary(geom = "point", fun = "median", color = color[4]) +
               stat_summary(geom = "line", fun = "median", color = color[4]) +
               geom_line(aes(y = loc), color = color[3]) +
               theme_gray(base_size = font_size)
+            p <- spc_add_subgroup_axis_scale(p, run_chart_labels, k_obs, angle = run_x_angle)
             if (isTRUE(ind_chart)) {
               p <- p +
                 ggtitle("Run Chart, Median Centerline") +
-                labs(x = "Samples", y = names(data)[UI1])
+                labs(x = axis_title, y = names(data)[UI1])
             } else {
               p <- p +
                 ggtitle("Run Chart of Medians") +
-                labs(x = "Samples", y = "Data")
+                labs(x = axis_title, y = "Data")
             }
           } else {
             group_means <- aggregate(d$measure, list(d$Set), FUN = mean)
             names(group_means) <- c("Sets", "loc")
             d <- merge(d, group_means, sort = FALSE)
-            p <- ggplot(data = d, aes(x = x_label, y = measure, group = diff_run)) +
+            p <- ggplot(data = d, aes(x = x_pos, y = measure, group = diff_run)) +
               stat_summary(geom = "point", fun = "mean", color = color[4]) +
               stat_summary(geom = "line", fun = "mean", color = color[4]) +
               geom_line(aes(y = loc), color = color[3]) +
               theme_gray(base_size = font_size)
+            p <- spc_add_subgroup_axis_scale(p, run_chart_labels, k_obs, angle = run_x_angle)
             if (isTRUE(ind_chart)) {
               p <- p +
                 ggtitle("Run Chart, Mean Centerline") +
-                labs(x = "Samples", y = names(data)[UI1])
+                labs(x = axis_title, y = names(data)[UI1])
             } else {
               p <- p +
                 ggtitle("Run Chart of Means") +
-                labs(x = "Samples", y = "Data")
+                labs(x = axis_title, y = "Data")
             }
           }
         }
@@ -579,15 +817,17 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         # Hover/plot data payload (run chart)
         meas_fun <- if (isTRUE(run_loc)) median else mean
         hoverdata <- data.frame(
-          x_label = sort(unique(d$x_label)),
-          n_sample = aggregate(d$measure, list(d$x_label), FUN = length)[2],
-          set = aggregate(d$Sets, list(d$x_label), FUN = unique)[2],
-          measure = aggregate(d$measure, list(d$x_label), FUN = meas_fun)[2],
-          centerline = aggregate(d$loc, list(d$x_label), FUN = meas_fun)[2]
+          x_pos = sort(unique(d$x_pos)),
+          x_label = vapply(sort(unique(d$x_pos)), function(i) d$x_label[d$x_pos == i][1], character(1)),
+          n_sample = aggregate(d$measure, list(d$x_pos), FUN = length)[2],
+          set = aggregate(d$Sets, list(d$x_pos), FUN = unique)[2],
+          measure = aggregate(d$measure, list(d$x_pos), FUN = meas_fun)[2],
+          centerline = aggregate(d$loc, list(d$x_pos), FUN = meas_fun)[2]
         )
-        colnames(hoverdata) <- c("x_label", "n_sample", "set", "measure", "centerline")
+        colnames(hoverdata) <- c("x_pos", "x_label", "n_sample", "set", "measure", "centerline")
 
         plot_data_r(data.frame(
+          x_pos = hoverdata$x_pos,
           x_label = hoverdata$x_label,
           facet = "Run Chart",
           n_sample = hoverdata$n_sample,
@@ -621,9 +861,37 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       # End of run chart branch; compute full SPC control charts (ported from monolithic)
       x_type <- input$spc_var_loc_type
       disp_type <- input$spc_var_disp_type
-      span <- input$spc_mr_span
-      x_lim_calc <- input$spc_var_loc_lim
-      disp_lim_calc <- input$spc_var_disp_lim
+      if (isTRUE(ind_chart)) {
+        x_type <- 2
+      }
+      span <- spc_normalize_mr_span(input$spc_mr_span)
+      x_lim_calc <- suppressWarnings(as.numeric(input$spc_var_loc_lim))
+      disp_lim_calc <- suppressWarnings(as.numeric(input$spc_var_disp_lim))
+      if (isTRUE(ind_chart)) {
+        ind_lim_choices <- c(6, 7, 8, 9, 12)
+        x_lim_calc <- spc_resolve_limit_selection(
+          x_lim_calc,
+          isolate(limit_selections$loc_lim),
+          ind_lim_choices
+        )
+        disp_lim_calc <- spc_resolve_limit_selection(
+          disp_lim_calc,
+          isolate(limit_selections$disp_lim),
+          ind_lim_choices
+        )
+      } else {
+        x_lim_calc <- spc_resolve_limit_selection(
+          x_lim_calc,
+          isolate(limit_selections$loc_lim),
+          as.numeric(choice_x_bar_limits2)
+        )
+        disp_lim_calc <- spc_resolve_limit_selection(
+          disp_lim_calc,
+          isolate(limit_selections$disp_lim),
+          as.numeric(choice_r_limits2)
+        )
+      }
+
       loc_upper_custom <- input$custom.x.upper
       loc_center_custom <- input$custom.x.center
       loc_lower_custom <- input$custom.x.lower
@@ -638,13 +906,18 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       Target <- input$spc_x_target
       LSL <- input$spc_x_LSL
 
-      req(x_type, disp_type, x_lim_calc, disp_lim_calc)
+      validate(
+        need(x_type, "Select a location chart type (X-bar or X)."),
+        need(disp_type, "Select a dispersion chart type (R, s, s², or MR)."),
+        need(x_lim_calc, "Select a location limit calculation."),
+        need(disp_lim_calc, "Select a dispersion limit calculation.")
+      )
 
       # Defaults (monolithic selects first choice if present)
       if (is.na(loc_center_type)) loc_center_type <- 1
       if (is.na(disp_center_type)) disp_center_type <- 1
       if (is.na(std_err)) std_err <- 3
-      if (is.null(span) || is.na(span)) span <- 2
+      span <- spc_normalize_mr_span(span)
 
       run_length <- as.numeric(input$run_length_x)
       if (is.na(run_length)) run_length <- 8
@@ -666,8 +939,6 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         sets <- ncol(d)
       }
 
-      d <- d[order(d$Sample), ]
-
       # Count observations outside of spec if spec exists (ported; used by capability)
       if (!is.na(USL) || !is.na(Target) || !is.na(LSL)) {
         set_num <- unique(d$Sets)
@@ -680,7 +951,18 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
       # Calculate the points we are going to use (ported)
       if (as.numeric(x_type) == 1) {
-        if (isTRUE(ind_chart)) return(NULL)
+        if (isTRUE(ind_chart)) {
+          return(
+            ggplot() +
+              theme_void() +
+              annotate(
+                "text",
+                x = 0,
+                y = 0,
+                label = "Select X (not X-bar) for individual charts."
+              )
+          )
+        }
         points <- cbind(
           aggregate(Sets ~ Sample, data = d, mean),
           spc.preprocess.data(data = d$Data, sample = d$Sample, stat.n = TRUE, stat.mean = TRUE, stat.range = TRUE, stat.sd = TRUE, stat.var = TRUE)
@@ -688,22 +970,37 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         points <- points[order(points$g), ]
       }
       if (as.numeric(x_type) == 2) {
-        if (!isTRUE(ind_chart)) return(NULL)
+        if (!isTRUE(ind_chart)) {
+          return(
+            ggplot() +
+              theme_void() +
+              annotate(
+                "text",
+                x = 0,
+                y = 0,
+                label = "Select X-bar (not X) for subgroup mean charts."
+              )
+          )
+        }
         points <- d
         n <- rep(1, k_obs)
         if (as.numeric(input$spc_var_set) != 0) {
-          set_change <- c(0, diff(points$Sets))
-          MR <- MR_span(data = points$Data, span = span)
+          set_change <- c(0, diff(points[["Sets"]]))
+          MR <- MR_span(data = points[["Data"]], span = span)
           for (i in seq_len(length(set_change))) {
             if (set_change[i] != 0) {
               MR[i] <- NA
             }
           }
         } else {
-          MR <- MR_span(data = points$Data, span = span)
+          MR <- MR_span(data = points[["Data"]], span = span)
         }
-        points <- cbind(points, MR, n)
+        points$MR <- MR
+        points$n <- n
       }
+
+      d <- spc_ensure_set_column(d)
+      points <- spc_ensure_set_column(as.data.frame(points))
 
       # Now that we have the points, calculate the limits for each and estimated std
       points_1 <- centerline_1 <- UCL1 <- zone_a_up_1 <- zone_ab_up_1 <- zone_bc_up_1 <- LCL1 <- zone_a_low_1 <- zone_ab_low_1 <- zone_bc_low_1 <- NULL
@@ -721,6 +1018,8 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       if (!is.null(points$n)) points$n <- suppressWarnings(as.numeric(points$n))
       if (!is.null(points$sd)) points$sd <- suppressWarnings(as.numeric(points$sd))
       if (!is.null(points$var)) points$var <- suppressWarnings(as.numeric(points$var))
+      if (!is.null(points$Data)) points$Data <- suppressWarnings(as.numeric(points$Data))
+      if (!is.null(points$MR)) points$MR <- suppressWarnings(as.numeric(points$MR))
 
       # --- Location limits (ported from monolithic) ---
       if (as.numeric(x_lim_calc) == 1) { # avg R loc
@@ -729,7 +1028,9 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           sd_set[j] <- sd(d$Data[d$Set == j])
           Sample <- unique(points$g[points$Set == j])
           if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) median(points$Data[points$Set == j]) else median(points$mean[points$Set == j])
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -775,7 +1076,9 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           sd_set[j] <- sd(d$Data[d$Set == j])
           Sample <- unique(points$g[points$Set == j])
           if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) median(points$Data[points$Set == j]) else median(points$mean[points$Set == j])
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -821,7 +1124,9 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           sd_set[j] <- sd(d$Data[d$Set == j])
           Sample <- unique(points$g[points$Set == j])
           if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) median(points$Data[points$Set == j]) else median(points$mean[points$Set == j])
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -867,7 +1172,9 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           sd_set[j] <- sd(d$Data[d$Set == j])
           Sample <- unique(points$g[points$Set == j])
           if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) median(points$Data[points$Set == j]) else median(points$mean[points$Set == j])
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -913,7 +1220,9 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           sd_set[j] <- sd(d$Data[d$Set == j])
           Sample <- unique(points$g[points$Set == j])
           if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) median(points$Data[points$Set == j]) else median(points$mean[points$Set == j])
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -955,25 +1264,32 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
       if (as.numeric(x_lim_calc) == 6) { # MR x loc
         for (j in set_id) {
+          set_rows <- points[["Set"]] == j
           if (isTRUE(ind_chart)) {
-            stat <- mean(na.omit(points$MR[points$Set == j]))
-            Sample <- unique(points$Sample[points$Set == j])
+            stat <- mean(na.omit(points[["MR"]][set_rows]))
+            Sample <- unique(points[["Sample"]][set_rows])
           } else {
             stat <- mean(abs(diff(points$mean[points$Set == j])))
             Sample <- unique(points$g[points$Set == j])
           }
-          sd_set[j] <- sd(d$Data[d$Set == j])
-          if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          sd_set[j] <- sd(d[["Data"]][d[["Set"]] == j])
+          if (isTRUE(ind_chart)) {
+            centerline_loc <- spc_centerline_value(points[["Data"]][set_rows], loc_center_type)
+          } else if (identical(as.numeric(loc_center_type), 2L)) {
+            centerline_loc <- spc_centerline_value(points$mean[points[["Set"]] == j], loc_center_type)
+          } else {
+            centerline_loc <- spc_centerline_value(d[["Data"]][d[["Set"]] == j], loc_center_type)
+          }
 
           for (i in Sample) {
             n <- points$n[i]
             loc_const <- std_err / (spc.constant.calculation.d2(sample.size = span))
 
+            row_i <- if (isTRUE(ind_chart)) spc_point_row_for_sample(points, i) else i
             if (isTRUE(ind_chart)) {
-              points_1 <- c(points_1, points$Data[i])
+              points_1 <- c(points_1, points$Data[row_i])
             } else {
-              points_1 <- c(points_1, points$mean[i])
+              points_1 <- c(points_1, points$mean[row_i])
             }
 
             sample <- c(sample, i)
@@ -1020,8 +1336,20 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           }
           sd_set[j] <- sd(d$Data[d$Set == j])
 
-          if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 1) {
+            centerline_loc <- if (isTRUE(ind_chart)) {
+              spc_centerline_value(points[["Data"]][points[["Set"]] == j], loc_center_type)
+            } else {
+              spc_centerline_value(d$Data[d$Set == j], loc_center_type)
+            }
+          }
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) {
+              spc_centerline_value(points[["Data"]][points[["Set"]] == j], loc_center_type)
+            } else {
+              spc_centerline_value(points$mean[points$Set == j], loc_center_type)
+            }
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -1076,8 +1404,20 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             Sample <- unique(points$g[points$Set == j])
           }
           sd_set[j] <- sd(d$Data[d$Set == j])
-          if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 1) {
+            centerline_loc <- if (isTRUE(ind_chart)) {
+              spc_centerline_value(points[["Data"]][points[["Set"]] == j], loc_center_type)
+            } else {
+              spc_centerline_value(d$Data[d$Set == j], loc_center_type)
+            }
+          }
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) {
+              spc_centerline_value(points[["Data"]][points[["Set"]] == j], loc_center_type)
+            } else {
+              spc_centerline_value(points$mean[points$Set == j], loc_center_type)
+            }
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -1133,7 +1473,9 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           stat <- known_sig_x
           sd_set[j] <- sd(d$Data[d$Set == j])
           if (loc_center_type == 1) centerline_loc <- mean(d$Data[d$Set == j])
-          if (loc_center_type == 2) centerline_loc <- median(d$Data[d$Set == j])
+          if (loc_center_type == 2) {
+            centerline_loc <- if (isTRUE(ind_chart)) median(points$Data[points$Set == j]) else median(points$mean[points$Set == j])
+          }
 
           for (i in Sample) {
             n <- points$n[i]
@@ -1279,7 +1621,11 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, disp_up * stat)
-            LCL2 <- c(LCL2, disp_low * stat)
+            LCL2 <- c(LCL2, if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(disp_low * stat)
+            } else {
+              disp_low * stat
+            })
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -1297,18 +1643,10 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -1362,7 +1700,11 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, disp_up * stat)
-            LCL2 <- c(LCL2, disp_low * stat)
+            LCL2 <- c(LCL2, if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(disp_low * stat)
+            } else {
+              disp_low * stat
+            })
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -1380,18 +1722,10 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -1443,7 +1777,11 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, disp_up * stat)
-            LCL2 <- c(LCL2, disp_low * stat)
+            LCL2 <- c(LCL2, if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(disp_low * stat)
+            } else {
+              disp_low * stat
+            })
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -1461,18 +1799,10 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -1526,7 +1856,11 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, disp_up * stat)
-            LCL2 <- c(LCL2, disp_low * stat)
+            LCL2 <- c(LCL2, if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(disp_low * stat)
+            } else {
+              disp_low * stat
+            })
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -1544,18 +1878,10 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -1608,7 +1934,11 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, disp_up * stat)
-            LCL2 <- c(LCL2, disp_low * stat)
+            LCL2 <- c(LCL2, if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(disp_low * stat)
+            } else {
+              disp_low * stat
+            })
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -1626,18 +1956,10 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -1720,7 +2042,8 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             if (disp_type == 4) {
               disp_low <- stat * spc.constant.calculation.D3(sample.size = span, n.sigma = std_err) + centerline_disp
               disp_up <- stat * spc.constant.calculation.D4(sample.size = span, n.sigma = std_err) - centerline_disp
-              points_2 <- c(points_2, points$MR[i])
+              row_i <- if (isTRUE(ind_chart)) spc_point_row_for_sample(points, i) else i
+              points_2 <- c(points_2, points$MR[row_i])
             }
 
             if (disp_type == 1) {
@@ -1747,7 +2070,14 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, centerline_disp + disp_up)
-            LCL2 <- c(LCL2, centerline_disp - disp_low)
+            lcl_val <- if (identical(as.numeric(disp_type), 4L)) {
+              spc_mr_lcl_value(centerline_disp, disp_low)
+            } else if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(centerline_disp - disp_low)
+            } else {
+              centerline_disp - disp_low
+            }
+            LCL2 <- c(LCL2, lcl_val)
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -1755,33 +2085,26 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             zone_a_up_2 <- c(zone_a_up_2, centerline_disp + disp_up)
             zone_ab_up_2 <- c(zone_ab_up_2, centerline_disp + (2 / 3) * ac2)
             zone_bc_up_2 <- c(zone_bc_up_2, centerline_disp + (1 / 3) * ac2)
-            if (is.na(centerline_disp - disp_low)) {
-              zone_a_low_2 <- c(zone_a_low_2, 0)
-              ac2_low <- centerline_disp
+            if (is.na(lcl_val)) {
+              zone_a_low_2 <- c(zone_a_low_2, NA)
+              zone_ab_low_2 <- c(zone_ab_low_2, NA)
+              zone_bc_low_2 <- c(zone_bc_low_2, NA)
             } else {
-              zone_a_low_2 <- c(zone_a_low_2, centerline_disp - disp_low)
-              ac2_low <- disp_low
+              zone_a_low_2 <- c(zone_a_low_2, lcl_val)
+              ac2_low <- centerline_disp - lcl_val
+              zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
+              zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
             }
-            zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
-            zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
           }
         }
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        if (disp_type == 4) ooc_rules <- spc.rulesets.outside.limits()
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -1888,7 +2211,14 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, centerline_disp + disp_up)
-            LCL2 <- c(LCL2, centerline_disp - disp_low)
+            lcl_val <- if (identical(as.numeric(disp_type), 4L)) {
+              spc_mr_lcl_value(centerline_disp, disp_low)
+            } else if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(centerline_disp - disp_low)
+            } else {
+              centerline_disp - disp_low
+            }
+            LCL2 <- c(LCL2, lcl_val)
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -1896,33 +2226,26 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             zone_a_up_2 <- c(zone_a_up_2, centerline_disp + disp_up)
             zone_ab_up_2 <- c(zone_ab_up_2, centerline_disp + (2 / 3) * ac2)
             zone_bc_up_2 <- c(zone_bc_up_2, centerline_disp + (1 / 3) * ac2)
-            if (is.na(centerline_disp - disp_low)) {
-              zone_a_low_2 <- c(zone_a_low_2, 0)
-              ac2_low <- centerline_disp
+            if (is.na(lcl_val)) {
+              zone_a_low_2 <- c(zone_a_low_2, NA)
+              zone_ab_low_2 <- c(zone_ab_low_2, NA)
+              zone_bc_low_2 <- c(zone_bc_low_2, NA)
             } else {
-              zone_a_low_2 <- c(zone_a_low_2, centerline_disp - disp_low)
-              ac2_low <- disp_low
+              zone_a_low_2 <- c(zone_a_low_2, lcl_val)
+              ac2_low <- centerline_disp - lcl_val
+              zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
+              zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
             }
-            zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
-            zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
           }
         }
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        if (disp_type == 4) ooc_rules <- spc.rulesets.outside.limits()
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -2034,7 +2357,14 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, centerline_disp + disp_up)
-            LCL2 <- c(LCL2, centerline_disp - disp_low)
+            lcl_val <- if (identical(as.numeric(disp_type), 4L)) {
+              spc_mr_lcl_value(centerline_disp, disp_low)
+            } else if (identical(as.numeric(disp_type), 1L)) {
+              spc_dispersion_lcl_value(centerline_disp - disp_low)
+            } else {
+              centerline_disp - disp_low
+            }
+            LCL2 <- c(LCL2, lcl_val)
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -2042,33 +2372,26 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             zone_a_up_2 <- c(zone_a_up_2, centerline_disp + disp_up)
             zone_ab_up_2 <- c(zone_ab_up_2, centerline_disp + (2 / 3) * ac2)
             zone_bc_up_2 <- c(zone_bc_up_2, centerline_disp + (1 / 3) * ac2)
-            if (is.na(centerline_disp - disp_low)) {
-              zone_a_low_2 <- c(zone_a_low_2, 0)
-              ac2_low <- centerline_disp
+            if (is.na(lcl_val)) {
+              zone_a_low_2 <- c(zone_a_low_2, NA)
+              zone_ab_low_2 <- c(zone_ab_low_2, NA)
+              zone_bc_low_2 <- c(zone_bc_low_2, NA)
             } else {
-              zone_a_low_2 <- c(zone_a_low_2, centerline_disp - disp_low)
-              ac2_low <- disp_low
+              zone_a_low_2 <- c(zone_a_low_2, lcl_val)
+              ac2_low <- centerline_disp - lcl_val
+              zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
+              zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
             }
-            zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
-            zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
           }
         }
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        if (disp_type == 4) ooc_rules <- spc.rulesets.outside.limits()
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -2163,7 +2486,12 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             sample2 <- c(sample2, i)
             centerline_2 <- c(centerline_2, centerline_disp)
             UCL2 <- c(UCL2, disp_up)
-            LCL2 <- c(LCL2, disp_low)
+            lcl_val <- if (identical(as.numeric(disp_type), 1L) || identical(as.numeric(disp_type), 4L)) {
+              spc_dispersion_lcl_value(disp_low)
+            } else {
+              disp_low
+            }
+            LCL2 <- c(LCL2, lcl_val)
             est_sig <- c(est_sig, sig_est[j])
             ind_sd <- c(ind_sd, st_dev_ind)
             set_sd <- c(set_sd, sd_set[j])
@@ -2171,33 +2499,26 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             zone_a_up_2 <- c(zone_a_up_2, disp_up)
             zone_ab_up_2 <- c(zone_ab_up_2, centerline_disp + (2 / 3) * ac2)
             zone_bc_up_2 <- c(zone_bc_up_2, centerline_disp + (1 / 3) * ac2)
-            if (is.na(disp_low)) {
-              zone_a_low_2 <- c(zone_a_low_2, 0)
-              ac2_low <- centerline_disp
+            if (is.na(lcl_val)) {
+              zone_a_low_2 <- c(zone_a_low_2, NA)
+              zone_ab_low_2 <- c(zone_ab_low_2, NA)
+              zone_bc_low_2 <- c(zone_bc_low_2, NA)
             } else {
-              zone_a_low_2 <- c(zone_a_low_2, disp_low)
-              ac2_low <- disp_low
+              zone_a_low_2 <- c(zone_a_low_2, lcl_val)
+              ac2_low <- centerline_disp - lcl_val
+              zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
+              zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
             }
-            zone_ab_low_2 <- c(zone_ab_low_2, centerline_disp - (2 / 3) * ac2_low)
-            zone_bc_low_2 <- c(zone_bc_low_2, centerline_disp - (1 / 3) * ac2_low)
           }
         }
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        if (disp_type == 4) ooc_rules <- spc.rulesets.outside.limits()
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = points_2,
-          center.line = centerline_2,
-          control.limits.ucl = UCL2,
-          zone.a.upper = zone_a_up_2,
-          zone.ab.upper = zone_ab_up_2,
-          zone.bc.upper = zone_bc_up_2,
-          control.limits.lcl = LCL2,
-          zone.a.lower = zone_a_low_2,
-          zone.ab.lower = zone_ab_low_2,
-          zone.bc.lower = zone_bc_low_2
+
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type
         )
       }
 
@@ -2293,24 +2614,11 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         plot_data_disp <- cbind(sample2, points_2, LCL2, centerline_2, UCL2, est_sig, ind_sd, set_sd, zone_a_up_2, zone_ab_up_2, zone_bc_up_2, zone_a_low_2, zone_ab_low_2, zone_bc_low_2)
         plot_data_disp <- as.data.frame(plot_data_disp[order(sample2), ])
-        if (is.na(disp_lower_custom) || disp_lower_custom < 0) {
-          cl_lcl <- rep(0, k_obs)
-        } else {
-          cl_lcl <- plot_data_disp$LCL2
-        }
-        if (disp_type == 4) ooc_rules <- spc.rulesets.outside.limits()
-        control_vio_disp <- spc.controlviolation.evaluate.rules(
-          control.rules = ooc_rules,
-          chart.series = plot_data_disp$points_2,
-          center.line = plot_data_disp$centerline_2,
-          control.limits.ucl = plot_data_disp$UCL2,
-          zone.a.upper = plot_data_disp$zone_a_up_2,
-          zone.ab.upper = plot_data_disp$zone_ab_up_2,
-          zone.bc.upper = plot_data_disp$zone_bc_up_2,
-          control.limits.lcl = cl_lcl,
-          zone.a.lower = plot_data_disp$zone_a_low_2,
-          zone.ab.lower = plot_data_disp$zone_ab_low_2,
-          zone.bc.lower = plot_data_disp$zone_bc_low_2
+        control_vio_disp <- spc_evaluate_dispersion_violations(
+          plot_data_disp,
+          ooc_rules,
+          disp_type = disp_type,
+          disp_lower_custom = disp_lower_custom
         )
       }
 
@@ -2335,10 +2643,31 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       x_name <- names(choice_x_spc)[as.numeric(x_type)]
       disp_name <- names(choice_disp_spc)[as.numeric(disp_type)]
 
-      x_label <- c(rep(seq_len(k_obs), 2))
-      set <- c(rep(plot_data$set, 2))
+      chart_point_labels <- spc_build_chart_point_labels(
+        data = data,
+        axis_label_input = axis_label_input,
+        data_type = data_type,
+        ind_chart = ind_chart,
+        k_obs = k_obs,
+        sample_groups = sample_groups
+      )
+      loc_sample_idx <- spc_plot_sample_column(plot_data, "sample")
+      disp_sample_idx <- spc_plot_sample_column(plot_data_disp, "sample2")
+      if (is.null(loc_sample_idx)) {
+        loc_sample_idx <- seq_len(length(plot_data[["points_1"]] %||% k_obs))
+      }
+      if (is.null(disp_sample_idx)) {
+        disp_sample_idx <- seq_len(length(plot_data_disp[["points_2"]] %||% k_obs))
+      }
+      n_loc <- length(loc_sample_idx)
+      n_disp <- length(disp_sample_idx)
+      x_labels_loc <- spc_lookup_chart_labels(chart_point_labels, loc_sample_idx)
+      x_labels_disp <- spc_lookup_chart_labels(chart_point_labels, disp_sample_idx)
+      x_label <- c(x_labels_loc, x_labels_disp)
+      x_pos <- c(loc_sample_idx, disp_sample_idx)
+      set <- c(rep(plot_data[["set"]], 2))
       n_sample <- c(rep(n_k, 2))
-      facet <- c(rep(x_name, k_obs), rep(disp_name, k_obs))
+      facet <- c(rep(x_name, n_loc), rep(disp_name, n_disp))
       UCL <- c(plot_data[["UCL1"]], plot_data[["UCL2"]])
       LCL <- c(plot_data[["LCL1"]], plot_data[["LCL2"]])
       measure <- c(plot_data[["points_1"]], plot_data[["points_2"]])
@@ -2357,13 +2686,14 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       consec_c <- c(plot_data[["x.rule.results"]][["consecutive.zone.c"]], plot_data[["disp.rule.results"]][["consecutive.zone.c"]])
       consec_ab <- c(plot_data[["x.rule.results"]][["consecutive.zone.ab"]], plot_data[["disp.rule.results"]][["consecutive.zone.ab"]])
       zone_a_b <- c(plot_data[["x.rule.results"]][["consecutive.zone.ab"]], plot_data[["disp.rule.results"]][["consecutive.zone.ab"]])
-      est_sig <- plot_data$est_sig
-      ind_s <- plot_data$ind_s
-      set_sd <- plot_data$set_sd
+      est_sig <- spc_dup_both_facets(plot_data[["est_sig"]], n_loc)
+      ind_s <- spc_dup_both_facets(plot_data[["ind_s"]], n_loc)
+      set_sd <- spc_dup_both_facets(plot_data[["set_sd"]], n_loc)
 
       plot_order <- factor(facet, levels = c(x_name, disp_name))
 
-      plot_data_r(data.frame(
+      plot_data_p <- data.frame(
+        x_pos,
         x_label,
         facet,
         n_sample,
@@ -2390,55 +2720,29 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         consec_ab,
         zone_a_b,
         plot_order
-      )[order(-xtfrm(facet), x_label), ])
-      # Avoid invalidating this reactive via self-dependency
+      )
+      # Avoid invalidating this reactive via self-dependency on plot_data_r()
       plot_data_change(isolate(plot_data_change()) + 1)
 
-      plot_data_p <- plot_data_r()
       ooc_x <- input$ooc_rules_x
       ooc_disp <- input$ooc_rules_disp
       if (is.null(ooc_x)) ooc_x <- c(1, 2, 3, 4)
       if (is.null(ooc_disp)) ooc_disp <- c(1)
 
-      tryCatch({
-        for (i in seq_len(k_obs)) {
-          if (plot_data_p$outside[i] == TRUE && is.element(1, ooc_x)) plot_data_p$outside[i] <- plot_data_p$measure[i] else plot_data_p$outside[i] <- NA
-          if (plot_data_p$runs[i] == TRUE && is.element(2, ooc_x)) plot_data_p$runs[i] <- plot_data_p$measure[i] else plot_data_p$runs[i] <- NA
-          if (plot_data_p$trends[i] == TRUE && is.element(3, ooc_x)) plot_data_p$trends[i] <- plot_data_p$measure[i] else plot_data_p$trends[i] <- NA
-          if (plot_data_p$alternating[i] == TRUE && is.element(4, ooc_x)) plot_data_p$alternating[i] <- plot_data_p$measure[i] else plot_data_p$alternating[i] <- NA
-          if (plot_data_p$zone_a[i] == TRUE && is.element(5, ooc_x)) plot_data_p$zone_a[i] <- plot_data_p$measure[i] else plot_data_p$zone_a[i] <- NA
-          if (plot_data_p$consec_c[i] == TRUE && is.element(6, ooc_x)) plot_data_p$consec_c[i] <- plot_data_p$measure[i] else plot_data_p$consec_c[i] <- NA
-          if (plot_data_p$consec_ab[i] == TRUE && is.element(7, ooc_x)) plot_data_p$consec_ab[i] <- plot_data_p$measure[i] else plot_data_p$consec_ab[i] <- NA
-          if (plot_data_p$zone_a_b[i] == TRUE && is.element(8, ooc_x)) plot_data_p$zone_a_b[i] <- plot_data_p$measure[i] else plot_data_p$zone_a_b[i] <- NA
-        }
-
-        for (i in seq(from = k_obs + 1, to = k_obs * 2)) {
-          if (plot_data_p$outside[i] == TRUE && is.element(1, ooc_disp)) plot_data_p$outside[i] <- plot_data_p$measure[i] else plot_data_p$outside[i] <- NA
-          if (plot_data_p$runs[i] == TRUE && is.element(2, ooc_disp)) plot_data_p$runs[i] <- plot_data_p$measure[i] else plot_data_p$runs[i] <- NA
-          if (plot_data_p$trends[i] == TRUE && is.element(3, ooc_disp)) plot_data_p$trends[i] <- plot_data_p$measure[i] else plot_data_p$trends[i] <- NA
-          if (plot_data_p$alternating[i] == TRUE && is.element(4, ooc_disp)) plot_data_p$alternating[i] <- plot_data_p$measure[i] else plot_data_p$alternating[i] <- NA
-          if (plot_data_p$zone_a[i] == TRUE && is.element(5, ooc_disp)) plot_data_p$zone_a[i] <- plot_data_p$measure[i] else plot_data_p$zone_a[i] <- NA
-          if (plot_data_p$consec_c[i] == TRUE && is.element(6, ooc_disp)) plot_data_p$consec_c[i] <- plot_data_p$measure[i] else plot_data_p$consec_c[i] <- NA
-          if (plot_data_p$consec_ab[i] == TRUE && is.element(7, ooc_disp)) plot_data_p$consec_ab[i] <- plot_data_p$measure[i] else plot_data_p$consec_ab[i] <- NA
-          if (plot_data_p$zone_a_b[i] == TRUE && is.element(8, ooc_disp)) plot_data_p$zone_a_b[i] <- plot_data_p$measure[i] else plot_data_p$zone_a_b[i] <- NA
-        }
-      }, error = function(e) {
-        stop(e)
-      })
-
-      plot_data_p$outside <- as.numeric(plot_data_p$outside)
-      plot_data_p$runs <- as.numeric(plot_data_p$runs)
-      plot_data_p$trends <- as.numeric(plot_data_p$trends)
-      plot_data_p$alternating <- as.numeric(plot_data_p$alternating)
-      plot_data_p$zone_a <- as.numeric(plot_data_p$zone_a)
-      plot_data_p$consec_c <- as.numeric(plot_data_p$consec_c)
-      plot_data_p$consec_ab <- as.numeric(plot_data_p$consec_ab)
-      plot_data_p$zone_a_b <- as.numeric(plot_data_p$zone_a_b)
-
-      plot_data_p <- plot_data_p[order(-xtfrm(facet), x_label), ]
+      plot_data_p <- spc_apply_ooc_plot_markers(
+        plot_data_p,
+        loc_facet = x_name,
+        disp_facet = disp_name,
+        ooc_loc_rules = ooc_x,
+        ooc_disp_rules = ooc_disp
+      )
+      plot_data_p <- spc_order_control_chart_rows(plot_data_p)
 
       x_chart_options <- input$x_chart_options
       if (is.null(x_chart_options)) x_chart_options <- c(1, 2, 3, 4)
+      if (isTRUE(ind_chart)) {
+        x_chart_options <- setdiff(x_chart_options, 7)
+      }
 
       if (is.null(plot_data_p) || nrow(plot_data_p) == 0 || all(is.na(plot_data_p$measure))) {
         plot_data_r(plot_data_p)
@@ -2463,7 +2767,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
       diff_t <- c(0, diff(plot_data_p$set))
       set_plot <- 1
-      for (i in seq_len(k_obs)) {
+      for (i in seq_len(n_loc)) {
         if (i == 1) next
         if (diff_t[i] != 0) {
           set_plot[i] <- set_plot[i - 1] + 1
@@ -2473,10 +2777,17 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       }
       set_plot <- c(set_plot, set_plot)
 
-      p <- ggplot(plot_data_p, aes(x = x_label, y = measure)) +
+      p <- ggplot(plot_data_p, aes(x = x_pos, y = measure)) +
         facet_grid(plot_order ~ ., scales = "free_y") +
-        labs(x = "Samples", y = y_lab, title = "Statistical Process Control Chart", subtitle = subtitle) +
+        labs(x = axis_title, y = y_lab, title = "Statistical Process Control Chart", subtitle = subtitle) +
         theme_gray(base_size = font_size)
+
+      p <- spc_add_subgroup_axis_scale(
+        p,
+        chart_point_labels,
+        n_loc,
+        angle = if (n_loc > 15) 45 else NULL
+      )
 
       if (is.element(9, ooc_x) || is.element(6, x_chart_options)) {
         trans <- 90
@@ -2494,6 +2805,21 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           geom_ribbon(aes(ymin = zone_bc_low, ymax = zone_bc_up, group = set_plot), fill = inner_col, na.rm = TRUE)
       }
 
+      if (is.element(7, x_chart_options) && !isTRUE(ind_chart)) {
+        ind_obs <- spc_build_location_observations(d, x_name, disp_name, k_obs = n_loc)
+        if (!is.null(ind_obs)) {
+          p <- p + geom_point(
+            data = ind_obs,
+            aes(x = x_pos, y = measure),
+            inherit.aes = FALSE,
+            color = "black",
+            size = 1.5,
+            alpha = 0.75,
+            na.rm = TRUE
+          )
+        }
+      }
+
       p <- p + geom_point(color = color[4], na.rm = TRUE)
       if (is.element(1, x_chart_options)) {
         p <- p + geom_line(aes(group = set_plot), color = color[4], na.rm = TRUE)
@@ -2501,10 +2827,26 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       if (is.element(3, x_chart_options)) {
         p <- p + geom_line(aes(y = centerline, group = set_plot), color = color[3], na.rm = TRUE)
       }
-      if (is.element(2, x_chart_options)) {
+      if (spc_chart_option_on(x_chart_options, 2)) {
         p <- p +
-          geom_line(aes(y = UCL, group = set_plot), color = color[2], linetype = 5, na.rm = TRUE) +
-          geom_line(aes(y = LCL, group = set_plot), color = color[2], linetype = 5, na.rm = TRUE)
+          geom_line(aes(y = UCL, group = set_plot), color = color[2], linetype = "longdash", na.rm = TRUE) +
+          geom_line(aes(y = LCL, group = set_plot), color = color[2], linetype = "longdash", na.rm = TRUE)
+      }
+
+      show_spec_limits <- isTRUE(input$x_chart_show_spec_limits) && spc_has_spec_limits(USL, LSL)
+      if (show_spec_limits && (isTRUE(ind_chart) || is.element(7, x_chart_options))) {
+        spec_lines <- spc_build_spec_limit_lines(USL, LSL, x_name, disp_name)
+        if (!is.null(spec_lines)) {
+          p <- p + geom_hline(
+            data = spec_lines,
+            aes(yintercept = y),
+            inherit.aes = FALSE,
+            color = color[6],
+            linetype = "twodash",
+            linewidth = 0.7,
+            na.rm = TRUE
+          )
+        }
       }
 
       # OOC points/labels (ported from monolithic)
@@ -2564,6 +2906,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         p <- p + geom_point(aes(y = zone_a_b), color = color[2], shape = 8, na.rm = TRUE)
       }
 
+      plot_data_r(plot_data_p)
       p
     })
 
@@ -2597,7 +2940,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         style = style,
         p(HTML(paste0(
           "<span style='display:block; text-transform:capitalize; text-align:center'>", point$facet, "</span>",
-          "<b> Point: </b>", ro(point$x_label, R), "<br/>",
+          "<b> Point: </b>", point$x_label, "<br/>",
           "<b> Measure: </b>", ro(point$measure, R), "<br/>",
           if (!is.null(dat$set) && length(unique(dat$set)) > 1) paste0("<b> Set: </b>", point$set, "<br/>") else "",
           "<b> UCL: </b>", ro(point$UCL, R), "<br/>",
@@ -2630,7 +2973,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
       x_type <- input$spc_var_loc_type
       disp_type <- input$spc_var_disp_type
-      span <- input$spc_mr_span
+      span <- spc_normalize_mr_span(input$spc_mr_span)
       loc_upper_custom <- input$custom.x.upper
       loc_center_custom <- input$custom.x.center
       loc_lower_custom <- input$custom.x.lower
@@ -2639,7 +2982,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       disp_lower_custom <- input$custom.disp.lower
       sets <- as.numeric(input$spc_var_set)
       known_sig <- input$known_sig_x
-      ind_chart <- input$spc_var_ind_or_mean
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
 
       dat <- plot_data_r()
       req(dat)
@@ -2784,7 +3127,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       req(UI1)
       x_type <- input$spc_var_loc_type
       disp_type <- input$spc_var_disp_type
-      span <- input$spc_mr_span
+      span <- spc_normalize_mr_span(input$spc_mr_span)
       loc_upper_custom <- input$custom.x.upper
       loc_center_custom <- input$custom.x.center
       loc_lower_custom <- input$custom.x.lower
@@ -2798,7 +3141,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       x_lim_calc <- as.numeric(input$spc_var_loc_lim)
       disp_lim_calc <- as.numeric(input$spc_var_disp_lim)
       std_err <- as.numeric(input$std_err_x)
-      ind_chart <- input$spc_var_ind_or_mean
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
 
       dat <- plot_data_r()
       req(dat)
@@ -2864,7 +3207,13 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         }
       }
 
+      column_defined_subgroups <- !isTRUE(ind_chart) && identical(as.numeric(data_type), 2)
+      if (isTRUE(column_defined_subgroups)) {
+        sample_groups <- spc_assign_sample_groups(d$Sample)
+        d$Sample <- sample_groups$row_group_id
+      }
       d <- d[order(d$Sample), ]
+
       if (is.data.frame(d$Data)) d$Data <- d$Data[[1]]
       if (is.factor(d$Data)) d$Data <- as.character(d$Data)
       d$Data <- suppressWarnings(as.numeric(d$Data))
@@ -2880,28 +3229,52 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
       above_USL <- below_LSL <- numeric(0)
       if (!is.na(USL) || !is.na(Target) || !is.na(LSL)) {
-        for (i in unique(d$Sets)) {
-          above_USL[i] <- sum(d$Data[d$Sets == i] > USL)
-          below_LSL[i] <- sum(d$Data[d$Sets == i] < LSL)
+        for (j in unique(d$Sets)) {
+          if (!is.na(USL)) {
+            above_USL[j] <- sum(d$Data[d$Sets == j] > USL, na.rm = TRUE)
+          } else {
+            above_USL[j] <- 0
+          }
+          if (!is.na(LSL)) {
+            below_LSL[j] <- sum(d$Data[d$Sets == j] < LSL, na.rm = TRUE)
+          } else {
+            below_LSL[j] <- 0
+          }
         }
       }
 
       for (i in set_num) {
-        corr <- cor.test(
-          x = dat$measure[dat$facet == x_name & dat$set == i],
-          y = dat$measure[dat$facet == disp_name & dat$set == i],
-          method = "pearson"
-        )
+        loc_df <- dat[dat$facet == x_name & dat$set == i, c("x_pos", "measure")]
+        disp_df <- dat[dat$facet == disp_name & dat$set == i, c("x_pos", "measure")]
+        names(loc_df) <- c("x_pos", "x_val")
+        names(disp_df) <- c("x_pos", "y_val")
+        pair_df <- merge(loc_df, disp_df, by = "x_pos")
+        pair_df <- pair_df[stats::complete.cases(pair_df), , drop = FALSE]
+        x_corr <- as.numeric(pair_df$x_val)
+        y_corr <- as.numeric(pair_df$y_val)
+        ok_corr <- stats::complete.cases(x_corr, y_corr)
+        x_corr <- x_corr[ok_corr]
+        y_corr <- y_corr[ok_corr]
+        if (length(x_corr) > 2L && length(x_corr) == length(y_corr)) {
+          corr <- cor.test(x_corr, y_corr, method = "pearson")
+        } else {
+          corr <- list(estimate = c(cor = NA_real_), p.value = NA_real_)
+        }
         corr_r <- corr[["estimate"]][["cor"]]
         corr_p <- corr[["p.value"]]
 
         if (as.numeric(x_type) == 2) {
-          acf <- stats::acf(dat$measure[dat$facet == x_name & dat$set == i], plot = FALSE)
-          crit_acf <- qnorm((1 + 0.95) / 2) / sqrt(acf[["n.used"]])
-          acf_up <- acf$acf[acf$acf > crit_acf][-1]
-          acf_lag_up <- acf$lag[acf$acf > crit_acf][-1]
-          acf_low <- acf$acf[acf$acf < -crit_acf]
-          acf_lag_low <- acf$lag[acf$acf < -crit_acf]
+          loc_df <- dat[dat$facet == x_name & dat$set == i, c("x_pos", "measure")]
+          loc_df <- loc_df[order(loc_df$x_pos), , drop = FALSE]
+          acf_res <- acf_compute(loc_df$measure, lag.max = NULL, conf.level = 0.95)
+          crit_acf <- acf_res$crit
+          if (is.null(crit_acf) || is.na(crit_acf)) {
+            crit_acf <- acf_critical_value(max(acf_res$n.used, 1L), 0.95)
+          }
+          acf_up <- acf_res$significant$acf_up
+          acf_lag_up <- acf_res$significant$lag_up
+          acf_low <- acf_res$significant$acf_low
+          acf_lag_low <- acf_res$significant$lag_low
           up_text <- ""
           down_text <- ""
         }
@@ -2947,52 +3320,95 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         if (!is.na(USL) || !is.na(Target) || !is.na(LSL)) {
           n_set <- sum(dat$n_sample[dat$facet == x_name & dat$set == i])
-          cap <- spc.capability.summary.normal.simple(
-            stat.lsl = LSL,
-            stat.target = Target,
-            stat.usl = USL,
-            process.center = dat$centerline[dat$set == i][1],
-            process.variability.estimate = dat$est_sig[dat$set == i][1]^2,
-            process.variability.overall = dat$set_sd[dat$set == i][1]^2,
-            process.n.upper = above_USL[i],
-            process.n.lower = below_LSL[i],
-            process.n = n_set
-          )
+          center_i <- dat$centerline[dat$facet == x_name & dat$set == i][1]
+          sig_est_i <- dat$est_sig[dat$facet == x_name & dat$set == i][1]
+          set_sd_i <- dat$set_sd[dat$facet == x_name & dat$set == i][1]
+          has_spec_limits <- !is.na(USL) || !is.na(LSL)
 
-          pct_off_target <- abs(100 * (dat$centerline[dat$facet == x_name & dat$set == i][1] - Target) / (USL - LSL))
+          if (has_spec_limits) {
+            cap <- spc.capability.summary.normal.simple(
+              stat.lsl = LSL,
+              stat.target = Target,
+              stat.usl = USL,
+              process.center = center_i,
+              process.variability.estimate = sig_est_i^2,
+              process.variability.overall = set_sd_i^2,
+              process.n.upper = above_USL[i],
+              process.n.lower = below_LSL[i],
+              process.n = n_set
+            )
 
-          output <- paste(
-            output,
-            "<u>Capability Measures (Using ", withMathJax("$\\hat{\\sigma}_{est}$"), ")</u>",
-            "<table>",
-            "<tr><td>C<sub>p</sub> = </td><td style='text-align:left'>", ro(cap$value[1], R), "</td></tr>",
-            "<tr><td>C<sub>pk</sub> = </td><td style='text-align:left'>", ro(cap$value[2], R), "</td></tr>",
-            "<tr><td>C<sub>pm</sub> = </td><td style='text-align:left'>", ro(cap$value[3], R), "</td></tr>",
-            "</table>",
-            "<br/>",
-            "<u>Potential Estimated Parts per Million (assuming normality of the individuals)</u>",
-            "<table>",
-            "<tr><td>Above Upper Spec = </td><td style='text-align:left'>", ro(cap$value[11], R), "</td></tr>",
-            "<tr><td>Below Lower Spec </td><td style='text-align:left'>", ro(cap$value[10], R), "</td></tr>",
-            "<tr><td>Total Out of Spec = </td><td style='text-align:left'>", ro(cap$value[12], R), "</td></tr>",
-            "</table>",
-            "<br/>",
-            "<u>Performance Measures (Using observed s)</u>",
-            "<table>",
-            "<tr><td>P<sub>p</sub> = </td><td style='text-align:left'>", ro(cap$value[4], R), "</td></tr>",
-            "<tr><td>P<sub>pk</sub> = </td><td style='text-align:left'>", ro(cap$value[5], R), "</td></tr>",
-            "<tr><td>P<sub>pm</sub> = </td><td style='text-align:left'>", ro(cap$value[6], R), "</td></tr>",
-            "<tr><td>% Off-Target = </td><td style='text-align:left'>", ro(pct_off_target, R), "% of spec width</td></tr>",
-            "</table>",
-            "<br/>",
-            "<u>Actual Observed Parts per Million Nonconforming</u>",
-            "<table>",
-            "<tr><th></th><th>Count</th><th>ppm</th></tr>",
-            "<tr><td>&gt;USL = </td><td>", cap$n[8], "</td><td>", ro(cap$value[8], R), "</td></tr>",
-            "<tr><td>&lt;LSL = </td><td>", cap$n[7], "</td><td>", ro(cap$value[7], R), "</td></tr>",
-            "<tr><td>Total Out of Spec = </td><td>", cap$n[9], "</td><td>", ro(cap$value[9], R), "</td></tr>",
-            "</table><br/>"
-          )
+            pct_off_target <- NA_real_
+            if (!is.na(Target) && !is.na(USL) && !is.na(LSL) && USL != LSL) {
+              pct_off_target <- abs(100 * (center_i - Target) / (USL - LSL))
+            }
+
+            output <- paste(
+              output,
+              "<u>Capability Measures (Using ", withMathJax("$\\hat{\\sigma}_{est}$"), ")</u>",
+              "<table>",
+              "<tr><td>C<sub>p</sub> = </td><td style='text-align:left'>", ro(cap$value[1], R), "</td></tr>",
+              "<tr><td>C<sub>pk</sub> = </td><td style='text-align:left'>", ro(cap$value[2], R), "</td></tr>",
+              "<tr><td>C<sub>pm</sub> = </td><td style='text-align:left'>", ro(cap$value[3], R), "</td></tr>",
+              "</table>",
+              "<br/>",
+              "<u>Potential Estimated Parts per Million (assuming normality of the individuals)</u>",
+              "<table>",
+              "<tr><td>Above Upper Spec = </td><td style='text-align:left'>", ro(cap$value[11], R), "</td></tr>",
+              "<tr><td>Below Lower Spec </td><td style='text-align:left'>", ro(cap$value[10], R), "</td></tr>",
+              "<tr><td>Total Out of Spec = </td><td style='text-align:left'>", ro(cap$value[12], R), "</td></tr>",
+              "</table>",
+              "<br/>",
+              "<u>Performance Measures (Using observed s)</u>",
+              "<table>",
+              "<tr><td>P<sub>p</sub> = </td><td style='text-align:left'>", ro(cap$value[4], R), "</td></tr>",
+              "<tr><td>P<sub>pk</sub> = </td><td style='text-align:left'>", ro(cap$value[5], R), "</td></tr>",
+              "<tr><td>P<sub>pm</sub> = </td><td style='text-align:left'>", ro(cap$value[6], R), "</td></tr>",
+              if (!is.na(pct_off_target)) {
+                paste(
+                  "<tr><td>% Off-Target = </td><td style='text-align:left'>",
+                  ro(pct_off_target, R), "% of spec width</td></tr>"
+                )
+              } else {
+                ""
+              },
+              "</table>",
+              "<br/>",
+              "<u>Actual Observed Parts per Million Nonconforming</u>",
+              "<table>",
+              "<tr><th></th><th>Count</th><th>ppm</th></tr>",
+              "<tr><td>&gt;USL = </td><td>", cap$n[8], "</td><td>", ro(cap$value[8], R), "</td></tr>",
+              "<tr><td>&lt;LSL = </td><td>", cap$n[7], "</td><td>", ro(cap$value[7], R), "</td></tr>",
+              "<tr><td>Total Out of Spec = </td><td>", cap$n[9], "</td><td>", ro(cap$value[9], R), "</td></tr>",
+              "</table><br/>"
+            )
+          } else if (!is.na(Target)) {
+            bias <- center_i - Target
+            bias_sigma <- NA_real_
+            if (!is.na(sig_est_i) && sig_est_i > 0) {
+              bias_sigma <- bias / sig_est_i
+            }
+            output <- paste(
+              output,
+              "<u>Target Comparison</u>",
+              "<table>",
+              "<tr><td>Process center = </td><td style='text-align:left'>", ro(center_i, R), "</td></tr>",
+              "<tr><td>Target = </td><td style='text-align:left'>", ro(Target, R), "</td></tr>",
+              "<tr><td>Deviation = </td><td style='text-align:left'>", ro(bias, R), "</td></tr>",
+              if (!is.na(bias_sigma)) {
+                paste(
+                  "<tr><td>Deviation / ", withMathJax("$\\hat{\\sigma}_{est}$"),
+                  " = </td><td style='text-align:left'>", ro(bias_sigma, R), "</td></tr>"
+                )
+              } else {
+                ""
+              },
+              "</table>",
+              "<br/>",
+              "<p><em>Cp, Cpk, Pp, Ppk, and PPM estimates require at least one specification limit (USL or LSL).</em></p>",
+              "<br/>"
+            )
+          }
         }
       }
 
@@ -3002,6 +3418,57 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
     # -------------------------------------------------------------------------
     # Chart options: OOC rules UI (ported from monolithic)
     # -------------------------------------------------------------------------
+    output$x_chart_options_ui <- renderUI({
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
+      choices <- c(
+        "Connect Points" = 1,
+        "Control Limits" = 2,
+        "Center Line" = 3,
+        "Show OOC Points" = 4,
+        "Show OOC Labels" = 5,
+        "Show Zones" = 6
+      )
+      if (!ind_chart) {
+        choices <- c(choices, "Show All Data Points" = 7)
+      }
+
+      selected <- input$x_chart_options
+      if (is.null(selected)) {
+        selected <- c(1, 2, 3, 4)
+      }
+      if (ind_chart) {
+        selected <- setdiff(selected, 7)
+      }
+
+      checkboxGroupButtons(
+        inputId = ns("x_chart_options"),
+        label = "Graph Features",
+        choices = choices,
+        direction = "vertical",
+        selected = selected
+      )
+    })
+
+    output$x_chart_spec_limits_ui <- renderUI({
+      if (!spc_has_spec_limits(input$spc_x_USL, input$spc_x_LSL)) {
+        return(NULL)
+      }
+
+      ind_chart <- spc_is_switch_on(input$spc_var_ind_or_mean)
+      x_chart_options <- input$x_chart_options
+      if (!ind_chart && (is.null(x_chart_options) || !is.element(7, x_chart_options))) {
+        return(NULL)
+      }
+
+      prettySwitch(
+        inputId = ns("x_chart_show_spec_limits"),
+        label = "Show Spec Limits",
+        value = isTRUE(input$x_chart_show_spec_limits),
+        status = "success",
+        fill = TRUE
+      )
+    })
+
     output$ooc_rules_x_ui <- renderUI({
       x_lim_calc <- as.numeric(input$spc_var_loc_lim)
       if (is.na(x_lim_calc)) return(NULL)
@@ -3439,35 +3906,38 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         req(known_param)
       }
 
+      axis_label_input <- input$spc_att_axis_label
+      if (is.null(axis_label_input)) axis_label_input <- "Sample"
+      axis_title <- spc_axis_title_from_input(axis_label_input, data)
+
       # form data
       if (data_type == 1) { # column of count, column of sample size OR constant sample size
-        k_obs <- nrow(data[UI1])
-        Sample <- seq(1, k_obs)
+        k_obs <- nrow(data)
+        Sample <- seq_len(k_obs)
+        att_chart_point_labels <- spc_build_att_chart_point_labels(data, axis_label_input, k_obs)
         if (sets == 0) {
           set <- rep(1, k_obs)
         } else {
-          set <- data[sets]
+          set <- as.vector(data[[sets]])
         }
-        if (isTRUE(const_n)) {
-          plot_data <- cbind("Count" = data[UI1], "n" = rep(UI2, k_obs), "Sets" = set)
-        } else {
-          plot_data <- cbind("Count" = data[UI1], "n" = data[UI2], "Sets" = set)
-        }
+        plot_data <- data.frame(
+          Sample = Sample,
+          Count = as.vector(data[[UI1]]),
+          n = if (isTRUE(const_n)) rep(UI2, k_obs) else as.vector(data[[UI2]]),
+          Sets = set,
+          stringsAsFactors = FALSE
+        )
         if (att_type == 1) {
-          plot_data <- cbind(Sample, plot_data, "p" = plot_data[1] / plot_data[2])
-          names(plot_data) <- c("Sample", "Count", "n", "Sets", "p")
+          plot_data$p <- plot_data$Count / plot_data$n
         }
         if (att_type == 2) {
-          plot_data <- cbind(Sample, plot_data, "np" = plot_data[1])
-          names(plot_data) <- c("Sample", "Count", "n", "Sets", "np")
+          plot_data$np <- plot_data$Count
         }
         if (att_type == 3) {
-          plot_data <- cbind(Sample, plot_data, "c" = plot_data[1])
-          names(plot_data) <- c("Sample", "Count", "n", "Sets", "c")
+          plot_data$c <- plot_data$Count
         }
         if (att_type == 4) {
-          plot_data <- cbind(Sample, plot_data, "u" = plot_data[1] / plot_data[2])
-          names(plot_data) <- c("Sample", "Count", "n", "Sets", "u")
+          plot_data$u <- plot_data$Count / plot_data$n
         }
       } else {
         # column of count, column of observation, column of n OR constant n (not used in monolithic)
@@ -3475,7 +3945,6 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
       # data are now a column of Count, n, Sets, and p
       y_lab <- names(data[UI1])
-      plot_data <- plot_data[order(plot_data$Sample), ] # reorder by sample if needed
       set_id <- unique(plot_data$Sets)
 
       # set up stats for alternate limits calculations
@@ -3542,7 +4011,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
                 UCL_t <- n_upper
                 LCL_t <- n_lower
               }
-              if (LCL_t < 0) LCL_t <- NA
+              LCL_t <- spc_att_floor_lcl(LCL_t)
             } else {
               if (att_type == 3 || att_type == 4) {
                 if (att_type == 4) {
@@ -3556,7 +4025,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
                   UCL_t <- n_upper
                   LCL_t <- n_lower
                 }
-                if (LCL_t < 0) LCL_t <- NA
+                LCL_t <- spc_att_floor_lcl(LCL_t)
               }
             }
             order <- c(order, i)
@@ -3620,8 +4089,8 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
             if (att_type == 1 || att_type == 2) {
               if (att_type == 1) {
-                n_upper <- center + 3 * sqrt(center * (1 - center) / plot_data$n[1])
-                n_lower <- center - 3 * sqrt(center * (1 - center) / plot_data$n[1])
+                n_upper <- center + 3 * sqrt(center * (1 - center) / plot_data$n[i])
+                n_lower <- center - 3 * sqrt(center * (1 - center) / plot_data$n[i])
                 UCL_t <- n_upper
                 LCL_t <- n_lower
               } else {
@@ -3630,7 +4099,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
                 UCL_t <- n_upper
                 LCL_t <- n_lower
               }
-              if (LCL_t < 0) LCL_t <- NA
+              LCL_t <- spc_att_floor_lcl(LCL_t)
             } else {
               if (att_type == 3 || att_type == 4) {
                 if (att_type == 4) {
@@ -3644,7 +4113,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
                   UCL_t <- n_upper
                   LCL_t <- n_lower
                 }
-                if (LCL_t < 0) LCL_t <- NA
+                LCL_t <- spc_att_floor_lcl(LCL_t)
               }
             }
             order <- c(order, i)
@@ -3712,7 +4181,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             UCL_t <- n_upper
             LCL_t <- n_lower
 
-            if (LCL_t < 0) LCL_t <- NA
+                LCL_t <- spc_att_floor_lcl(LCL_t)
 
             order <- c(order, i)
             UCL <- c(UCL, UCL_t)
@@ -3778,7 +4247,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             UCL_t <- n_upper
             LCL_t <- n_lower
 
-            if (LCL_t < 0) LCL_t <- NA
+                LCL_t <- spc_att_floor_lcl(LCL_t)
 
             order <- c(order, i)
             UCL <- c(UCL, UCL_t)
@@ -3844,7 +4313,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
             UCL_t <- n_upper
             LCL_t <- n_lower
 
-            if (LCL_t < 0) LCL_t <- NA
+                LCL_t <- spc_att_floor_lcl(LCL_t)
 
             order <- c(order, i)
             UCL <- c(UCL, UCL_t)
@@ -3931,8 +4400,9 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       zone_a <- control_vio_att[["rule.results"]][["zone.a"]]
       consec_c <- control_vio_att[["rule.results"]][["consecutive.zone.c"]]
       consec_ab <- control_vio_att[["rule.results"]][["consecutive.zone.ab"]]
+      zone_a_b <- control_vio_att[["rule.results"]][["consecutive.zone.ab"]]
 
-      att_plot_data_r(data.frame(
+      att_plot_data_full <- data.frame(
         plot_data,
         outside,
         runs,
@@ -3940,66 +4410,27 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         alternating,
         zone_a,
         consec_c,
-        consec_ab
-      ))
-      plot_data_change_att(isolate(plot_data_change_att()) + 1)
-      att_plot_data_p <- att_plot_data_r()
+        consec_ab,
+        zone_a_b
+      )
+      isolate(att_plot_data_r(att_plot_data_full))
+      isolate(plot_data_change_att(plot_data_change_att() + 1))
+      att_plot_data_p <- att_plot_data_full
 
       ooc_att <- input$ooc_rules_att
       if (is.null(ooc_att)) ooc_att <- c(1, 2, 3, 4)
 
-      for (i in 1:(k_obs)) {
-        if (att_plot_data_p$outside[i] == TRUE && is.element(1, ooc_att)) {
-          att_plot_data_p$outside[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$outside[i] <- NA
-        }
-        if (att_plot_data_p$runs[i] == TRUE && is.element(2, ooc_att)) {
-          att_plot_data_p$runs[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$runs[i] <- NA
-        }
-        if (att_plot_data_p$trends[i] == TRUE && is.element(3, ooc_att)) {
-          att_plot_data_p$trends[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$trends[i] <- NA
-        }
-        if (att_plot_data_p$alternating[i] == TRUE && is.element(4, ooc_att)) {
-          att_plot_data_p$alternating[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$alternating[i] <- NA
-        }
-        if (att_plot_data_p$zone_a[i] == TRUE && is.element(5, ooc_att)) {
-          att_plot_data_p$zone_a[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$zone_a[i] <- NA
-        }
-        if (att_plot_data_p$consec_c[i] == TRUE && is.element(6, ooc_att)) {
-          att_plot_data_p$consec_c[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$consec_c[i] <- NA
-        }
-        if (att_plot_data_p$consec_ab[i] == TRUE && is.element(7, ooc_att)) {
-          att_plot_data_p$consec_ab[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$consec_ab[i] <- NA
-        }
-        if (att_plot_data_p$zone_a_b[i] == TRUE && is.element(8, ooc_att)) {
-          att_plot_data_p$zone_a_b[i] <- att_plot_data_p[i, 5]
-        } else {
-          att_plot_data_p$zone_a_b[i] <- NA
-        }
-      }
-
-      # set columns with no OOC as numeric to avoid error
-      att_plot_data_p$outside <- as.numeric(att_plot_data_p$outside)
-      att_plot_data_p$runs <- as.numeric(att_plot_data_p$runs)
-      att_plot_data_p$trends <- as.numeric(att_plot_data_p$trends)
-      att_plot_data_p$alternating <- as.numeric(att_plot_data_p$alternating)
-      att_plot_data_p$zone_a <- as.numeric(att_plot_data_p$zone_a)
-      att_plot_data_p$consec_c <- as.numeric(att_plot_data_p$consec_c)
-      att_plot_data_p$consec_ab <- as.numeric(att_plot_data_p$consec_ab)
-      att_plot_data_p$zone_a_b <- as.numeric(att_plot_data_p$zone_a_b)
+      att_plot_data_p$measure <- att_plot_data_p[[5]]
+      att_plot_data_p$facet <- names(choice_att_charts)[as.numeric(att_type)]
+      att_plot_data_p <- spc_apply_ooc_plot_markers(
+        att_plot_data_p,
+        loc_facet = att_plot_data_p$facet[1],
+        disp_facet = "__none__",
+        ooc_loc_rules = ooc_att,
+        ooc_disp_rules = integer(0)
+      )
+      att_plot_data_p$measure <- NULL
+      att_plot_data_p$facet <- NULL
 
       att_chart_options <- input$att_chart_options
 
@@ -4037,16 +4468,24 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         y <- "u"
       }
 
+      att_plot_data_p[[y]] <- as.numeric(att_plot_data_p[[y]])
+
       p <- ggplot(att_plot_data_p, aes(x = Sample, y = .data[[y]])) +
         theme_gray(base_size = font_size)
+      p <- spc_add_subgroup_axis_scale(
+        p,
+        att_chart_point_labels,
+        k_obs,
+        angle = if (k_obs > 15) 45 else NULL
+      )
       if (loc_center_type != 3) {
         p <- p +
-          labs(x = "Samples", y = y_lab, title = "Statistical Process Control Chart", subtitle = subtitle)
+          labs(x = axis_title, y = y_lab, title = "Statistical Process Control Chart", subtitle = subtitle)
       } else {
         if (att_type == 1) {
           p <- p +
             labs(
-              x = "Samples",
+              x = axis_title,
               y = y_lab,
               title = "Statistical Process Control Chart",
               subtitle = substitute(paste(subtitle, " :: ", pi, " known to be = ", known_param))
@@ -4055,7 +4494,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         if (att_type == 2) {
           p <- p +
             labs(
-              x = "Samples",
+              x = axis_title,
               y = y_lab,
               title = "Statistical Process Control Chart",
               subtitle = substitute(paste(subtitle, " :: n", pi, " known to be = ", known_param))
@@ -4064,7 +4503,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         if (att_type == 3) {
           p <- p +
             labs(
-              x = "Samples",
+              x = axis_title,
               y = y_lab,
               title = "Statistical Process Control Chart",
               subtitle = substitute(paste(subtitle, " :: ", lambda, " known to be = ", known_param))
@@ -4073,7 +4512,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         if (att_type == 4) {
           p <- p +
             labs(
-              x = "Samples",
+              x = axis_title,
               y = y_lab,
               title = "Statistical Process Control Chart",
               subtitle = substitute(paste(subtitle, " :: ", lambda, "/n known to be = ", known_param))
@@ -4165,6 +4604,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         return()
       }
 
+      isolate(att_plot_data_r(att_plot_data_p))
       p
     })
 
@@ -4211,7 +4651,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         style = style,
         p(HTML(paste0(
           "<span style='display:block; text-transform:capitalize; text-align:center'>", point$facet, "</span>",
-          "<b> Point: </b>", ro(point$Sample), "<br/>",
+          "<b> Point: </b>", point$Sample, "<br/>",
           "<b> Measure: </b>", ro(point[[5]], R), "<br/>",
           if (length(unique(att_plot_data_r()$Sets)) > 1) {
             paste0("<b> Set: </b>", point$Set, "<br/>")
@@ -4252,6 +4692,12 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         choice <- choice_att_p_limits
       }
 
+      limits_html <- if (att_lim_calc == 7) {
+        ""
+      } else {
+        spc_build_att_limits_summary_html(dat, digits = R)
+      }
+
       HTML(c(
         "<h4>Limit Calculation Summary</h4>",
         "<table>",
@@ -4271,7 +4717,8 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         "</td></tr>",
         "<tr><td>Standard Errors Used: </td><td style='text-align:left'>", std_err, "</td></tr>",
         "</table>",
-        "<br/>"
+        "<br/>",
+        limits_html
       ))
     })
 
@@ -4976,6 +5423,71 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         "</table>"
       ))
     })
+
+    # -------------------------------------------------------------------------
+    # Distribution Fitting tab
+    # -------------------------------------------------------------------------
+    dfit_handles <- register_spc_dfit_server(
+      input, output, session, filtered_data, reactive_color_palette
+    )
+
+    observeEvent(input$dfit_send_nt_spc, {
+      r <- dfit_handles$result()
+      f <- r$fit
+      if (is.null(f) || as.integer(f$distribution_id) < 1L) {
+        showNotification(
+          "Select a distribution with fitted natural tolerance limits first.",
+          type = "warning",
+          duration = 6
+        )
+        return()
+      }
+      lpl <- f$lpl
+      upl <- f$upl
+      if (!is.finite(lpl) || !is.finite(upl) || upl <= lpl) {
+        showNotification(
+          "LPL and UPL are not available for the current fit.",
+          type = "warning",
+          duration = 6
+        )
+        return()
+      }
+      center <- r$descriptives$mean
+      if (!is.finite(center)) {
+        center <- (lpl + upl) / 2
+      }
+
+      was_individuals <- spc_is_switch_on(isolate(input$spc_var_ind_or_mean))
+      dfit_nt_transfer_pending(TRUE)
+      limit_selections$loc_lim <- 12L
+      shinyWidgets::updateMaterialSwitch(session, "spc_var_ind_or_mean", value = TRUE)
+      updateNumericInput(session, "custom.x.lower", value = lpl)
+      updateNumericInput(session, "custom.x.upper", value = upl)
+      updateNumericInput(session, "custom.x.center", value = center)
+      updateTabsetPanel(session, "spc_tabs", selected = "Variables")
+      if (was_individuals) {
+        dfit_nt_transfer_pending(FALSE)
+      }
+
+      showNotification(
+        paste0(
+          "SPC Variables: custom location limits set (LCL = ",
+          format(round(lpl, 4), trim = TRUE),
+          ", UCL = ",
+          format(round(upl, 4), trim = TRUE),
+          "). Open Chart Types and Limits to review."
+        ),
+        type = "message",
+        duration = 8
+      )
+    }, ignoreInit = TRUE)
+
+    # -------------------------------------------------------------------------
+    # Process Performance Analysis tab
+    # -------------------------------------------------------------------------
+    register_spc_ppa_server(input, output, session, filtered_data, reactive_color_palette)
+    register_spc_cusum_server(input, output, session, filtered_data, reactive_color_palette)
+    register_spc_ewma_server(input, output, session, filtered_data, reactive_color_palette)
   })
 }
 

@@ -9,6 +9,7 @@ library(dplyr)
 library(readr)
 library(ggplot2)
 library(lolcat)
+source("modules/statistical/spc/utils/spc_zones_classify_override.R")
 library(agop)
 library(shinyWidgets)
 library(ggh4x)
@@ -67,11 +68,18 @@ source("modules/statistical/sample_size_power/sample_size_power_module.R")
 source("modules/statistical/eda/eda_module.R")
 source("modules/statistical/one_two_sample_tests/one_two_sample_tests_module.R")
 source("modules/statistical/correlation_association/correlation_association_module.R")  # Re-adding step by step
+source("modules/statistical/autocorrelation/autocorrelation_module.R")
 # SPC module (to be implemented for parity with monolithic app)
 source("modules/statistical/spc/spc_module.R")
 # MSA module (to be implemented for parity with monolithic app)
 source("modules/statistical/msa/msa_module.R")
 source("modules/statistical/doe_orthogonal/doe_orthogonal_module.R")
+
+# Reliability (series-of-parallels calculator + Crow-AMSAA growth + Weibull)
+# Calculator is manual grid; Growth / Weibull use working data from File | Import.
+source("modules/reliability/reliability_calculator_module.R")
+source("modules/reliability/growth_analysis_module.R")
+source("modules/reliability/weibull_analysis_module.R")
 
 # Concept simulators (teaching demos; no working data)
 source("modules/learning/simulators/clt_simulator_module.R")
@@ -347,7 +355,7 @@ ui <- fluidPage(
   ),
   useSweetAlert(),
   
-  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.2"), windowTitle = "stats4ROI"),
+  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.3"), windowTitle = "stats4ROI"),
   navbarPage(
     title = NULL,
     # Welcome Page - First tabPanel is the default
@@ -535,6 +543,21 @@ colors from the <a href= 'https://CRAN.R-project.org/package=Polychrome '>Polych
         create_distribution_testing_ui("distribution_testing")
       )
     ),
+    navbarMenu(
+      title = "Reliability",
+      tabPanel(
+        title = "Reliability Calculator",
+        create_reliability_calculator_ui("reliability_calc")
+      ),
+      tabPanel(
+        title = "Growth Analysis",
+        create_growth_analysis_ui("growth_analysis")
+      ),
+      tabPanel(
+        title = "Weibull Analysis",
+        create_weibull_analysis_ui("weibull_analysis")
+      )
+    ),
     tabPanel(
       title = "Sample Size/Power",
       create_sample_size_power_ui("sample_size_power")
@@ -542,6 +565,7 @@ colors from the <a href= 'https://CRAN.R-project.org/package=Polychrome '>Polych
     create_eda_ui("eda"),
     create_one_two_sample_tests_ui("one_two_sample_tests"),  # Re-adding step by step
     create_correlation_association_ui("correlation_association"),
+    create_autocorrelation_ui("autocorrelation"),
     create_spc_ui("spc"),
     create_msa_ui("msa"),
     create_crosstabs_ui("crosstabs"),
@@ -792,6 +816,15 @@ server <- function(input, output, session) {
   # Critical Values - use reactive color palette
   create_critical_values_server("critical_values", reactive_color_palette)
   
+  # Reliability Calculator
+  create_reliability_calculator_server("reliability_calc", reactive_color_palette)
+
+  # Reliability Growth Analysis (uses working data)
+  create_growth_analysis_server("growth_analysis", safe_filtered_data, reactive_color_palette)
+
+  # Weibull life-data analysis (uses working data)
+  create_weibull_analysis_server("weibull_analysis", safe_filtered_data, reactive_color_palette)
+
   # Sample Size and Power Analysis
   create_sample_size_power_server("sample_size_power", reactive_color_palette)
   
@@ -803,6 +836,9 @@ server <- function(input, output, session) {
   
   # Correlation and Association Module
   create_correlation_association_server("correlation_association", safe_filtered_data, reactive_color_palette)
+
+  # Autocorrelation Module
+  create_autocorrelation_server("autocorrelation", safe_filtered_data, reactive_color_palette)
   
   # SPC Module
   create_spc_server("spc", safe_filtered_data, reactive_color_palette)

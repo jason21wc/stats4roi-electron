@@ -114,7 +114,9 @@ ots_resolve_column_mode <- function(data, col_g1, col_g2 = NULL) {
   g1_name <- names(data)[col_g1]
   g1_x <- data[[col_g1]]
 
-  if (is.null(col_g2) || length(col_g2) == 0L) {
+  # Blank selectInput ("") is length 1; treat as one-sample / not selected
+  g2_raw <- if (is.null(col_g2) || length(col_g2) == 0L) NA_integer_ else as.integer(col_g2)[1L]
+  if (is.na(g2_raw)) {
     return(list(
       mode = "column",
       g1 = .ots_make_group(g1_name, g1_x, col_g1),
@@ -122,8 +124,8 @@ ots_resolve_column_mode <- function(data, col_g1, col_g2 = NULL) {
     ))
   }
 
-  col_g2 <- as.integer(col_g2)[1L]
-  if (is.na(col_g2) || col_g2 < 1L || col_g2 > ncol(data) || col_g2 == col_g1) {
+  col_g2 <- g2_raw
+  if (col_g2 < 1L || col_g2 > ncol(data) || col_g2 == col_g1) {
     return(NULL)
   }
   g2_name <- names(data)[col_g2]
@@ -197,10 +199,15 @@ ots_groups_from_inputs <- function(data,
 
   if (mode == 1L) {
     if (!is.null(two_sample) && isTRUE(two_sample)) {
-      ots_resolve_column_mode(data, col_g1, col_g2)
+      out <- ots_resolve_column_mode(data, col_g1, col_g2)
+      if (is.null(out) || is.null(out$g2)) {
+        return(NULL)
+      }
+      out
     } else if (!is.null(two_sample) && !isTRUE(two_sample)) {
       ots_resolve_column_mode(data, col_sample %||% col_g1, NULL)
-    } else if (!is.null(col_g2) && !is.na(as.integer(col_g2)[1L])) {
+    } else if (!is.null(col_g2) && !is.na(as.integer(col_g2)[1L]) &&
+               nzchar(as.character(col_g2)[1L])) {
       ots_resolve_column_mode(data, col_g1, col_g2)
     } else {
       ots_resolve_column_mode(data, col_sample %||% col_g1, NULL)
