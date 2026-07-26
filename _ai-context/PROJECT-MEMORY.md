@@ -76,6 +76,8 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Upstream Sync v4.2.0 (DOE module) | Complete | 2026-04-25 |
 | Upstream Sync v4.2.1 (Taguchi optimization) | Complete | 2026-06-28 |
 | Upstream Sync v4.3.0 (Reliability + SPC expansion) | Complete | 2026-07-25 |
+| AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
+| propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |
 
 ## Source Documents Registry
 

@@ -26,7 +26,14 @@ Memory lives in `_ai-context/` (unified layout, v2.62.0). Technical docs stay at
 cd stats4roi
 npm start          # Dev mode
 npm run make       # Build DMG
+
+./ensure-propagate-fork.sh --check   # MUST exit 0 before any build
+./ensure-propagate-fork.sh           # repair: install the fork if missing
 ```
+
+**Run `--check` after any `r-mac/` rebuild.** The runtime silently reverts to CRAN
+`propagate`, which corrupts scatterplot CI/PI rendering. See PROJECT-MEMORY
+"R Runtime Assembly".
 
 ## Critical: Push Safety
 
