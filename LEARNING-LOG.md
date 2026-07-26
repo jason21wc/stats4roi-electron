@@ -59,5 +59,24 @@ quoted in zsh or it dies with "no matches found".
 **Apply When:** Every upstream sync, and especially any sync that adds whole new
 top-level modules.
 
+### 2026-07-25 — Upload Release Assets Separately, Never Via `gh release create`
+
+**Context:** `gh release create v4.3.0 ... file.dmg file.zip` ran ~40 minutes on the
+~730 MB of artifacts, then the zip upload hit `read: operation timed out`. gh treats a
+failed asset upload as a failed release: it **deleted the draft release**, discarding the
+362 MB DMG that had already uploaded successfully. All that transfer time was lost.
+**Lesson:** For releases this large, split creation from upload:
+`gh release create <tag> --notes-file <f>` (no assets) to publish, then
+`gh release upload <tag> <asset>` once per file inside a retry loop that first checks
+whether the asset is already present. Progress then survives a timeout. Two follow-on
+traps seen in the same run: (1) a retry can get `HTTP 422 ReleaseAsset.name already
+exists` even with `--clobber`, because gh's own internal retry already landed the file —
+so verify presence and size instead of trusting the exit code; (2) piping gh through
+`| tail -5` makes the shell report **tail's** exit status, so a hard failure looks like
+`EXIT=0`. Always confirm a release by comparing `gh release view --json assets` sizes
+against local `stat -f %z` and checking `state=uploaded`.
+**Apply When:** Every release. Verify byte-exact asset sizes before marking a release
+done in SESSION-STATE.
+
 ---
 *Append new lessons below this line.*

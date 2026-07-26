@@ -9,12 +9,15 @@
 |-------|-------|
 | Phase | Maintenance |
 | Mode | Standard |
-| Active Task | v4.3.0 built — awaiting user hand-test before release |
+| Active Task | None |
 | Blocked By | — |
 
 ## Context
 
-**v4.3.0 BUILT (Jul 25, 2026)** — synced from upstream `deployment/` at upstream HEAD
+**v4.3.0 RELEASED (Jul 25, 2026):** https://github.com/jason21wc/stats4roi-electron/releases/tag/v4.3.0
+Hand-tested by user — confirmed working. DMG + zip attached to the release.
+
+Synced from upstream `deployment/` at upstream HEAD
 `5237793c` ("distributions"), dated 2026-07-20. **98 upstream commits** since the v4.2.1
 sync point (`4e2fcf64`). Local `shiny/` (app.R + 184 module/www files) is byte-identical
 to upstream deployment.
@@ -53,13 +56,11 @@ Local build artifacts at `stats4roi/out/make/` (git-ignored):
 `stats4ROI-4.3.0.dmg` (362 MB) + `zip/darwin/arm64/stats4ROI-darwin-arm64-4.3.0.zip`
 (368 MB).
 
+Shipped commit `e4d7b7d` (source sync + docs) + tag `v4.3.0` pushed to `origin` (jason21wc).
+
 ## Next Actions
 
-1. **User hand-test** the built app (`stats4roi/out/make/stats4ROI-4.3.0.dmg`) —
-   especially the new Reliability and Autocorrelation tabs and the SPC CUSUM/EWMA/PPA/
-   Distribution Fitting tabs.
-2. On approval: commit the sync, tag `v4.3.0`, push to `origin` (jason21wc ONLY),
-   and create the GitHub release with both artifacts attached.
+No pending actions. v4.3.0 released and distributed.
 
 ## Open Questions
 
