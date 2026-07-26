@@ -58,9 +58,18 @@ Local build artifacts at `stats4roi/out/make/` (git-ignored):
 
 Shipped commit `e4d7b7d` (source sync + docs) + tag `v4.3.0` pushed to `origin` (jason21wc).
 
+**AI-context layout migrated (Jul 25, 2026):** memory files moved from the repo root
+into `_ai-context/` (unified layout, v2.62.0) and `BACKLOG.md` added. `CLAUDE.md` and
+`ARCHITECTURE.md` stay at the root as loaders/technical docs. Root `.gitignore` now
+also excludes `node_modules/`, `r-mac/`, and `out/` — the context-engine indexer reads
+only the top-level ignore file, and without them it indexed ~8.8k vendored files
+instead of the ~215 real source files.
+
 ## Next Actions
 
-No pending actions. v4.3.0 released and distributed.
+No pending actions on the release. v4.3.0 released and distributed.
+See `_ai-context/BACKLOG.md` for deferred pipeline improvements (#1 propagate-fork
+automation is the one with a history of recurring).
 
 ## Open Questions
 

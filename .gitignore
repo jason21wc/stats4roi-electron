@@ -3,3 +3,11 @@
 .RData
 .Ruserdata
 .DS_Store
+
+# Large generated/vendored trees. These are already ignored by
+# stats4roi/.gitignore for git's purposes; they are repeated here because some
+# tools (e.g. the context-engine indexer) read only the top-level ignore file,
+# and without these they walk ~21k vendored files instead of ~215 source files.
+node_modules/
+stats4roi/r-mac/
+stats4roi/out/

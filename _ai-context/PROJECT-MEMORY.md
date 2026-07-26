@@ -81,10 +81,15 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 
 | Document | Purpose | Location |
 |----------|---------|----------|
+| CLAUDE.md | AI loader; points into `_ai-context/` | `/CLAUDE.md` |
 | README.md | User-facing installation and usage | `/README.md` |
 | ARCHITECTURE.md | Technical component design | `/ARCHITECTURE.md` |
 | LICENSE.md | MIT License | `/LICENSE.md` |
 | package.json | Electron/npm configuration | `/stats4roi/package.json` |
+| SESSION-STATE.md | Working memory | `/_ai-context/SESSION-STATE.md` |
+| PROJECT-MEMORY.md | This file — semantic memory | `/_ai-context/PROJECT-MEMORY.md` |
+| LEARNING-LOG.md | Episodic memory | `/_ai-context/LEARNING-LOG.md` |
+| BACKLOG.md | Prospective memory (deferred work) | `/_ai-context/BACKLOG.md` |
 
 ## Sync Procedure (for future updates)
 
@@ -132,7 +137,7 @@ Quote the `--include="*.R"` glob or zsh fails with "no matches found".
 2. Smoke-test headless, verify `hdiutil verify` on the DMG, and confirm the packaged
    `.app` bundles the propagate fork.
 3. **Wait for Jason's hand-test before pushing or releasing.** See
-   `SESSION-STATE.md` for the tabs to exercise.
+   `_ai-context/SESSION-STATE.md` for the tabs to exercise.
 4. Push commit + tag to `origin` (jason21wc ONLY).
 5. **Create the release empty, then upload assets separately:**
 

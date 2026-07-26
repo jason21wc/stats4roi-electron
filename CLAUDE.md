@@ -4,16 +4,19 @@ Electron wrapper for stats4ROI R Shiny application (Apple Silicon).
 
 ## Memory Files
 
+Memory lives in `_ai-context/` (unified layout, v2.62.0). Technical docs stay at the root.
+
 | File | Purpose | Read |
 |------|---------|------|
-| [SESSION-STATE.md](SESSION-STATE.md) | Current position, next actions | Always |
-| [PROJECT-MEMORY.md](PROJECT-MEMORY.md) | Decisions, constraints, procedures | On context questions |
-| [LEARNING-LOG.md](LEARNING-LOG.md) | Lessons learned | When encountering issues |
+| [_ai-context/SESSION-STATE.md](_ai-context/SESSION-STATE.md) | Current position, next actions | Always |
+| [_ai-context/PROJECT-MEMORY.md](_ai-context/PROJECT-MEMORY.md) | Decisions, constraints, procedures | On context questions |
+| [_ai-context/LEARNING-LOG.md](_ai-context/LEARNING-LOG.md) | Lessons learned | When encountering issues |
+| [_ai-context/BACKLOG.md](_ai-context/BACKLOG.md) | Deferred work | When planning or when an item's trigger fires |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component design, data flow | On technical questions |
 
 ## On Session Start
 
-1. Read `SESSION-STATE.md` for current position
+1. Read `_ai-context/SESSION-STATE.md` for current position
 2. Check for active tasks or blockers
 3. Continue from last state or await instructions
 
