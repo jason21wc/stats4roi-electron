@@ -78,5 +78,25 @@ against local `stat -f %z` and checking `state=uploaded`.
 **Apply When:** Every release. Verify byte-exact asset sizes before marking a release
 done in SESSION-STATE.
 
+### 2026-07-25 — The Semantic Index Does Not Cover R; Use Grep Here
+
+**Context:** Indexed this repo with context-engine expecting it to help answer "where
+does X happen" across ~79,300 lines of R. Two checks killed that assumption: a
+conceptual query ("Weibull life data analysis confidence bounds") and an exact-identifier
+query (`create_growth_analysis_server`) each returned **zero** `.R` files — only
+markdown, `package.json`, and Electron JS. The index holds 26 files / 132 chunks; the
+169 R module files are absent. The indexer has no R support.
+**Lesson:** For this repo, `query_project` is useful only for the docs and the Electron
+shell. **Grep/Glob remain the primary search tools for anything in `shiny/`.** The
+dangerous failure mode is a false negative: an empty semantic result here means "not
+indexed," NOT "does not exist" — never conclude R code is missing on that basis.
+Separately, the first index run swallowed 8,849 files (~97% vendored). Cause: the root
+`.gitignore` did not list `node_modules/`, `r-mac/`, or `out/` — those live in the
+nested `stats4roi/.gitignore`, and the indexer reads only the top-level ignore file.
+Root `.gitignore` now lists them.
+**Apply When:** Searching this codebase, or indexing any project whose real source is a
+language the indexer may not parse — verify with one exact-identifier query before
+trusting the index.
+
 ---
 *Append new lessons below this line.*
