@@ -23,9 +23,10 @@
 │  │  │  │  ┌─────────────────────────────────────┐  │  │  │  │
 │  │  │  │  │           app.R (entry)             │  │  │  │  │
 │  │  │  │  │  ┌───────────────────────────────┐  │  │  │  │  │
-│  │  │  │  │  │         modules/ (85 files)   │  │  │  │  │  │
+│  │  │  │  │  │        modules/ (169 files)   │  │  │  │  │  │
 │  │  │  │  │  │  config/  data/  statistical/ │  │  │  │  │  │
-│  │  │  │  │  │  distributions/               │  │  │  │  │  │
+│  │  │  │  │  │  distributions/  reliability/ │  │  │  │  │  │
+│  │  │  │  │  │  learning/                    │  │  │  │  │  │
 │  │  │  │  │  └───────────────────────────────┘  │  │  │  │  │
 │  │  │  │  └─────────────────────────────────────┘  │  │  │  │
 │  │  │  └───────────────────────────────────────────┘  │  │  │
@@ -40,8 +41,14 @@
 
 | File | Responsibility |
 |------|----------------|
-| `main.js` | Spawns R process, creates BrowserWindow, handles app lifecycle |
-| `preload.js` | Bridge between renderer and main process (if used) |
+| `index.js` | Entry stub; loads `main.js` via `esm` |
+| `main.js` | Spawns R via `execa`, creates BrowserWindow, handles app lifecycle |
+| `loading.html` / `loading.css` | Splash screen shown while the R runtime boots |
+
+`main.js` sets `R_HOME_DIR` to the bundled `r-mac/` path, plus `RE_SHINY_PORT` and
+`RE_SHINY_PATH`, then runs `start-shiny.R`. That override matters: `r-mac/bin/R`
+hardcodes `R_HOME_DIR` to `/Library/Frameworks/...`, so without it the app would
+fall back to a system R installation that may not exist on a user's machine.
 
 **Behavior:**
 1. On launch, spawns R with `shiny/app.R`
@@ -66,10 +73,20 @@ Bundled R 4.5.1 installation for ARM64 macOS. Contains:
 | `modules/config/` | Global configuration, data invalidation |
 | `modules/data/` | Import, modification, filtering |
 | `modules/distributions/` | Probability distributions (Binomial, Normal, etc.) |
-| `modules/statistical/` | Analysis tools (EDA, ANOVA, SPC, MSA, etc.) |
+| `modules/statistical/` | Analysis tools (see submodules below) |
+| `modules/reliability/` | Reliability Calculator, Growth Analysis (Crow-AMSAA), Weibull |
+| `modules/learning/` | Teaching simulators (CLT, power, ANOVA) |
 | `www/` | Static assets (icons, images) |
 
-**Codebase stats:** 85 module files, ~41,000 lines of R code.
+**`modules/statistical/` submodules:** `anova`, `autocorrelation`,
+`correlation_association`, `crosstabs`, `doe_orthogonal`, `eda`, `msa`,
+`one_two_sample_tests`, `sample_size_power`, `spc`.
+
+Most submodules follow a `<name>_module.R` entry point plus `ui/`, `server/`, and
+`utils/` subdirectories. `spc` is the largest, covering variables/attributes charts,
+CUSUM, EWMA, Process Performance Analysis, capability, and distribution fitting.
+
+**Codebase stats:** 169 module files, ~79,300 lines of R code (app.R + modules).
 
 ## Data Flow
 
@@ -114,9 +131,10 @@ npm run make
 | Component | Size | In Git |
 |-----------|------|--------|
 | R runtime (r-mac/) | ~800MB | No |
-| Shiny app (shiny/) | ~2MB | Yes |
+| Shiny app (shiny/) | ~5MB | Yes |
 | Electron (src/) | ~10KB | Yes |
 | Final DMG | ~362MB | No |
+| Final zip | ~368MB | No |
 
 ---
-*Last Updated: 2025-01-26*
+*Last Updated: 2026-07-25 (v4.3.0)*

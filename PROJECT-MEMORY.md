@@ -105,6 +105,51 @@ cd stats4roi && npm start
 npm run make
 ```
 
+## Sync Pre-Flight (run BEFORE copying upstream files)
+
+Large syncs are cheap to de-risk and expensive to debug after the fact. Both checks
+must pass or the new modules will fail at runtime in a single tab, after shipping.
+
+```bash
+# 1. Any R package upstream needs that the bundled runtime lacks?
+grep -rhoE "(library|require|requireNamespace)\(['\"]?[A-Za-z0-9._]+" "$UP" --include="*.R" \
+  | sed -E "s/^(library|require|requireNamespace)\(['\"]?//" | sort -u
+grep -rhoE "\b[A-Za-z][A-Za-z0-9._]*::" "$UP" --include="*.R" | sed 's/:://' | sort -u
+# ...then confirm each name exists in stats4roi/r-mac/library/
+
+# 2. lolcat supplies most stats primitives. Present != new enough.
+grep -rhoE "lolcat::[A-Za-z0-9._]+" "$UP" --include="*.R" | sed 's/lolcat:://' | sort -u
+# ...diff against getNamespaceExports("lolcat") in the BUNDLED runtime
+```
+
+Quote the `--include="*.R"` glob or zsh fails with "no matches found".
+
+## Release Procedure
+
+1. `npm run make`, then rename `out/make/stats4ROI.dmg` →
+   `stats4ROI-<version>.dmg` (the maker emits an unversioned name; releases use
+   versioned asset names).
+2. Smoke-test headless, verify `hdiutil verify` on the DMG, and confirm the packaged
+   `.app` bundles the propagate fork.
+3. **Wait for Jason's hand-test before pushing or releasing.** See
+   `SESSION-STATE.md` for the tabs to exercise.
+4. Push commit + tag to `origin` (jason21wc ONLY).
+5. **Create the release empty, then upload assets separately:**
+
+```bash
+gh release create v<version> --repo jason21wc/stats4roi-electron \
+  --title "stats4ROI v<version>" --notes-file <notes>
+gh release upload v<version> <asset> --repo jason21wc/stats4roi-electron   # one per asset
+```
+
+   Do NOT pass assets to `gh release create`. On a failed upload it **deletes the
+   whole release**, discarding assets that already transferred — ~730 MB over a slow
+   link means that costs the better part of an hour. See LEARNING-LOG 2026-07-25.
+6. Verify: compare `gh release view --json assets` sizes against local
+   `stat -f %z` and confirm `state=uploaded`. Exit codes are unreliable here —
+   piping gh through `tail` reports tail's status, and gh's own internal retry can
+   surface `HTTP 422 ReleaseAsset.name already exists` for a file that landed fine.
+
 ## R Runtime Assembly — propagate Fork (CRITICAL)
 
 The bundled `r-mac/` runtime MUST contain Steve's Shiny fork of `propagate`
@@ -134,4 +179,4 @@ R_MAKEVARS_USER=/tmp/Makevars-nofortran R_LIBS="$LIB" R_LIBS_USER="$LIB" R_LIBS_
 the prior package if the compile fails, so the runtime is never left corrupted.)
 
 ---
-*Last Updated: 2026-04-25*
+*Last Updated: 2026-07-25*
