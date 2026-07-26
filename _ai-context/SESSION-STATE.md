@@ -65,6 +65,11 @@ also excludes `node_modules/`, `r-mac/`, and `out/` — the context-engine index
 only the top-level ignore file, and without them it indexed ~8.8k vendored files
 instead of the ~215 real source files.
 
+**Search caveat:** the context-engine index covers only docs + Electron JS (26 files).
+It has **no R support** — all 169 R module files are absent. Use Grep/Glob for anything
+under `shiny/`; an empty `query_project` result here means "not indexed," NOT "does not
+exist." See LEARNING-LOG 2026-07-25.
+
 ## Next Actions
 
 No pending actions on the release. v4.3.0 released and distributed.
