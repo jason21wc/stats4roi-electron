@@ -70,11 +70,20 @@ It has **no R support** — all 169 R module files are absent. Use Grep/Glob for
 under `shiny/`; an empty `query_project` result here means "not indexed," NOT "does not
 exist." See LEARNING-LOG 2026-07-25.
 
+**propagate-fork automation shipped (Jul 25, 2026)** — BACKLOG #1 closed. New
+`stats4roi/ensure-propagate-fork.sh` (idempotent, self-verifying, restores its backup
+on a bad result). The root cause was not a missing step but a presence check:
+`install_stats4roi_packages.R` gated the fork install on `!require("propagate")`, so a
+transitively-installed CRAN propagate satisfied the guard and the fork was skipped
+while the script reported success. Now gated on `RemoteUsername`, hard-fails instead of
+skipping. Tested end-to-end against a simulated CRAN state; runtime re-verified and
+Shiny boots clean.
+
 ## Next Actions
 
 No pending actions on the release. v4.3.0 released and distributed.
-See `_ai-context/BACKLOG.md` for deferred pipeline improvements (#1 propagate-fork
-automation is the one with a history of recurring).
+See `_ai-context/BACKLOG.md` for remaining pipeline improvements (#2 code signing,
+#3 versioned DMG filename, #4 Intel builds).
 
 ## Open Questions
 

@@ -43,9 +43,32 @@ if (!require("lolcat", quietly = TRUE)) {
   remotes::install_github("burrm/lolcat", quiet = FALSE)
 }
 
-if (!require("propagate", quietly = TRUE)) {
-  print("Installing propagate from GitHub...")  
-  remotes::install_github("ProfessorPeregrine/propagate", quiet = FALSE)
+# propagate MUST be Steve's Shiny fork, not CRAN.
+#
+# Do NOT gate this on `!require("propagate")`. CRAN propagate frequently arrives
+# as a transitive dependency, which makes require() succeed and silently skips
+# the fork install — the runtime then ships CRAN propagate while this script
+# reports success. That is exactly how v4.2.0 regressed. Gate on WHICH propagate
+# is installed, not on whether one is.
+propagate_is_fork <- function() {
+  isTRUE(tryCatch(
+    utils::packageDescription("propagate")$RemoteUsername == "ProfessorPeregrine",
+    error = function(e) FALSE
+  ))
+}
+
+if (!propagate_is_fork()) {
+  print("Installing the ProfessorPeregrine fork of propagate from GitHub...")
+  remotes::install_github("ProfessorPeregrine/propagate",
+                          upgrade = "never", force = TRUE, quiet = FALSE)
+  if (!propagate_is_fork()) {
+    stop("propagate is still not the ProfessorPeregrine fork after install. ",
+         "Scatterplot CI/PI rendering will be wrong. ",
+         "Run ./ensure-propagate-fork.sh, which handles the FLIBS override the ",
+         "bundled R needs.")
+  }
+} else {
+  print("propagate is already the ProfessorPeregrine fork")
 }
 
 print("All packages installed successfully!")

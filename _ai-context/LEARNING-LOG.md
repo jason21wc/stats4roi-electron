@@ -98,5 +98,25 @@ Root `.gitignore` now lists them.
 language the indexer may not parse — verify with one exact-identifier query before
 trusting the index.
 
+### 2026-07-25 — The propagate Regression Was a Presence Check, Not a Missing Step
+
+**Context:** Automating the fork install (BACKLOG #1) turned up the actual mechanism of
+the v4.2.0 regression, which the 2026-06-28 entry had characterized as "`r-mac` is
+assembled without a fork-install step." There *was* a step —
+`install_stats4roi_packages.R` called `install_github("ProfessorPeregrine/propagate")`.
+It was guarded by `if (!require("propagate"))`. CRAN propagate arrives as a transitive
+dependency of other packages, so `require()` succeeded, the guard skipped the fork
+install, and the script printed "All packages installed successfully!"
+**Lesson:** **Gate on WHICH artifact is installed, never on whether one is.** A presence
+check cannot distinguish a correct dependency from a wrong one that occupies the same
+name, and it fails *silently and positively* — the worst combination. The same shape
+applies to the `lolcat` guard beside it, and to any "install if absent" logic where a
+different build could satisfy the name. Verify the identifying attribute
+(`RemoteUsername`, a version, a checksum) and hard-fail rather than skip.
+Secondary lesson: read `DESCRIPTION` directly instead of starting R to check it — the
+check must still work when the installed package is broken.
+**Apply When:** Writing or reviewing any conditional install. If the condition is
+"is it there," it is probably wrong.
+
 ---
 *Append new lessons below this line.*

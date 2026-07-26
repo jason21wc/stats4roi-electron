@@ -14,19 +14,18 @@ Git history is the archive (`git log --grep="backlog #N"`).
 
 ---
 
+## Closed
+
+### #1 — Automate the propagate fork install into r-mac assembly — DONE 2026-07-25
+
+Shipped `stats4roi/ensure-propagate-fork.sh` (idempotent, self-verifying, restores its
+backup on a bad result) and fixed the real root cause in
+`install_stats4roi_packages.R`: the fork install was gated on `!require("propagate")`,
+so a transitively-installed CRAN propagate made `require()` succeed and skipped the
+fork entirely while reporting success. Now gated on `RemoteUsername`, and it hard-fails
+instead of skipping. Verified end-to-end against a simulated CRAN state.
+
 ## Open
-
-### #1 — Automate the propagate fork install into r-mac assembly
-
-**Status:** Active — structural fix for a defect that has recurred once.
-**Trigger:** Any rebuild or refresh of the `r-mac/` runtime.
-
-`r-mac/` is assembled without a fork-install step, so it silently reverts to CRAN
-`propagate` on every rebuild, which corrupts scatterplot CI/PI rendering. Today the
-only detection is `app.R`'s startup warning — downstream of the damage. The manual
-procedure is in PROJECT-MEMORY "R Runtime Assembly"; folding it into
-`install_stats4roi_packages.R` (or a wrapper around `get-r-mac.sh`) removes the
-recurring footgun. See LEARNING-LOG 2026-06-28.
 
 ### #2 — Code signing and notarization
 

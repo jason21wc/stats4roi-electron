@@ -164,24 +164,32 @@ contexts and corrupts scatterplot confidence/prediction-interval rendering.
 `app.R` warns at startup if the fork is missing. The fork is CRAN 1.0-6 + a one-line
 patch (older base than CRAN 1.0-7, but it is the config Steve tests against).
 
-**This is not automatic** — any fresh `r-mac/` install pulls CRAN propagate from
-the default repo and silently regresses. After assembling/refreshing `r-mac/`, run:
+Any fresh `r-mac/` install pulls CRAN propagate from the default repo and silently
+regresses. **After assembling or refreshing `r-mac/`, run:**
 
 ```bash
 cd stats4roi
-ROOT=$(pwd); LIB="$ROOT/r-mac/library"
-# Bundled R hardcodes FLIBS=/opt/gfortran (absent here). propagate is Fortran-free,
-# so blank FLIBS or the link fails: "ld: library 'emutls_w' not found".
-printf 'FLIBS =\n' > /tmp/Makevars-nofortran
-R_MAKEVARS_USER=/tmp/Makevars-nofortran R_LIBS="$LIB" R_LIBS_USER="$LIB" R_LIBS_SITE="$LIB" \
-  "$ROOT/r-mac/bin/Rscript" --vanilla -e \
-  '.libPaths(file.path(getwd(),"r-mac","library")); remotes::install_github("ProfessorPeregrine/propagate", upgrade="never", force=TRUE, lib=.libPaths()[1], build=TRUE)'
+./ensure-propagate-fork.sh          # installs the fork only if it is missing
+./ensure-propagate-fork.sh --check  # verify only, never installs (exit 1 = wrong)
+./ensure-propagate-fork.sh --force  # reinstall even if already correct
 ```
 
-**Verify:** `packageDescription("propagate")$RemoteUsername` must equal
-`"ProfessorPeregrine"`, and the `npm start` log must NOT contain
-"does not appear to be the Shiny fork". (Requires Xcode CLT clang; R auto-restores
-the prior package if the compile fails, so the runtime is never left corrupted.)
+The script encapsulates the whole procedure: it blanks `FLIBS` (the bundled R
+hardcodes `FLIBS=/opt/gfortran`, usually absent, so the link fails with
+`ld: library 'emutls_w' not found`; propagate is Fortran-free so blanking is safe),
+installs with `force=TRUE` into `r-mac/library` using the bundled `Rscript`, then
+**verifies the artifact on disk and restores its backup if the result is wrong.**
+It reads `RemoteUsername` straight from `DESCRIPTION` rather than starting R, so it
+still reports correctly when the installed package is broken. Requires Xcode CLT clang.
+
+**Gate on WHICH propagate is installed, never on whether one is.** CRAN propagate
+often arrives as a transitive dependency, so a `!require("propagate")` guard sees a
+package, skips the fork install, and reports success — that is precisely how v4.2.0
+regressed. `install_stats4roi_packages.R` now checks `RemoteUsername` and hard-fails
+rather than skipping.
+
+**Verify:** `./ensure-propagate-fork.sh --check` exits 0, and the `npm start` log
+must NOT contain "does not appear to be the Shiny fork".
 
 ---
 *Last Updated: 2026-07-25*
