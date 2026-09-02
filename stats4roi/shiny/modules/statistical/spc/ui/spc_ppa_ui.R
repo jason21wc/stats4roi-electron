@@ -91,13 +91,13 @@ create_spc_ppa_ui_internal <- function(ns) {
           div(
             style = "position: relative;",
             plotOutput(
-              ns("ppa_run_chart"),
+              ns("ppa_run_chart_plot"),
               height = "300px",
               hover = hoverOpts(ns("ppa_run_chart_hover"), delay = 100, delayType = "debounce")
             ),
             uiOutput(ns("ppa_run_chart_hover_info"), style = "pointer-events: none;")
           ),
-          ppa_plot_download_row(ns, "ppa_run_chart"),
+          ppa_plot_download_row(ns, "ppa_run_chart_plot"),
           uiOutput(ns("ppa_dispersion_section")),
           htmlOutput(ns("ppa_run_chart_limits_out"))
         ),

@@ -213,7 +213,7 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
       
       tryCatch({
         if (data_type == 1) {
-          # Column analysis - use original app approach
+          # Column analysis - column-isolated evaluation for damage tolerance
           # Get original data and column indices (following original app pattern)
           original_data <- data_source()
           names(original_data) <- make.names(names(original_data))
@@ -225,20 +225,62 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           # Build statistics selection string using helper function
           stats_sel <- build_stats_selection(desc_stats)
           
-          # Execute statistics (following original app logic)
-          output <- eval(parse(text = paste("summary.all.variables(data = desc_dat,", stats_sel, ")")))
-          output <- append_sample_mode(output, desc_dat, desc_stats)
-          output <- apply_eda_quantiles(output, desc_dat, desc_stats, type = q_type)
+          # Execute statistics per column so empty/non-numeric columns don't fail the entire analysis
+          results_list <- list()
+          for (j in seq_along(selected_cols)) {
+            col_name <- names(desc_dat)[j]
+            x_raw <- desc_dat[[j]]
+            x_num <- suppressWarnings(as.numeric(x_raw))
+            n_valid <- sum(!is.na(x_num))
+            
+            if (n_valid > 0) {
+              col_res <- tryCatch({
+                col_df <- data.frame(setNames(list(x_num), col_name), stringsAsFactors = FALSE)
+                res <- eval(parse(text = paste("summary.all.variables(data = col_df,", stats_sel, ")")))
+                res <- append_sample_mode(res, col_df, desc_stats)
+                res <- apply_eda_quantiles(res, col_df, desc_stats, type = q_type)
+                res
+              }, error = function(e) NULL)
+              
+              if (!is.null(col_res) && nrow(col_res) > 0) {
+                results_list[[j]] <- col_res
+              } else {
+                results_list[[j]] <- data.frame(
+                  dv.name = col_name,
+                  n = 0L,
+                  n.missing = length(x_raw),
+                  stringsAsFactors = FALSE
+                )
+              }
+            } else {
+              results_list[[j]] <- data.frame(
+                dv.name = col_name,
+                n = 0L,
+                n.missing = length(x_raw),
+                stringsAsFactors = FALSE
+              )
+            }
+          }
+          
+          output <- dplyr::bind_rows(results_list)
           
           if (needs_pooled_all_row(ncol(desc_dat))) {
             pooled_dat <- pool_data_frame_columns(desc_dat)
-            pooled_out <- eval(parse(text = paste("summary.all.variables(data = pooled_dat,", stats_sel, ")")))
-            if ("dv.name" %in% names(pooled_out)) {
-              pooled_out$dv.name <- POOLED_ALL_LABEL
+            if (nrow(pooled_dat) > 0) {
+              pooled_out <- tryCatch({
+                res <- eval(parse(text = paste("summary.all.variables(data = pooled_dat,", stats_sel, ")")))
+                if ("dv.name" %in% names(res)) {
+                  res$dv.name <- POOLED_ALL_LABEL
+                }
+                res <- append_sample_mode(res, pooled_dat, desc_stats)
+                res <- apply_eda_quantiles(res, pooled_dat, desc_stats, type = q_type)
+                res
+              }, error = function(e) NULL)
+              
+              if (!is.null(pooled_out) && nrow(pooled_out) > 0) {
+                output <- prepend_rows_top(pooled_out, output)
+              }
             }
-            pooled_out <- append_sample_mode(pooled_out, pooled_dat, desc_stats)
-            pooled_out <- apply_eda_quantiles(pooled_out, pooled_dat, desc_stats, type = q_type)
-            output <- prepend_rows_top(pooled_out, output)
           }
         } else if (data_type == 2) {
           # Factor analysis - use summary.continuous with formula (following original app logic)
@@ -253,6 +295,13 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           # data_col is the index within the selected data columns (UI2), need to map to original data
           selected_data_cols <- as.numeric(selections$eda_UI2)
           dep_name <- colnames(data)[selected_data_cols[as.numeric(data_col)]]
+          
+          dep_name_m <- make.names(dep_name)
+          dep_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+          if (sum(!is.na(dep_x)) == 0) {
+            return(data.frame(Message = paste0("Selected dependent column '", dep_name, "' contains no valid numeric observations.")))
+          }
+          
           indep <- colnames(data)[as.numeric(selections$eda_UI1)]
           indep_names <- paste(indep, collapse = "+")
           model_text <- formula(paste(dep_name, " ~ ", indep_names))
@@ -280,39 +329,46 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           )
           
           if (needs_pooled_all_row(nrow(output))) {
-            dep_name_m <- make.names(dep_name)
-            pooled_x <- data[[dep_name_m]]
-            pooled_dat <- data.frame(All = pooled_x, stringsAsFactors = FALSE)
-            pooled_out <- eval(parse(text = paste("summary.all.variables(data = pooled_dat,", stats_sel, ")")))
-            pooled_row <- pooled_out[1, , drop = FALSE]
-            if ("dv.name" %in% names(pooled_row)) {
-              pooled_row$dv.name <- NULL
-            }
-            if (wants_sample_mode(desc_stats)) {
-              pooled_row <- insert_sample_mode_column(
-                pooled_row,
-                format_sample_mode_value(sample.mode(pooled_x))
-              )
-            }
-            if (has_eda_quantile_stats(desc_stats)) {
-              requests <- parse_eda_quantile_requests(desc_stats)
-              vals <- compute_eda_quantile_values(pooled_x, requests, type = q_type)
-              for (col in names(vals)) {
-                pooled_row[[col]] <- vals[[col]]
+            pooled_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+            pooled_x <- pooled_x[!is.na(pooled_x)]
+            if (length(pooled_x) > 0) {
+              pooled_dat <- data.frame(All = pooled_x, stringsAsFactors = FALSE)
+              pooled_out <- tryCatch({
+                eval(parse(text = paste("summary.all.variables(data = pooled_dat,", stats_sel, ")")))
+              }, error = function(e) NULL)
+              
+              if (!is.null(pooled_out) && nrow(pooled_out) > 0) {
+                pooled_row <- pooled_out[1, , drop = FALSE]
+                if ("dv.name" %in% names(pooled_row)) {
+                  pooled_row$dv.name <- NULL
+                }
+                if (wants_sample_mode(desc_stats)) {
+                  pooled_row <- insert_sample_mode_column(
+                    pooled_row,
+                    format_sample_mode_value(sample.mode(pooled_x))
+                  )
+                }
+                if (has_eda_quantile_stats(desc_stats)) {
+                  requests <- parse_eda_quantile_requests(desc_stats)
+                  vals <- compute_eda_quantile_values(pooled_x, requests, type = q_type)
+                  for (col in names(vals)) {
+                    pooled_row[[col]] <- vals[[col]]
+                  }
+                }
+                pooled_row <- pooled_row[, intersect(names(output), names(pooled_row)), drop = FALSE]
+                missing_cols <- setdiff(names(output), names(pooled_row))
+                for (col in missing_cols) {
+                  if (col %in% group_cols) {
+                    pooled_row[[col]] <- POOLED_ALL_LABEL
+                  } else {
+                    pooled_row[[col]] <- NA
+                  }
+                }
+                pooled_row <- pooled_row[, names(output), drop = FALSE]
+                pooled_row <- label_factor_group_row(pooled_row, group_cols)
+                output <- prepend_rows_top(pooled_row, output)
               }
             }
-            pooled_row <- pooled_row[, intersect(names(output), names(pooled_row)), drop = FALSE]
-            missing_cols <- setdiff(names(output), names(pooled_row))
-            for (col in missing_cols) {
-              if (col %in% group_cols) {
-                pooled_row[[col]] <- POOLED_ALL_LABEL
-              } else {
-                pooled_row[[col]] <- NA
-              }
-            }
-            pooled_row <- pooled_row[, names(output), drop = FALSE]
-            pooled_row <- label_factor_group_row(pooled_row, group_cols)
-            output <- prepend_rows_top(pooled_row, output)
           }
         } else {
           output <- data.frame()

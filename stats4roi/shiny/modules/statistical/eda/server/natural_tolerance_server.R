@@ -75,53 +75,58 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
       
       # Process data based on type (matching original app exactly)
       if (data_type == 1) {
-        # Column analysis - matching original app lines 18426-18463
+        # Column analysis - column-isolated evaluation for damage tolerance
         len <- length(UI1)
-        if (len == 1) {
-          if (distr == 1) {
-            output <- natural.tolerance.normal(x = na.omit(data[[UI1[1]]]))
-          }
-          if (distr == 2) {
-            output <- natural.tolerance.exp.low(x = na.omit(data[[UI1[1]]]))
-          }
-          if (distr == 3) {
-            output <- natural.tolerance.exp(x = na.omit(data[[UI1[1]]]))
-          }
-        } else {
-          x <- seq(from = 2, to = len)
-          if (distr == 1) {
-            output <- natural.tolerance.normal(x = na.omit(data[[UI1[1]]]))
-            for (loop in x) {
-              output <- rbind(output, natural.tolerance.normal(x = na.omit(data[[UI1[loop]]])))
+        calc_single_nt <- function(x_col) {
+          x_num <- suppressWarnings(as.numeric(x_col))
+          x_clean <- x_num[!is.na(x_num)]
+          if (length(x_clean) < 2) {
+            if (distr == 1) {
+              return(data.frame(n = length(x_clean), mean = if (length(x_clean) == 1) x_clean[1] else NA_real_, variance = NA_real_, lower = NA_real_, upper = NA_real_))
+            } else if (distr == 2) {
+              return(data.frame(n = length(x_clean), min = if (length(x_clean) == 1) x_clean[1] else NA_real_, rate = NA_real_, lower = NA_real_, upper = NA_real_))
+            } else {
+              return(data.frame(n = length(x_clean), rate = NA_real_, lower = NA_real_, upper = NA_real_))
             }
           }
-          if (distr == 2) {
-            output <- natural.tolerance.exp.low(x = na.omit(data[[UI1[1]]]))
-            for (loop in x) {
-              output <- rbind(output, natural.tolerance.exp.low(x = na.omit(data[[UI1[loop]]])))
+          tryCatch({
+            if (distr == 1) {
+              natural.tolerance.normal(x = x_clean)
+            } else if (distr == 2) {
+              natural.tolerance.exp.low(x = x_clean)
+            } else if (distr == 3) {
+              natural.tolerance.exp(x = x_clean)
             }
-          }
-          if (distr == 3) {
-            output <- natural.tolerance.exp(x = na.omit(data[[UI1[1]]]))
-            for (loop in x) {
-              output <- rbind(output, natural.tolerance.exp(x = na.omit(data[[UI1[loop]]])))
-            }
-          }
+          }, error = function(e) {
+            data.frame(n = length(x_clean), lower = NA_real_, upper = NA_real_)
+          })
         }
-        # Add column names using cbind (matching original app line 18462)
-        output <- cbind(Data = names(data)[UI1], output)
+        
+        rows <- lapply(seq_along(UI1), function(idx) {
+          col_idx <- UI1[idx]
+          col_name <- names(data)[col_idx]
+          res <- calc_single_nt(data[[col_idx]])
+          cbind(Data = col_name, res)
+        })
+        output <- dplyr::bind_rows(rows)
         
         if (needs_pooled_all_row(len)) {
           pooled_x <- pool_numeric_vector(data[UI1])
-          if (distr == 1) {
-            all_nt <- natural.tolerance.normal(x = pooled_x)
-          } else if (distr == 2) {
-            all_nt <- natural.tolerance.exp.low(x = pooled_x)
-          } else {
-            all_nt <- natural.tolerance.exp(x = pooled_x)
+          if (length(pooled_x) >= 2) {
+            all_nt <- tryCatch({
+              if (distr == 1) {
+                natural.tolerance.normal(x = pooled_x)
+              } else if (distr == 2) {
+                natural.tolerance.exp.low(x = pooled_x)
+              } else {
+                natural.tolerance.exp(x = pooled_x)
+              }
+            }, error = function(e) NULL)
+            if (!is.null(all_nt)) {
+              all_row <- cbind(Data = POOLED_ALL_LABEL, all_nt)
+              output <- prepend_rows_top(all_row, output)
+            }
           }
-          all_row <- cbind(Data = POOLED_ALL_LABEL, all_nt)
-          output <- prepend_rows_top(all_row, output)
         }
         
       } else if (data_type == 2) {
@@ -133,6 +138,12 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
         if (is.null(dep_name)) {
           return(data.frame())
         }
+        dep_name_m <- make.names(dep_name)
+        dep_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+        if (sum(!is.na(dep_x)) < 2) {
+          return(data.frame(Message = paste0("Selected dependent column '", dep_name, "' contains insufficient numeric observations.")))
+        }
+        
         indep <- colnames(data)[as.numeric(unlist(strsplit(x = as.character(UI1), split = "\\s+")))]
         group_cols <- make.names(indep)
         indep_names <- paste(indep, collapse = "+")
@@ -140,40 +151,46 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
         req(indep_names)
         model_text <- formula(paste(dep_name, " ~ ", indep_names))
         
-        if (distr == 1) {
-          sum_out <- summary.continuous(fx = model_text, data = na.omit(data[c(UI1, UI2)]))
-          output <- natural.tolerance.normal.simple(mean = sum_out$mean, variance = sum_out$var)
-          output <- cbind(sum_out[c(1, 2, 3)], output)
-        } else if (distr == 2) {
-          sum_out <- summary.continuous(fx = model_text, data = na.omit(data[c(UI1, UI2)]), stat.min = T)
-          output <- natural.tolerance.exp.low.simple(rate = 1/(sum_out$mean - sum_out$min), low = sum_out$min)
-          output <- cbind(sum_out[c(1, 2, 3)], output)
-        } else if (distr == 3) {
-          sum_out <- summary.continuous(fx = model_text, data = na.omit(data[c(UI1, UI2)]))
-          output <- natural.tolerance.exp.simple(rate = 1/(sum_out$mean), low = 0)
-          output <- cbind(sum_out[c(1, 2, 3)], output)
-        }
-        
-        if (needs_pooled_all_row(nrow(output))) {
-          pooled_x <- na.omit(data[[dep_name]])
+        tryCatch({
           if (distr == 1) {
-            all_nt <- natural.tolerance.normal(x = pooled_x)
+            sum_out <- summary.continuous(fx = model_text, data = na.omit(data[c(UI1, UI2)]))
+            output <- natural.tolerance.normal.simple(mean = sum_out$mean, variance = sum_out$var)
+            output <- cbind(sum_out[c(1, 2, 3)], output)
           } else if (distr == 2) {
-            all_nt <- natural.tolerance.exp.low(x = pooled_x)
-          } else {
-            all_nt <- natural.tolerance.exp(x = pooled_x)
+            sum_out <- summary.continuous(fx = model_text, data = na.omit(data[c(UI1, UI2)]), stat.min = T)
+            output <- natural.tolerance.exp.low.simple(rate = 1/(sum_out$mean - sum_out$min), low = sum_out$min)
+            output <- cbind(sum_out[c(1, 2, 3)], output)
+          } else if (distr == 3) {
+            sum_out <- summary.continuous(fx = model_text, data = na.omit(data[c(UI1, UI2)]))
+            output <- natural.tolerance.exp.simple(rate = 1/(sum_out$mean), low = 0)
+            output <- cbind(sum_out[c(1, 2, 3)], output)
           }
-          all_row <- output[1, , drop = FALSE]
-          all_row[1, ] <- NA
-          all_row <- label_factor_group_row(all_row, group_cols)
-          all_row$n <- length(pooled_x)
-          for (col in names(all_nt)) {
-            if (col %in% names(all_row)) {
-              all_row[[col]] <- all_nt[[col]]
+          
+          if (needs_pooled_all_row(nrow(output))) {
+            pooled_x <- na.omit(suppressWarnings(as.numeric(data[[dep_name]])))
+            if (length(pooled_x) >= 2) {
+              if (distr == 1) {
+                all_nt <- natural.tolerance.normal(x = pooled_x)
+              } else if (distr == 2) {
+                all_nt <- natural.tolerance.exp.low(x = pooled_x)
+              } else {
+                all_nt <- natural.tolerance.exp(x = pooled_x)
+              }
+              all_row <- output[1, , drop = FALSE]
+              all_row[1, ] <- NA
+              all_row <- label_factor_group_row(all_row, group_cols)
+              all_row$n <- length(pooled_x)
+              for (col in names(all_nt)) {
+                if (col %in% names(all_row)) {
+                  all_row[[col]] <- all_nt[[col]]
+                }
+              }
+              output <- prepend_rows_top(all_row, output)
             }
           }
-          output <- prepend_rows_top(all_row, output)
-        }
+        }, error = function(e) {
+          output <<- data.frame(Error = paste("Calculation error:", e$message))
+        })
       } else {
         return(data.frame())
       }

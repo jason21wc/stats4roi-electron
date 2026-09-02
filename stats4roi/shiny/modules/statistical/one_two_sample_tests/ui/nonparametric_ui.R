@@ -98,17 +98,17 @@ create_nonparametric_one_two_sample_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_np"), "'] == 1"),
-            uiOutput(ns("data_choice_column_np")),
-            uiOutput(ns("ots_np_group_assignment"))
+            uiOutput(ns("data_choice_column_np"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_np"), "'] == 2"),
             uiOutput(ns("data_choice_ref_np")),
             uiOutput(ns("data_choice_data_np")),
             uiOutput(ns("data_choice_g1_np")),
-            uiOutput(ns("data_choice_g2_np")),
-            uiOutput(ns("ots_np_group_assignment"))
+            uiOutput(ns("data_choice_g2_np"))
           ),
+          # Single uiOutput — must not appear in both conditionalPanels (duplicate output IDs)
+          uiOutput(ns("ots_np_group_assignment")),
           uiOutput(ns("ind_or_dep_np_data")),
           uiOutput(ns("np_tests_data")),
           uiOutput(ns("np_mc_pass")),

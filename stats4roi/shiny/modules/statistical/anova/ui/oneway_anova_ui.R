@@ -157,9 +157,9 @@ create_oneway_anova_ui_internal <- function(ns) {
           conditionalPanel(
             condition = "input.type_ow != 2 && input.ow_ph_homogeneous == true",
             ns = ns,
-            DTOutput(ns("ow_ph_homogeneous"))
+            DTOutput(ns("ow_ph_homogeneous_tbl"))
           ),
-          verbatimTextOutput(ns("ow_ph_details"))
+          verbatimTextOutput(ns("ow_ph_details_out"))
         )
       )
     ),

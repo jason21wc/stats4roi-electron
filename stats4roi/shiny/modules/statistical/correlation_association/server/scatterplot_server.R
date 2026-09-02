@@ -31,6 +31,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       
       scat_data <- data.frame(x = x_dat, y = y_dat)
       names(scat_data) <- c(names(data)[as.numeric(x_col)], names(data)[as.numeric(y_col)])
+      scat_data <- na.omit(scat_data)
       
       scat_data
     })
@@ -74,6 +75,11 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       # Make names valid for ggplot
       names(data) <- make.names(names(data))
       
+      # Filter to complete paired cases for x and y
+      complete_mask <- complete.cases(data[[x]], data[[y]])
+      validate(need(sum(complete_mask) >= 2, "Need at least 2 complete paired data points"))
+      data <- data[complete_mask, ]
+      
       x_dat <- data[[x]]
       y_dat <- data[[y]]
       
@@ -107,7 +113,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         }
         if (ci && p_ci) {
           model <- lm(y_dat ~ x_dat)
-          newdata <- data.frame(x_dat = seq(from = min(x_dat), to = max(x_dat), length.out = steps))
+          newdata <- data.frame(x_dat = seq(from = min(x_dat, na.rm = TRUE), to = max(x_dat, na.rm = TRUE), length.out = steps))
           pred <- data.frame(newdata, predict(model, newdata = newdata, interval = "prediction", level = conf))
           output <- p + stat_smooth(method = lm, formula = y ~ x, level = conf, color = color[1]) +
             geom_line(data = pred, aes(x = x_dat, y = lwr), linetype = "dashed", color = col_fill_highlight) +
@@ -116,7 +122,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         }
         if (!ci && p_ci) {
           model <- lm(y_dat ~ x_dat)
-          newdata <- data.frame(x_dat = seq(from = min(x_dat), to = max(x_dat), length.out = steps))
+          newdata <- data.frame(x_dat = seq(from = min(x_dat, na.rm = TRUE), to = max(x_dat, na.rm = TRUE), length.out = steps))
           pred <- data.frame(newdata, predict(model, newdata = newdata, interval = "prediction", level = conf))
           output <- p + stat_smooth(method = lm, formula = y ~ x, level = 0, color = color[1]) +
             geom_line(data = pred, aes(x = x_dat, y = lwr), linetype = "dashed", color = col_fill_highlight) +
@@ -130,7 +136,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         req(!is.null(p_ci), !is.null(ci))
         form_1 <- as.formula(paste("log(", names(data)[y], ")~log(a)+b*", names(data)[x]))
         form_2 <- as.formula(paste(names(data)[y], "~a*exp(b*", names(data)[x], ")"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         
         fm0 <- nls(formula = form_1, start = list(a = 1, b = 1), data = data)
@@ -182,7 +188,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 3) {
         req(!is.null(p_ci), !is.null(ci))
         form_2 <- as.formula(paste(names(data)[y], "~a+b*log(", names(data)[x], ")"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         
         nls_m <- nls(formula = form_2, start = list(a = 1, b = 1), data = data)
@@ -233,7 +239,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 4) {
         req(!is.null(p_ci), !is.null(ci))
         form_2 <- as.formula(paste(names(data)[y], "~a*(", names(data)[x], ")+0"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         
         nls_m <- nls(formula = form_2, start = list(a = 1), data = data)
@@ -280,7 +286,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 6) {
         req(!is.null(p_ci), !is.null(ci))
         form_2 <- as.formula(paste(names(data)[y], "~a+b/(", names(data)[x], ")"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         
         nls_m <- nls(formula = form_2, start = list(a = 1, b = 1), data = data)
@@ -331,7 +337,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 7) {
         req(!is.null(p_ci), !is.null(ci))
         form_2 <- as.formula(paste(names(data)[y], "~a*b^(", names(data)[x], ")"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         nls_m <- nls(formula = form_2, start = list(a = 1, b = 1), data = data)
         nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
@@ -382,7 +388,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         req(!is.null(p_ci), !is.null(ci))
         fm0 <- nls(formula = log(y_dat) ~ a + b * x_dat, start = list(a = 1, b = 1), data = data)
         form_2 <- as.formula(paste(names(data)[y], "~exp(a+b*", names(data)[x], ")"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         nls_m <- nls(formula = form_2, start = coef(fm0), data = data)
         nls_m$call$formula <- form_2  # Module scope: predictNLS evals in package; store value so eval() gets formula not symbol
@@ -437,7 +443,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 10) {
         req(!is.null(p_ci), !is.null(ci))
         model <- lm(y_dat ~ x_dat + I(x_dat^2))
-        new_dat <- data.frame(x_dat = seq(from = (min(x_dat)), to = max(x_dat), length.out = steps))
+        new_dat <- data.frame(x_dat = seq(from = min(x_dat, na.rm = TRUE), to = max(x_dat, na.rm = TRUE), length.out = steps))
         
         pred_pred <- predict(model, interval = "prediction", newdata = new_dat, level = conf)
         pred_pred_data <- data.frame(new_dat, pred_pred)
@@ -473,7 +479,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 11) {
         req(!is.null(p_ci), !is.null(ci))
         model <- lm(y_dat ~ x_dat + I(x_dat^2) + I(x_dat^3))
-        new_dat <- data.frame(x_dat = seq(from = (min(x_dat)), to = max(x_dat), length.out = steps))
+        new_dat <- data.frame(x_dat = seq(from = min(x_dat, na.rm = TRUE), to = max(x_dat, na.rm = TRUE), length.out = steps))
         
         pred_pred <- predict(model, interval = "prediction", newdata = new_dat, level = conf)
         pred_pred_data <- data.frame(new_dat, pred_pred)
@@ -510,7 +516,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 12) {
         req(!is.null(p_ci), !is.null(ci))
         model <- lm(y_dat ~ x_dat + I(x_dat^2) + I(x_dat^3) + I(x_dat^4))
-        new_dat <- data.frame(x_dat = seq(from = (min(x_dat)), to = max(x_dat), length.out = steps))
+        new_dat <- data.frame(x_dat = seq(from = min(x_dat, na.rm = TRUE), to = max(x_dat, na.rm = TRUE), length.out = steps))
         
         pred_pred <- predict(model, interval = "prediction", newdata = new_dat, level = conf)
         pred_pred_data <- data.frame(new_dat, pred_pred)
@@ -548,7 +554,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       else if (curve_fit == 13) {
         req(!is.null(p_ci), !is.null(ci))
         model <- lm(y_dat ~ x_dat + I(x_dat^2) + I(x_dat^3) + I(x_dat^4) + I(x_dat^5))
-        new_dat <- data.frame(x_dat = seq(from = (min(x_dat)), to = max(x_dat), length.out = steps))
+        new_dat <- data.frame(x_dat = seq(from = min(x_dat, na.rm = TRUE), to = max(x_dat, na.rm = TRUE), length.out = steps))
         
         pred_pred <- predict(model, interval = "prediction", newdata = new_dat, level = conf)
         pred_pred_data <- data.frame(new_dat, pred_pred)
@@ -588,7 +594,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         req(!is.null(p_ci), !is.null(ci))
         form_1 <- as.formula(paste("log(", names(data)[y], ")~a+b/", names(data)[x]))
         form_2 <- as.formula(paste(names(data)[y], "~exp(a+b/", names(data)[x], ")"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         
         fm0 <- nls(formula = form_1, start = list(a = 1, b = 1), data = data)
@@ -641,7 +647,7 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
         req(!is.null(p_ci), !is.null(ci))
         form_1 <- as.formula(paste("log(", names(data)[y], ")~log(", (names(data)[x]), ")"))
         form_2 <- as.formula(paste(names(data)[y], "~a*", names(data)[x], "^b"))
-        new_dat <- data.frame(seq(from = min(data[, x]), to = max(data[, x]), length.out = steps))
+        new_dat <- data.frame(seq(from = min(data[, x], na.rm = TRUE), to = max(data[, x], na.rm = TRUE), length.out = steps))
         names(new_dat) <- names(data)[x]
         
         fm0 <- lm(formula = form_1, data = data)
@@ -726,6 +732,11 @@ create_scatterplot_worker <- function(id, filtered_data, input_values, choice_co
       
       x <- as.numeric(x_col)
       y <- as.numeric(y_col)
+      
+      # Filter to complete paired cases for x and y
+      complete_mask <- complete.cases(data[, x], data[, y])
+      validate(need(sum(complete_mask) >= 2, "Need at least 2 complete paired data points for statistics"))
+      data <- data[complete_mask, ]
       
       corr_tests <- 1  # Always use test 1 (Pearson r one-sample) for scatterplot stats
       beta_statement <- "Power to reject the null if the observed difference was real = "

@@ -84,17 +84,17 @@ create_means_dispersion_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_md"), "'] == 1"),
-            uiOutput(ns("data_choice_column")),
-            uiOutput(ns("ots_md_group_assignment"))
+            uiOutput(ns("data_choice_column"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_md"), "'] == 2"),
             uiOutput(ns("data_choice_ref")),
             uiOutput(ns("data_choice_data")),
             uiOutput(ns("data_choice_g1")),
-            uiOutput(ns("data_choice_g2")),
-            uiOutput(ns("ots_md_group_assignment"))
+            uiOutput(ns("data_choice_g2"))
           ),
+          # Single uiOutput — must not appear in both conditionalPanels (duplicate output IDs)
+          uiOutput(ns("ots_md_group_assignment")),
           uiOutput(ns("md_data_test_selection")),
           uiOutput(ns("md_t_dep")),
           uiOutput(ns("md_t_type")),

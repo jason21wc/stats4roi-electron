@@ -138,17 +138,27 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             col_data <- spec$data
             
             tryCatch({
-              n_valid <- sum(!is.na(spec$x))
-              if (n_valid <= 25) {
+              x_num <- suppressWarnings(as.numeric(spec$x))
+              n_valid <- sum(!is.na(x_num))
+              if (n_valid == 0) {
+                col_result <- data.frame(
+                  Variable = col_name,
+                  n = 0L,
+                  missing = length(spec$x),
+                  stringsAsFactors = FALSE
+                )
+              } else if (n_valid <= 25) {
+                clean_df <- data.frame(setNames(list(x_num[!is.na(x_num)]), col_name), stringsAsFactors = FALSE)
                 col_result <- summary.all.variables(
-                  data = col_data,
+                  data = clean_df,
                   stat.sd = TRUE,
                   stat.ad.test = 2,
                   stat.sw.test = 2
                 )
               } else {
+                clean_df <- data.frame(setNames(list(x_num[!is.na(x_num)]), col_name), stringsAsFactors = FALSE)
                 col_result <- summary.all.variables(
-                  data = col_data,
+                  data = clean_df,
                   stat.sd = TRUE,
                   stat.skew.test = 2,
                   stat.kurt.test = 2
@@ -158,7 +168,7 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             }, error = function(e) {
               results_list[[k]] <<- data.frame(
                 Variable = col_name,
-                n = sum(!is.na(spec$x)),
+                n = sum(!is.na(suppressWarnings(as.numeric(spec$x)))),
                 Error = paste("Could not process:", e$message)
               )
             })
@@ -182,16 +192,28 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             col_data <- spec$data
             
             tryCatch({
-              col_result <- eval(parse(text = paste(
-                "summary.all.variables(data = col_data, stat.sd = T,",
-                test_sel,
-                ")"
-              )))
+              x_num <- suppressWarnings(as.numeric(spec$x))
+              n_valid <- sum(!is.na(x_num))
+              if (n_valid == 0) {
+                col_result <- data.frame(
+                  Variable = col_name,
+                  n = 0L,
+                  missing = length(spec$x),
+                  stringsAsFactors = FALSE
+                )
+              } else {
+                clean_df <- data.frame(setNames(list(x_num[!is.na(x_num)]), col_name), stringsAsFactors = FALSE)
+                col_result <- eval(parse(text = paste(
+                  "summary.all.variables(data = clean_df, stat.sd = T,",
+                  test_sel,
+                  ")"
+                )))
+              }
               results_list[[k]] <- col_result
             }, error = function(e) {
               results_list[[k]] <<- data.frame(
                 Variable = col_name,
-                n = sum(!is.na(spec$x)),
+                n = sum(!is.na(suppressWarnings(as.numeric(spec$x)))),
                 Error = paste("Could not process:", e$message)
               )
             })
@@ -215,6 +237,17 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
           # data_col is the index within the selected data columns (UI2), need to map to original data
           selected_data_cols <- as.numeric(selections$eda_UI2)
           dep_name <- colnames(data)[selected_data_cols[as.numeric(data_col)]]
+          
+          dep_name_m <- make.names(dep_name)
+          dep_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+          if (sum(!is.na(dep_x)) == 0) {
+            return(list(
+              data = data.frame(Message = paste0("Selected dependent column '", dep_name, "' contains no valid numeric observations.")),
+              p_columns = character(0),
+              confidence = conf
+            ))
+          }
+          
           indep <- colnames(data)[as.numeric(selections$eda_UI1)]
           indep_names <- paste(indep, collapse = "+")
           model_text <- formula(paste(dep_name, " ~ ", indep_names))

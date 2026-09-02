@@ -120,3 +120,122 @@ check must still work when the installed package is broken.
 
 ---
 *Append new lessons below this line.*
+
+### 2026-08-30 — Pin the Node ABI for Electron Forge Makers
+
+**Context:** The default Homebrew PATH selected Node 25.2.0 / ABI 141, but the installed
+`macos-alias` native module was compiled for Node 22 / ABI 127. Forge packaged the app
+but failed when the DMG maker loaded that module.
+**Lesson:** Check `node -p process.versions.modules` before reusing `node_modules`. Pin
+the matching toolchain rather than opportunistically rebuilding native dependencies
+under whichever Node happens to be first on PATH.
+**Apply When:** Any Electron build that reuses installed native modules.
+
+### 2026-08-30 — DMG Creation Depends on DiskArbitration, Not File Permission
+
+**Context:** Forge successfully created the ARM64 `.app`, but `hdiutil create` returned
+`Device not configured` in normal and command-escalated runs. Tiny HFS+ and APFS probes
+failed identically, while `diskutil` reported DiskManagement unavailable.
+**Lesson:** This failure is an execution-locus boundary. Preserve the packaged app and
+move only the disk-image maker to a normal macOS login process; changing DMG format or
+Electron configuration does not repair unavailable DiskArbitration.
+**Apply When:** `hdiutil` fails after application packaging succeeds, especially inside
+an agent or service process.
+
+### 2026-08-30 — Upstream Test Helpers Assume Repository-Root Working Directory
+
+**Context:** `testthat::test_file()` ran an upstream EDA test under `tests/testthat`,
+where its helper could not find relative `modules/...` paths and produced three false
+failures. Sourcing the same file from repository root passed all six cases.
+**Lesson:** Separate harness working-directory failures from application failures before
+modifying upstream code. Re-run from the path the helper assumes and confirm the actual
+assertions execute.
+**Apply When:** An upstream R test fails before reaching application logic with a
+relative-path error.
+
+### 2026-08-30 — Permission Labels Are Not Capability Evidence
+
+**Context:** Selecting Full access in the Codex TUI widened filesystem access to `/`
+and removed shell approval prompts, but `diskutil` still could not use DiskManagement
+and binding a socket to `127.0.0.1` still returned `Operation not permitted`.
+**Lesson:** Verify the exact OS capability a workflow needs after changing an agent's
+permission mode. A broad filesystem profile does not prove access to macOS services or
+local sockets.
+**Apply When:** Agent-hosted macOS packaging, mounts, localhost servers, or GUI/service
+automation depend on capabilities beyond file access.
+
+### 2026-08-30 — Diagnose the Owner Before Bypassing an Active-Writer Lock
+
+**Context:** Resuming a Codex thread from a second Warp pane returned `already has an
+active writer` even after unrelated applications were closed. The tempting workarounds
+were to fork the thread, delete its lock file, or stop a broader Codex process.
+**Lesson:** Codex enforces one live writer per thread. Establish ownership with `lsof`
+against both the session JSONL and its thread-writer lock, then map the process ancestry
+and any additional session files it owns. Here the owner was the current conversation's
+Codex process, launched by the project-local Warp shell; its other session files were
+this conversation's child agents. The lock was correct, not stale. Exit the owning TUI
+cleanly before resuming the same thread. Delete or kill only if a fresh ownership check
+proves the writer is orphaned.
+**Apply When:** Codex reports `thread/resume failed` with `already has an active writer`.
+
+### 2026-08-30 — An Absolute npm Path Does Not Pin Child Node
+
+**Context:** Running `/.../node/v22.18.0/bin/npm run make` still executed Forge under
+Node 25 / ABI 141 because npm's `env node` shebang and child scripts resolved `node`
+from the inherited `PATH`. The ABI-127 `macos-alias` module then failed at DMG creation.
+**Lesson:** Pin the process tree, not only the top-level executable. Put the intended
+Node `bin` directory first in `PATH`, then verify the ABI in that environment before
+running npm/Forge.
+**Apply When:** Node workflows use native modules or spawn child Node processes.
+
+### 2026-08-30 — Verify the Loaded Runtime, Not Just the Bundled Files
+
+**Context:** The app contained a complete R 4.5.1 runtime, but the executable's absolute
+framework install names caused the developer Mac's system R 4.5.2 libraries to load.
+Setting `DYLD_LIBRARY_PATH` in Electron did not work because macOS strips `DYLD_*`
+variables before executing a shell script. Setting it inside R's wrapper did.
+**Lesson:** A present bundled runtime is not proof it is used. Inspect the live process's
+mapped libraries. For script-wrapped macOS executables, establish loader variables inside
+the wrapper after launch, then verify `libR`/equivalent resolves from the bundle.
+**Apply When:** Packaging self-contained macOS runtimes with native libraries, especially
+when the build machine also has a system installation.
+
+### 2026-08-30 — Test the User Contract, Not Parity With Existing Code
+
+**Context:** Upstream binomial tests passed all 37 assertions, but the excluded
+upper-tail test deliberately matched Poisson's existing `X-1` adjustment. The UI says
+`X > 7`, whose discrete equivalent is `X >= 8`; the implementation instead calculated
+`X >= 6`. The test made a regression look intentional by asserting parity with another
+incorrect implementation.
+**Lesson:** A regression test can be an echo chamber. For statistical changes, derive
+at least one expected value independently from the UI's mathematical contract and test
+boundary values, rather than treating an adjacent implementation as the oracle.
+**Apply When:** Syncing upstream changes to probability bounds, inequalities, rounding,
+or other transformations where a one-step direction error can still produce plausible
+output.
+
+### 2026-08-30 — Exercise Data-Damage Tests Through the Real Import Types
+
+**Context:** New EDA damage-tolerance tests used character columns, while the app import
+pipeline converts characters to factors. The implementation then used
+`as.numeric(factor)`, turning text values into factor level codes; `10, 20, bad` became
+`1, 2, 3` and silently passed as numeric data.
+**Lesson:** Robustness tests must reproduce the types created by the production input
+pipeline. For R factors, numeric coercion must go through `as.character()` or a shared
+safe-coercion helper. Unit tests on character vectors do not cover factor behavior.
+**Apply When:** Testing imported CSV/Excel data, mixed-type columns, missing-value
+handling, or any R path that accepts factors and coerces to numeric.
+
+### 2026-09-01 — Factor Storage and Numeric Analysis Are Separate Contracts
+
+**Context:** Upstream correctly required factor storage for EDA grouping and labels,
+but treated that as justification for `as.numeric(factor)` in measurement paths. The
+same imported factor could be chosen as a group or as dependent data. In the latter
+role, the app computed `mean=2, sd=1` for both `10, 20, bad` and `Pass, Fail, Pending`
+because it analyzed internal level IDs `1, 2, 3`.
+**Lesson:** Decide conversion by semantic role, not storage class. Preserve factors for
+categorical predictors and grouping. When a factor is selected as a numeric measurement,
+parse its labels through character form or reject it as nonnumeric; never treat level
+IDs as measured values. Test both roles through the production import pipeline.
+**Apply When:** R analytical interfaces let users choose the same imported column as a
+factor, predictor, dependent measurement, or general EDA column.

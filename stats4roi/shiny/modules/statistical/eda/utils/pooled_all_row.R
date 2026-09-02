@@ -11,14 +11,20 @@ needs_pooled_all_row <- function(n_groups) {
 }
 
 pool_data_frame_columns <- function(dat) {
+  vals <- suppressWarnings(as.numeric(unlist(dat, use.names = FALSE)))
+  vals <- vals[!is.na(vals)]
+  if (length(vals) == 0L) {
+    return(data.frame(All = numeric(0), stringsAsFactors = FALSE))
+  }
   data.frame(
-    All = as.numeric(unlist(dat, use.names = FALSE)),
+    All = vals,
     stringsAsFactors = FALSE
   )
 }
 
 pool_numeric_vector <- function(...) {
-  as.numeric(na.omit(unlist(list(...), use.names = FALSE)))
+  vals <- suppressWarnings(as.numeric(na.omit(unlist(list(...), use.names = FALSE))))
+  vals[!is.na(vals)]
 }
 
 # Resolve dependent column for factor-mode tabs (supports both UI conventions:
@@ -147,10 +153,12 @@ normality_column_specs_list <- function(norm_dat) {
   })
   if (needs_pooled_all_row(ncol(norm_dat))) {
     pooled <- pool_data_frame_columns(norm_dat)
-    specs <- c(
-      list(list(name = POOLED_ALL_LABEL, data = pooled, x = pooled[[1]])),
-      specs
-    )
+    if (nrow(pooled) > 0) {
+      specs <- c(
+        list(list(name = POOLED_ALL_LABEL, data = pooled, x = pooled[[1]])),
+        specs
+      )
+    }
   }
   specs
 }
@@ -228,7 +236,12 @@ prepend_normality_factor_all_row <- function(output, data, dep_name, group_cols,
   }
   
   dep_name_m <- make.names(dep_name)
-  pooled_dat <- data.frame(All = data[[dep_name_m]], stringsAsFactors = FALSE)
+  pooled_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+  pooled_x <- pooled_x[!is.na(pooled_x)]
+  if (length(pooled_x) == 0L) {
+    return(output)
+  }
+  pooled_dat <- data.frame(All = pooled_x, stringsAsFactors = FALSE)
   
   tryCatch({
     pooled_result <- normality_pooled_summary(pooled_dat, auto, test, output)

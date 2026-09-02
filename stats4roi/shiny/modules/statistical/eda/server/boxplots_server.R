@@ -171,12 +171,16 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
                                        1, box_xlab(), box_ylab(), box_title(), box_violin())
             
             # Filter out NAs (following original app pattern)
-            clean_data <- data[which(!is.na(data[,1])), , drop = FALSE]
+            clean_vals <- suppressWarnings(as.numeric(data[, 1]))
+            clean_vals <- clean_vals[!is.na(clean_vals)]
+            if (length(clean_vals) == 0) {
+              return(NULL)
+            }
             
             # Create data frame with column name as x-axis label (like original app)
             plot_data <- data.frame(
               ID = names(data)[1],  # Use actual column name
-              Data = clean_data[,1]
+              Data = clean_vals
             )
             
             p <- ggplot(plot_data, aes(x = ID, y = Data))
@@ -209,11 +213,15 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
             plot_title <- generate_title(data_type, data, selections$eda_UI1, selections$eda_UI2, 
                                        1, box_xlab(), box_ylab(), box_title(), box_violin())
             
-            data_long <- data %>%
+            num_data <- as.data.frame(lapply(data, function(col) suppressWarnings(as.numeric(col))))
+            data_long <- num_data %>%
               tidyr::pivot_longer(everything(), names_to = "variable", values_to = "value")
             
             # Filter out NAs (following original app pattern)
             data_long <- data_long[which(!is.na(data_long$value)), ]
+            if (nrow(data_long) == 0) {
+              return(NULL)
+            }
             
             p <- ggplot(data_long, aes(x = variable, y = value))
             
@@ -257,7 +265,7 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
           group_var <- interaction(data[, factors, drop = FALSE], sep = ", ")
           
           # Get dependent variable (following original app)
-          dep_var <- data[, data_col_idx]
+          dep_var <- suppressWarnings(as.numeric(data[, data_col_idx]))
           
           # Generate title for factor analysis
           plot_title <- generate_title(data_type, data, selections$eda_UI1, selections$eda_UI2, 
@@ -273,6 +281,9 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
           
           # Filter out NAs (following original app pattern)
           plot_data <- plot_data[which(!is.na(plot_data$Data)), ]
+          if (nrow(plot_data) == 0) {
+            return(NULL)
+          }
           
           if (nrow(plot_data) == 0) {
             return(NULL)

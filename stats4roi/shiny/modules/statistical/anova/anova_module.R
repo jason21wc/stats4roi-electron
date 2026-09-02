@@ -641,11 +641,12 @@ create_anova_server <- function(id, filtered_data, reactive_color_palette) {
       oneway_posthoc_worker$posthoc_table()
     })
 
-    output$ow_ph_homogeneous <- renderDT({
+    # Output IDs must not collide with checkbox inputs ow_ph_homogeneous / ow_ph_details
+    output$ow_ph_homogeneous_tbl <- renderDT({
       oneway_posthoc_worker$posthoc_homogeneous_subsets()
     })
     
-    output$ow_ph_details <- renderPrint({
+    output$ow_ph_details_out <- renderPrint({
       oneway_posthoc_worker$posthoc_details()
     })
     

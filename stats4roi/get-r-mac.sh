@@ -29,6 +29,14 @@ rm -r R-fw.pkg R.framework
 sed -i.bak '/^R_HOME_DIR=/d' bin/R
 sed -i.bak 's;/Library/Frameworks/R.framework/Resources;${R_HOME};g' \
 bin/R
+awk '
+  { print }
+  $0 == "export R_HOME" {
+    print "DYLD_LIBRARY_PATH=\"${R_HOME}/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}\""
+    print "export DYLD_LIBRARY_PATH"
+  }
+' bin/R > bin/R.patched
+mv bin/R.patched bin/R
 chmod +x bin/R
 rm -f bin/R.bak
 

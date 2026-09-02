@@ -158,17 +158,17 @@ create_proportions_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_bi"), "'] == 1"),
-            uiOutput(ns("data_choice_column_bi")),
-            uiOutput(ns("ots_bi_group_assignment"))
+            uiOutput(ns("data_choice_column_bi"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_bi"), "'] == 2"),
             uiOutput(ns("data_choice_ref_bi")),
             uiOutput(ns("data_choice_data_bi")),
             uiOutput(ns("data_choice_g1_bi")),
-            uiOutput(ns("data_choice_g2_bi")),
-            uiOutput(ns("ots_bi_group_assignment"))
+            uiOutput(ns("data_choice_g2_bi"))
           ),
+          # Single uiOutput — must not appear in both conditionalPanels (duplicate output IDs)
+          uiOutput(ns("ots_bi_group_assignment")),
           uiOutput(ns("data_bi_success1")),
           uiOutput(ns("data_bi_success2")),
           numericInput(

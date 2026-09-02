@@ -184,8 +184,14 @@ percentile_column_names <- function(probs) {
 
 append_percentiles <- function(base_row, x, probs, type = DEFAULT_QUANTILE_TYPE) {
   type <- normalize_quantile_type(type)
-  q <- stats::quantile(x, probs = probs, type = type, na.rm = TRUE)
-  pct <- as.data.frame(t(as.numeric(q)), stringsAsFactors = FALSE)
+  x_num <- suppressWarnings(as.numeric(x))
+  x_clean <- x_num[!is.na(x_num)]
+  if (length(x_clean) == 0L) {
+    pct <- as.data.frame(as.list(rep(NA_real_, length(probs))), stringsAsFactors = FALSE)
+  } else {
+    q <- stats::quantile(x_clean, probs = probs, type = type, na.rm = TRUE)
+    pct <- as.data.frame(t(as.numeric(q)), stringsAsFactors = FALSE)
+  }
   names(pct) <- percentile_column_names(probs)
   cbind(base_row, pct)
 }
@@ -196,14 +202,15 @@ append_percentiles_type6 <- function(base_row, x, probs) {
 
 compute_quantiles_column_mode <- function(quant_dat, probs, type = DEFAULT_QUANTILE_TYPE) {
   rows <- lapply(names(quant_dat), function(nm) {
-    x <- quant_dat[[nm]]
+    x_raw <- quant_dat[[nm]]
+    x_num <- suppressWarnings(as.numeric(x_raw))
     base <- data.frame(
       dv.name = nm,
-      n = sum(!is.na(x)),
-      missing = sum(is.na(x)),
+      n = sum(!is.na(x_num)),
+      missing = sum(is.na(x_num)),
       stringsAsFactors = FALSE
     )
-    append_percentiles(base, x, probs, type = type)
+    append_percentiles(base, x_num, probs, type = type)
   })
   do.call(rbind, rows)
 }
@@ -216,24 +223,25 @@ compute_quantiles_factor_mode <- function(data, dep_name, group_cols, probs, typ
   }
   groups <- split(data, group_key, drop = TRUE)
   rows <- lapply(groups, function(sub) {
-    x <- sub[[dep_name]]
+    x_raw <- sub[[dep_name]]
+    x_num <- suppressWarnings(as.numeric(x_raw))
     base <- sub[1, group_cols, drop = FALSE]
-    base$n <- sum(!is.na(x))
-    base$missing <- sum(is.na(x))
-    append_percentiles(base, x, probs, type = type)
+    base$n <- sum(!is.na(x_num))
+    base$missing <- sum(is.na(x_num))
+    append_percentiles(base, x_num, probs, type = type)
   })
   do.call(rbind, rows)
 }
 
 compute_quantiles_pooled_all_column <- function(quant_dat, probs, label = POOLED_ALL_LABEL, type = DEFAULT_QUANTILE_TYPE) {
-  x <- as.numeric(unlist(quant_dat, use.names = FALSE))
+  x_num <- suppressWarnings(as.numeric(unlist(quant_dat, use.names = FALSE)))
   base <- data.frame(
     dv.name = label,
-    n = sum(!is.na(x)),
-    missing = sum(is.na(x)),
+    n = sum(!is.na(x_num)),
+    missing = sum(is.na(x_num)),
     stringsAsFactors = FALSE
   )
-  append_percentiles(base, x, probs, type = type)
+  append_percentiles(base, x_num, probs, type = type)
 }
 
 compute_quantiles_pooled_all_factor <- function(
@@ -244,10 +252,11 @@ compute_quantiles_pooled_all_factor <- function(
   label = POOLED_ALL_LABEL,
   type = DEFAULT_QUANTILE_TYPE
 ) {
-  x <- data[[dep_name]]
+  x_raw <- data[[dep_name]]
+  x_num <- suppressWarnings(as.numeric(x_raw))
   base <- data.frame(matrix(label, nrow = 1L, ncol = length(group_cols)), stringsAsFactors = FALSE)
   names(base) <- group_cols
-  base$n <- sum(!is.na(x))
-  base$missing <- sum(is.na(x))
-  append_percentiles(base, x, probs, type = type)
+  base$n <- sum(!is.na(x_num))
+  base$missing <- sum(is.na(x_num))
+  append_percentiles(base, x_num, probs, type = type)
 }

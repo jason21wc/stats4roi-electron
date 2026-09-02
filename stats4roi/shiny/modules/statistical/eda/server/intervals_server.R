@@ -171,27 +171,40 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
           stdev_u <- NULL
           
           for (int in loop) {
-            tryCatch({
-              t_out <- t.test.onesample(x = data[UI1][, int], conf.level = conf)
-              mean_ci_l <- c(mean_ci_l, t_out[["conf.int"]][1])
-              mean_ci_u <- c(mean_ci_u, t_out[["conf.int"]][2])
-              df_ <- t_out[["estimate"]][["df"]]
-              samp_size <- c(samp_size, 1 + df_)
-              means <- c(means, t_out[["estimate"]][["sample.mean"]])
-              s_ <- t_out[["estimate"]][["sd"]]
-              stdev <- c(stdev, s_)
-              stdev_l <- c(stdev_l, t_out[["estimate"]][["sd.lowerci"]])
-              stdev_u <- c(stdev_u, t_out[["estimate"]][["sd.upperci"]])
-            }, error = function(e) {
-              warning("Error in confidence interval calculation for column ", int, ": ", e$message)
-              mean_ci_l <<- c(mean_ci_l, NA)
-              mean_ci_u <<- c(mean_ci_u, NA)
-              samp_size <<- c(samp_size, NA)
-              means <<- c(means, NA)
-              stdev <<- c(stdev, NA)
-              stdev_l <<- c(stdev_l, NA)
-              stdev_u <<- c(stdev_u, NA)
-            })
+            x_raw <- data[UI1][, int]
+            x_num <- suppressWarnings(as.numeric(x_raw))
+            x_clean <- x_num[!is.na(x_num)]
+            if (length(x_clean) >= 2) {
+              tryCatch({
+                t_out <- t.test.onesample(x = x_clean, conf.level = conf)
+                mean_ci_l <- c(mean_ci_l, t_out[["conf.int"]][1])
+                mean_ci_u <- c(mean_ci_u, t_out[["conf.int"]][2])
+                df_ <- t_out[["estimate"]][["df"]]
+                samp_size <- c(samp_size, 1 + df_)
+                means <- c(means, t_out[["estimate"]][["sample.mean"]])
+                s_ <- t_out[["estimate"]][["sd"]]
+                stdev <- c(stdev, s_)
+                stdev_l <- c(stdev_l, t_out[["estimate"]][["sd.lowerci"]])
+                stdev_u <- c(stdev_u, t_out[["estimate"]][["sd.upperci"]])
+              }, error = function(e) {
+                warning("Error in confidence interval calculation for column ", int, ": ", e$message)
+                mean_ci_l <<- c(mean_ci_l, NA)
+                mean_ci_u <<- c(mean_ci_u, NA)
+                samp_size <<- c(samp_size, length(x_clean))
+                means <<- c(means, if (length(x_clean) == 1) x_clean[1] else NA)
+                stdev <<- c(stdev, NA)
+                stdev_l <<- c(stdev_l, NA)
+                stdev_u <<- c(stdev_u, NA)
+              })
+            } else {
+              mean_ci_l <- c(mean_ci_l, NA)
+              mean_ci_u <- c(mean_ci_u, NA)
+              samp_size <- c(samp_size, length(x_clean))
+              means <- c(means, if (length(x_clean) == 1) x_clean[1] else NA)
+              stdev <- c(stdev, NA)
+              stdev_l <- c(stdev_l, NA)
+              stdev_u <- c(stdev_u, NA)
+            }
           }
           
           output <- data.frame(
@@ -207,22 +220,24 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
           
           if (needs_pooled_all_row(length(UI1))) {
             pooled_x <- pool_numeric_vector(data[UI1])
-            tryCatch({
-              t_out <- t.test.onesample(x = pooled_x, conf.level = conf)
-              all_row <- data.frame(
-                Column = POOLED_ALL_LABEL,
-                n = 1 + t_out[["estimate"]][["df"]],
-                Mean_L = t_out[["conf.int"]][1],
-                Mean = t_out[["estimate"]][["sample.mean"]],
-                Mean_U = t_out[["conf.int"]][2],
-                SD_L = t_out[["estimate"]][["sd.lowerci"]],
-                SD = t_out[["estimate"]][["sd"]],
-                SD_U = t_out[["estimate"]][["sd.upperci"]]
-              )
-              output <- prepend_rows_top(all_row, output)
-            }, error = function(e) {
-              warning("Error in pooled confidence interval: ", e$message)
-            })
+            if (length(pooled_x) >= 2) {
+              tryCatch({
+                t_out <- t.test.onesample(x = pooled_x, conf.level = conf)
+                all_row <- data.frame(
+                  Column = POOLED_ALL_LABEL,
+                  n = 1 + t_out[["estimate"]][["df"]],
+                  Mean_L = t_out[["conf.int"]][1],
+                  Mean = t_out[["estimate"]][["sample.mean"]],
+                  Mean_U = t_out[["conf.int"]][2],
+                  SD_L = t_out[["estimate"]][["sd.lowerci"]],
+                  SD = t_out[["estimate"]][["sd"]],
+                  SD_U = t_out[["estimate"]][["sd.upperci"]]
+                )
+                output <- prepend_rows_top(all_row, output)
+              }, error = function(e) {
+                warning("Error in pooled confidence interval: ", e$message)
+              })
+            }
           }
           
         } else {
@@ -240,64 +255,76 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
           )
           
           for (i in 1:num_col) {
-            tryCatch({
-              subdata <- data.frame(na.omit(data[UI1][, i]))
-              names(subdata) <- names(data)[UI1][i]
-              
-              # Create posteriors using bayesboot
-              output$n[i] <- nrow(subdata)
-              boot_mean <- bayesboot(subdata[[1]], weighted.mean, use.weights = TRUE)
-              boot_sd <- bayesboot(subdata[[1]], pop.sd)
-              
-              ci_mean <- ci(boot_mean, method = b_int_type, ci = conf)
-              ci_std <- ci(boot_sd, method = b_int_type, ci = conf)
-              
-              output$Mean_L[i] <- ci_mean$CI_low
-              output$Mean[i] <- mean(boot_mean$V1)
-              output$Mean_U[i] <- ci_mean$CI_high
-              output$SD_L[i] <- ci_std$CI_low
-              output$SD[i] <- mean(boot_sd$V1)
-              output$SD_U[i] <- ci_std$CI_high
-            }, error = function(e) {
-              warning("Error in credible interval calculation for column ", i, ": ", e$message)
-              output$n[i] <<- NA
-              output$Mean_L[i] <<- NA
-              output$Mean[i] <<- NA
-              output$Mean_U[i] <<- NA
-              output$SD_L[i] <<- NA
-              output$SD[i] <<- NA
-              output$SD_U[i] <<- NA
-            })
+            x_raw <- data[UI1][, i]
+            x_num <- suppressWarnings(as.numeric(x_raw))
+            x_clean <- x_num[!is.na(x_num)]
+            if (length(x_clean) >= 2) {
+              tryCatch({
+                subdata <- data.frame(x = x_clean)
+                output$n[i] <- nrow(subdata)
+                boot_mean <- bayesboot(subdata[[1]], weighted.mean, use.weights = TRUE)
+                boot_sd <- bayesboot(subdata[[1]], pop.sd)
+                
+                ci_mean <- ci(boot_mean, method = b_int_type, ci = conf)
+                ci_std <- ci(boot_sd, method = b_int_type, ci = conf)
+                
+                output$Mean_L[i] <- ci_mean$CI_low
+                output$Mean[i] <- mean(boot_mean$V1)
+                output$Mean_U[i] <- ci_mean$CI_high
+                output$SD_L[i] <- ci_std$CI_low
+                output$SD[i] <- mean(boot_sd$V1)
+                output$SD_U[i] <- ci_std$CI_high
+              }, error = function(e) {
+                warning("Error in credible interval calculation for column ", i, ": ", e$message)
+                output$n[i] <<- length(x_clean)
+                output$Mean_L[i] <<- NA
+                output$Mean[i] <<- if (length(x_clean) == 1) x_clean[1] else NA
+                output$Mean_U[i] <<- NA
+                output$SD_L[i] <<- NA
+                output$SD[i] <<- NA
+                output$SD_U[i] <<- NA
+              })
+            } else {
+              output$n[i] <- length(x_clean)
+              output$Mean_L[i] <- NA
+              output$Mean[i] <- if (length(x_clean) == 1) x_clean[1] else NA
+              output$Mean_U[i] <- NA
+              output$SD_L[i] <- NA
+              output$SD[i] <- NA
+              output$SD_U[i] <- NA
+            }
           }
           
           if (needs_pooled_all_row(num_col)) {
-            tryCatch({
-              pooled_x <- pool_numeric_vector(data[UI1])
-              subdata <- data.frame(x = pooled_x)
-              output$n <- c(NA, output$n)
-              output$Mean_L <- c(NA, output$Mean_L)
-              output$Mean <- c(NA, output$Mean)
-              output$Mean_U <- c(NA, output$Mean_U)
-              output$SD_L <- c(NA, output$SD_L)
-              output$SD <- c(NA, output$SD)
-              output$SD_U <- c(NA, output$SD_U)
-              output$Column <- c(POOLED_ALL_LABEL, output$Column)
-              
-              boot_mean <- bayesboot(subdata[[1]], weighted.mean, use.weights = TRUE)
-              boot_sd <- bayesboot(subdata[[1]], pop.sd)
-              ci_mean <- ci(boot_mean, method = b_int_type, ci = conf)
-              ci_std <- ci(boot_sd, method = b_int_type, ci = conf)
-              
-              output$n[1] <- nrow(subdata)
-              output$Mean_L[1] <- ci_mean$CI_low
-              output$Mean[1] <- mean(boot_mean$V1)
-              output$Mean_U[1] <- ci_mean$CI_high
-              output$SD_L[1] <- ci_std$CI_low
-              output$SD[1] <- mean(boot_sd$V1)
-              output$SD_U[1] <- ci_std$CI_high
-            }, error = function(e) {
-              warning("Error in pooled credible interval: ", e$message)
-            })
+            pooled_x <- pool_numeric_vector(data[UI1])
+            if (length(pooled_x) >= 2) {
+              tryCatch({
+                subdata <- data.frame(x = pooled_x)
+                output$n <- c(NA, output$n)
+                output$Mean_L <- c(NA, output$Mean_L)
+                output$Mean <- c(NA, output$Mean)
+                output$Mean_U <- c(NA, output$Mean_U)
+                output$SD_L <- c(NA, output$SD_L)
+                output$SD <- c(NA, output$SD)
+                output$SD_U <- c(NA, output$SD_U)
+                output$Column <- c(POOLED_ALL_LABEL, output$Column)
+                
+                boot_mean <- bayesboot(subdata[[1]], weighted.mean, use.weights = TRUE)
+                boot_sd <- bayesboot(subdata[[1]], pop.sd)
+                ci_mean <- ci(boot_mean, method = b_int_type, ci = conf)
+                ci_std <- ci(boot_sd, method = b_int_type, ci = conf)
+                
+                output$n[1] <- nrow(subdata)
+                output$Mean_L[1] <- ci_mean$CI_low
+                output$Mean[1] <- mean(boot_mean$V1)
+                output$Mean_U[1] <- ci_mean$CI_high
+                output$SD_L[1] <- ci_std$CI_low
+                output$SD[1] <- mean(boot_sd$V1)
+                output$SD_U[1] <- ci_std$CI_high
+              }, error = function(e) {
+                warning("Error in pooled credible interval: ", e$message)
+              })
+            }
           }
         }
         

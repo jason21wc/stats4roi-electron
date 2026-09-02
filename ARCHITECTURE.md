@@ -23,7 +23,7 @@
 │  │  │  │  ┌─────────────────────────────────────┐  │  │  │  │
 │  │  │  │  │           app.R (entry)             │  │  │  │  │
 │  │  │  │  │  ┌───────────────────────────────┐  │  │  │  │  │
-│  │  │  │  │  │        modules/ (169 files)   │  │  │  │  │  │
+│  │  │  │  │  │        modules/ (170 files)   │  │  │  │  │  │
 │  │  │  │  │  │  config/  data/  statistical/ │  │  │  │  │  │
 │  │  │  │  │  │  distributions/  reliability/ │  │  │  │  │  │
 │  │  │  │  │  │  learning/                    │  │  │  │  │  │
@@ -45,10 +45,13 @@
 | `main.js` | Spawns R via `execa`, creates BrowserWindow, handles app lifecycle |
 | `loading.html` / `loading.css` | Splash screen shown while the R runtime boots |
 
-`main.js` sets `R_HOME_DIR` to the bundled `r-mac/` path, plus `RE_SHINY_PORT` and
-`RE_SHINY_PATH`, then runs `start-shiny.R`. That override matters: `r-mac/bin/R`
-hardcodes `R_HOME_DIR` to `/Library/Frameworks/...`, so without it the app would
-fall back to a system R installation that may not exist on a user's machine.
+`main.js` launches native `r-mac/bin/exec/R` directly, supplies the complete bundled
+`R_HOME`/content-directory environment plus `RE_SHINY_PORT` and `RE_SHINY_PATH`, then
+runs `start-shiny.R`. It also puts `r-mac/lib` first in `DYLD_LIBRARY_PATH`. Direct native
+launch matters on macOS: loader variables supplied to a shell script are stripped, and
+R's absolute framework install names could otherwise prefer an installed system R over
+the libraries bundled inside the app. The patched `r-mac/bin/R` wrapper applies the same
+loader containment for standalone runtime commands.
 
 **Behavior:**
 1. On launch, spawns R with `shiny/app.R`
@@ -86,7 +89,7 @@ Most submodules follow a `<name>_module.R` entry point plus `ui/`, `server/`, an
 `utils/` subdirectories. `spc` is the largest, covering variables/attributes charts,
 CUSUM, EWMA, Process Performance Analysis, capability, and distribution fitting.
 
-**Codebase stats:** 169 module files, ~79,300 lines of R code (app.R + modules).
+**Codebase stats:** 170 module files, ~79,500 lines of R code (app.R + modules).
 
 ## Data Flow
 
@@ -122,7 +125,7 @@ npm run make
             ▼
 ┌─────────────────────────┐
 │   Create DMG            │
-│   out/make/stats4ROI.dmg│
+│ out/make/stats4ROI-<version>.dmg │
 └─────────────────────────┘
 ```
 
@@ -136,5 +139,8 @@ npm run make
 | Final DMG | ~362MB | No |
 | Final zip | ~368MB | No |
 
+The DMG maker calls macOS `hdiutil`, so this final step requires a build process with
+working DiskArbitration in addition to workspace write access.
+
 ---
-*Last Updated: 2026-07-25 (v4.3.0)*
+*Last Updated: 2026-08-30 (v4.3.1 candidate)*

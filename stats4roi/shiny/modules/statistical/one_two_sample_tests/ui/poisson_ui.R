@@ -152,17 +152,17 @@ create_poisson_one_two_sample_ui <- function(ns) {
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_poi"), "'] == 1"),
-            uiOutput(ns("data_choice_column_poi")),
-            uiOutput(ns("ots_poi_group_assignment"))
+            uiOutput(ns("data_choice_column_poi"))
           ),
           conditionalPanel(
             condition = paste0("input['", ns("data_type_poi"), "'] == 2"),
             uiOutput(ns("data_choice_ref_poi")),
             uiOutput(ns("data_choice_data_poi")),
             uiOutput(ns("data_choice_g1_poi")),
-            uiOutput(ns("data_choice_g2_poi")),
-            uiOutput(ns("ots_poi_group_assignment"))
+            uiOutput(ns("data_choice_g2_poi"))
           ),
+          # Single uiOutput — must not appear in both conditionalPanels (duplicate output IDs)
+          uiOutput(ns("ots_poi_group_assignment")),
           numericInput(
             inputId = ns("conf_poi_data"),
             label = "Confidence",

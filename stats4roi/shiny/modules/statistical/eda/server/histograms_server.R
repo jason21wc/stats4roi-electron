@@ -232,7 +232,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           selected_cols <- as.numeric(UI1)
           plot_data <- data.frame(transform.dependent.format.to.independent.format(data = data[selected_cols]))
           names(plot_data) <- c("ID", "Data")
-          plot_data$Data <- as.numeric(plot_data$Data)
+          plot_data$Data <- suppressWarnings(as.numeric(plot_data$Data))
           
         } else {
           # Factor analysis
@@ -256,7 +256,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           
           # Create plot data directly (same as boxplots server)
           plot_data <- data.frame(
-            Data = data[, data_col_name],
+            Data = suppressWarnings(as.numeric(data[, data_col_name])),
             ID = group_var
           )
           
@@ -393,7 +393,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           selected_cols <- as.numeric(UI1)
           plot_data <- data.frame(transform.dependent.format.to.independent.format(data = data[selected_cols]))
           names(plot_data) <- c("ID", "Data")
-          plot_data$Data <- as.numeric(plot_data$Data)
+          plot_data$Data <- suppressWarnings(as.numeric(plot_data$Data))
           comboname <- c("Histogram", "Frequency Polygon", "Density")[as.numeric(type)]
           dataname <- "Data"
         } else {
@@ -420,7 +420,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           
           # Create plot data directly (same as boxplots server)
           plot_data <- data.frame(
-            Data = data[, data_col_name],
+            Data = suppressWarnings(as.numeric(data[, data_col_name])),
             ID = group_var
           )
           

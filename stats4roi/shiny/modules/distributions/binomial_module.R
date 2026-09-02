@@ -3,6 +3,7 @@
 
 # Source global configuration for ro() function and colors
 source("modules/config/global_config.R")
+source("modules/distributions/discrete_x_of_interest.R")
 
 # Binomial Distribution UI (replicating app.R lines 593-661)
 create_binomial_ui <- function(id) {
@@ -226,17 +227,19 @@ create_binomial_server <- function(id, color_palette) {
       pl <- ggplot(data = plot_data, aes(x = r, y = p)) +
         geom_col(fill = colors()$col_fill, color = colors()$col_plot_line)
       
-      # Add highlighting for points of interest (exact from original)
+      # Add highlighting for points of interest (same include/exclude as results)
       if (r_bi) {
+        adj <- adjust_discrete_x_of_interest(
+          r_l, low_inc, r_u, hi_inc, two_tails = (one_or_two == 2)
+        )
+        r_l <- adj$x_l
+        r_u <- adj$x_u
         if (one_or_two == 1) {
-          if (low_inc == 2) r_l <- r_l - 1
           lower <- data.frame(r = r, p = p_r)
           lower[which(lower$r > r_l), 2] <- 0
           lower$r <- factor(lower$r)
           pl <- pl + geom_col(data = lower, aes(x = r, y = p), fill = colors()$col_fill_highlight, color = colors()$col_plot_line)
         } else {
-          if (low_inc == 2) r_l <- r_l - 1
-          if (hi_inc == 2) r_u <- r_u + 1
           tails <- data.frame(r = r, p = p_r)
           tails[which(tails$r > r_l & tails$r < r_u), 2] <- 0
           tails$r <- factor(tails$r)
@@ -272,65 +275,50 @@ create_binomial_server <- function(id, color_palette) {
         return(HTML("Please select tail options and enter R values"))
       }
       
-      # Calculate probabilities
+      # Calculate probabilities (include/exclude R, same convention as Poisson)
       bi_table <- table.dist.binomial(n = n, p = p)
-      
+      two_tails <- (one_or_two == 2)
+      probs <- discrete_x_of_interest_probs(
+        bi_table, r_l, low_inc, r_u, hi_inc, two_tails = two_tails
+      )
+      r_l <- probs$lower$x
+
       if (one_or_two == 1) {
-        # One tail
-        if (is.null(low_inc) || low_inc == 1) {
-          p_at_r <- bi_table$p.at.x[r_l + 1]
-          p_and_above <- bi_table$eq.and.above[r_l + 1]
-          p_and_below <- bi_table$eq.and.below[r_l + 1]
-        } else {
-          p_at_r <- bi_table$p.at.x[r_l + 1]
-          p_and_above <- bi_table$eq.and.above[r_l + 1]
-          p_and_below <- bi_table$eq.and.below[r_l + 1]
-        }
-        
         output <- HTML(paste0(
           "<b>Binomial Distribution Results</b>",
           "<br><br>",
           "<table style='width: 100%; margin-bottom: 20px;'>",
           "<tr>",
-          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(p_at_r, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(p_and_below, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(p_and_above, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(probs$lower$p_at, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(probs$lower$p_and_below, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(probs$lower$p_and_above, R), "</td>",
           "</tr>",
           "</table>"
         ))
       } else {
-        # Two tails
-        p_at_r_l <- bi_table$p.at.x[r_l + 1]
-        p_at_r_u <- bi_table$p.at.x[r_u + 1]
-        p_and_below_l <- bi_table$eq.and.below[r_l + 1]
-        p_and_above_l <- bi_table$eq.and.above[r_l + 1]
-        p_and_below_u <- bi_table$eq.and.below[r_u + 1]
-        p_and_above_u <- bi_table$eq.and.above[r_u + 1]
-        p_between <- 1 - p_and_below_l - p_and_above_u
-        p_tails <- p_and_below_l + p_and_above_u
-        
+        r_u <- probs$upper$x
         output <- HTML(paste0(
           "<b>Binomial Distribution Results</b>",
           "<br><br>",
           "<table style='width: 100%; margin-bottom: 20px;'>",
           "<tr>",
-          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(p_at_r_l, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(p_and_below_l, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(p_and_above_l, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(probs$lower$p_at, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(probs$lower$p_and_below, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(probs$lower$p_and_above, R), "</td>",
           "</tr>",
           "<tr>",
-          "<td style='padding: 5px;'>p(", r_u, ") = ", ro(p_at_r_u, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_u, " and below) = ", ro(p_and_below_u, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_u, " and above) = ", ro(p_and_above_u, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_u, ") = ", ro(probs$upper$p_at, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_u, " and below) = ", ro(probs$upper$p_and_below, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_u, " and above) = ", ro(probs$upper$p_and_above, R), "</td>",
           "</tr>",
           "<tr>",
           "<td style='padding: 5px; background-color:", colors()$col_fill, ";'></td>",
-          "<td style='padding: 5px;'>p(between) = ", ro(p_between, R), "</td>",
+          "<td style='padding: 5px;'>p(between) = ", ro(probs$p_between, R), "</td>",
           "<td style='padding: 5px;'>", r_l + 1, " ≤ R ≤ ", r_u - 1, "</td>",
           "</tr>",
           "<tr>",
           "<td style='padding: 5px; background-color:", colors()$col_fill_highlight, ";'></td>",
-          "<td style='padding: 5px;'>p(tails) = ", ro(p_tails, R), "</td>",
+          "<td style='padding: 5px;'>p(tails) = ", ro(probs$p_tails, R), "</td>",
           "<td style='padding: 5px;'>R ≤ ", r_l, " + R ≥ ", r_u, "</td>",
           "</tr>",
           "</table>"

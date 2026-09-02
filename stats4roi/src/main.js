@@ -39,7 +39,11 @@ const waitFor = (milliseconds) => {
 
 const rpath = path.join(app.getAppPath(), rPath);
 const libPath = path.join(rpath, 'library');
-const rscript = path.join(rpath, 'bin', 'R');
+const rscript = path.join(rpath, 'bin', 'exec', 'R');
+const dyldLibraryPath = [
+  path.join(rpath, 'lib'),
+  process.env.DYLD_LIBRARY_PATH
+].filter(Boolean).join(path.delimiter);
 const shinyAppPath = path.join(app.getAppPath(), 'shiny');
 
 const backgroundColor = '#2c3e50'; // electron
@@ -80,14 +84,19 @@ const tryStartWebserver = async (attempt, progressCallback, onErrorStartup, onEr
      ['--vanilla', '-f', path.join(app.getAppPath(), 'start-shiny.R')], { 
        env: {
          'WITHIN_ELECTRON': '1', 
+         'R_HOME': rpath,
          'RHOME': rpath,
          'R_HOME_DIR': rpath,
+         'R_SHARE_DIR': path.join(rpath, 'share'),
+         'R_INCLUDE_DIR': path.join(rpath, 'include'),
+         'R_DOC_DIR': path.join(rpath, 'doc'),
          'RE_SHINY_PORT': shinyPort,
          'RE_SHINY_PATH': shinyAppPath,
          'R_LIBS': libPath,
          'R_LIBS_USER': libPath,
          'R_LIBS_SITE': libPath,
-         'R_LIB_PATHS': libPath} }).catch((e) => {
+         'R_LIB_PATHS': libPath,
+         'DYLD_LIBRARY_PATH': dyldLibraryPath} }).catch((e) => {
            shinyProcessAlreadyDead = true
            onError(e)
          })

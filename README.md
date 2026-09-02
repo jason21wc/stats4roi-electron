@@ -63,7 +63,7 @@ Go to **System Settings → Privacy & Security**, scroll down, and click **Open 
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22.18.0 (matches the current native build dependencies)
 - npm 10+
 
 ### Build from Source
@@ -75,7 +75,7 @@ npm start        # Run in dev mode
 npm run make     # Build DMG
 ```
 
-Build output: `stats4roi/out/make/stats4ROI.dmg`
+Build output: `stats4roi/out/make/stats4ROI-<version>.dmg`
 
 ### Project Structure
 
@@ -84,7 +84,7 @@ stats4roi-electron/
 ├── stats4roi/              # Electron application
 │   ├── shiny/              # R Shiny app (modular architecture)
 │   │   ├── app.R           # Entry point
-│   │   └── modules/        # 169 R module files
+│   │   └── modules/        # 170 R module files
 │   ├── src/                # Electron source
 │   ├── r-mac/              # Bundled R runtime (not in repo)
 │   └── package.json        # Electron config

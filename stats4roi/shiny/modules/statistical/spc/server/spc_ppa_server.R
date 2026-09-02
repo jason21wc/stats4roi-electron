@@ -530,7 +530,8 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
     )
   })
 
-  output$ppa_run_chart <- renderPlot({
+  # Plot/download id must not collide with checkbox input ppa_run_chart
+  output$ppa_run_chart_plot <- renderPlot({
     prepared <- ppa_prepared()
     spec <- ppa_spec_reactive()
     mappings <- ppa_mappings()
@@ -768,7 +769,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
       show_spec_limits = opts$show_spec_limits
     )
   }), width = ppa_plot_w, height = reactive(320 * 4))
-  downloadServer("ppa_run_chart", reactive({
+  downloadServer("ppa_run_chart_plot", reactive({
     prepared <- ppa_prepared()
     spec <- ppa_spec_reactive()
     mappings <- ppa_mappings()

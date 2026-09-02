@@ -1,3 +1,5 @@
+const { version } = require('./package.json');
+
 module.exports = {
   packagerConfig: {
     name: 'stats4ROI',
@@ -14,7 +16,7 @@ module.exports = {
     {
       name: '@electron-forge/maker-dmg',
       config: {
-        name: 'stats4ROI'
+        name: `stats4ROI-${version}`
       }
     }
   ]

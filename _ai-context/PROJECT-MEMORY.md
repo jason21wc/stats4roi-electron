@@ -76,6 +76,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Upstream Sync v4.2.0 (DOE module) | Complete | 2026-04-25 |
 | Upstream Sync v4.2.1 (Taguchi optimization) | Complete | 2026-06-28 |
 | Upstream Sync v4.3.0 (Reliability + SPC expansion) | Complete | 2026-07-25 |
+| Upstream Sync v4.3.1 (distribution/EDA reliability fixes) | In Progress | 2026-08-30 |
 | AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
 | propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |
 
@@ -133,15 +134,21 @@ Quote the `--include="*.R"` glob or zsh fails with "no matches found".
 
 ## Release Procedure
 
-1. `npm run make`, then rename `out/make/stats4ROI.dmg` →
-   `stats4ROI-<version>.dmg` (the maker emits an unversioned name; releases use
-   versioned asset names).
+1. Put the build Node's complete `bin` directory first in `PATH` (currently Node
+   22.18.0 / ABI 127), verify `node` reports ABI 127 in that environment, then run
+   `npm run make`. Calling the Node 22 `npm` executable by absolute path is insufficient:
+   its `env node` shebang and child scripts still resolve `node` from `PATH`. Forge emits
+   the versioned DMG directly: `out/make/stats4ROI-<version>.dmg`.
 2. Smoke-test headless, verify `hdiutil verify` on the DMG, and confirm the packaged
    `.app` bundles the propagate fork.
-3. **Wait for Jason's hand-test before pushing or releasing.** See
+3. For upstream statistical changes, independently verify at least one expected result
+   against the UI/math contract and exercise data-damage paths with the types produced
+   by the real import pipeline. Passing upstream tests is not sufficient when those
+   tests duplicate an existing implementation or bypass factor conversion.
+4. **Wait for Jason's hand-test before pushing or releasing.** See
    `_ai-context/SESSION-STATE.md` for the tabs to exercise.
-4. Push commit + tag to `origin` (jason21wc ONLY).
-5. **Create the release empty, then upload assets separately:**
+5. Push commit + tag to `origin` (jason21wc ONLY).
+6. **Create the release empty, then upload assets separately:**
 
 ```bash
 gh release create v<version> --repo jason21wc/stats4roi-electron \
@@ -152,10 +159,18 @@ gh release upload v<version> <asset> --repo jason21wc/stats4roi-electron   # one
    Do NOT pass assets to `gh release create`. On a failed upload it **deletes the
    whole release**, discarding assets that already transferred — ~730 MB over a slow
    link means that costs the better part of an hour. See LEARNING-LOG 2026-07-25.
-6. Verify: compare `gh release view --json assets` sizes against local
+7. Verify: compare `gh release view --json assets` sizes against local
    `stat -f %z` and confirm `state=uploaded`. Exit codes are unreliable here —
    piping gh through `tail` reports tail's status, and gh's own internal retry can
    surface `HTTP 422 ReleaseAsset.name already exists` for a file that landed fine.
+
+**macOS build-locus check:** the DMG maker depends on DiskArbitration, not just file
+write access. Treat DiskArbitration and localhost binding as process capabilities: after
+changing permissions, run direct `diskutil` and socket-bind probes. If they still fail,
+start a fresh process with the required sandbox at launch; terminal brand and filesystem
+labels are not capability evidence. Changing Electron or DMG format does not address the
+host boundary. A failed concurrent maker can leave partial ZIP files, so accept only the
+final versioned filename after `unzip -tq` passes.
 
 ## R Runtime Assembly — propagate Fork (CRITICAL)
 
@@ -193,5 +208,18 @@ rather than skipping.
 **Verify:** `./ensure-propagate-fork.sh --check` exits 0, and the `npm start` log
 must NOT contain "does not appear to be the Shiny fork".
 
+## R Runtime Dynamic-Library Containment (CRITICAL)
+
+The macOS R executable retains absolute install names pointing at
+`/Library/Frameworks/R.framework`. If the build Mac has a system R installed, dyld can
+silently load that framework instead of `r-mac/lib`; a smoke test can therefore pass
+against the wrong runtime. Parent-provided `DYLD_LIBRARY_PATH` is not sufficient because
+macOS strips `DYLD_*` variables before executing a shell script. The Electron launcher
+therefore invokes native `r-mac/bin/exec/R` directly and supplies `R_HOME`, the R content
+directories, and `DYLD_LIBRARY_PATH`. `get-r-mac.sh` separately patches the bundled
+`bin/R` wrapper to set the loader path inside the script for standalone runtime commands.
+Verify a packaged launch with `lsof -p <R-pid>`: `libR.dylib`, BLAS, and gfortran must
+map from inside `stats4ROI.app`, never `/Library/Frameworks/R.framework`.
+
 ---
-*Last Updated: 2026-07-25*
+*Last Updated: 2026-08-30*

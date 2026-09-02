@@ -244,7 +244,7 @@ create_hypergeometric_server <- function(id, color_palette) {
             geom_col(data = lower, aes(x = x, y = p), fill = unname(colors()$col_fill_highlight), color = unname(colors()$col_plot_line))
         } else {
           if (low_inc == 2) x_l <- x_l - 1
-          if (hi_inc == 2) x_u <- x_u + 1
+          if (hi_inc == 2) x_u <- x_u - 1
           tails <- data.frame(x = x, p = p_x)
           tails[which(tails$x > x_l & tails$x < x_u), 2] <- 0
           tails$x <- factor(tails$x)
@@ -302,7 +302,7 @@ create_hypergeometric_server <- function(id, color_palette) {
       
       if (one_or_two == 2) {
         req(x_u, hi_inc)
-        if (hi_inc == 2) x_u <- x_u + 1
+        if (hi_inc == 2) x_u <- x_u - 1
         
         output <- paste(output,
           paste(
