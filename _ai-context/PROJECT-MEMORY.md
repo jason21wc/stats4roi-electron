@@ -10,7 +10,7 @@
 | Name | stats4roi-electron |
 | Purpose | Electron wrapper for stats4ROI R Shiny application |
 | Target Platform | Apple Silicon Macs (ARM64) |
-| Current Version | 4.3.3 (candidate, pending hand-test) |
+| Current Version | 4.3.3 |
 | Status | Production |
 
 ## Specification Summary
@@ -77,7 +77,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Upstream Sync v4.2.1 (Taguchi optimization) | Complete | 2026-06-28 |
 | Upstream Sync v4.3.0 (Reliability + SPC expansion) | Complete | 2026-07-25 |
 | Upstream Sync v4.3.1 (distribution/EDA reliability fixes) | Superseded — blocked on upstream defects, never released | 2026-08-30 |
-| Upstream Sync v4.3.3 (EDA factor fix, boxplot hover, seeded random columns) | Built, awaiting hand-test | 2026-09-03 |
+| Upstream Sync v4.3.3 (EDA factor fix, boxplot hover, seeded random columns) | Complete — released | 2026-09-03 |
 | propagate fork rebuilt under bundled R; fork script uses bin/R + build-version check | Complete | 2026-09-03 |
 | AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
 | propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |

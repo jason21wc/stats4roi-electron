@@ -7,14 +7,20 @@
 
 | Field | Value |
 |-------|-------|
-| Phase | Upstream Sync v4.3.3 / Awaiting Hand-Test |
-| Mode | Branch `sync/v4.3.3` (built from checkpoint `c46050a`); `main` still at `40a9a08` |
-| Active Task | Jason hand-tests the v4.3.3 DMG; then merge to `main`, tag, push, release |
-| Blocked By | Hand-test approval only |
+| Phase | v4.3.3 Released / Maintenance |
+| Mode | `main` at `c166718` = `origin/main`, tag `v4.3.3` pushed |
+| Active Task | None — next upstream sync when Steve ships changes |
+| Blocked By | Nothing |
 
 ## Context
 
-**v4.3.3 CANDIDATE BUILT (Sep 3, 2026):** Steve landed the EDA factor-coercion fix
+**v4.3.3 RELEASED (Sep 3, 2026):** https://github.com/jason21wc/stats4roi-electron/releases/tag/v4.3.3
+Hand-tested and approved by Jason. `main` fast-forwarded from `sync/v4.3.3` to
+`c166718`, tag `v4.3.3` pushed to jason21wc, release created empty, DMG and ZIP uploaded
+separately and verified byte-for-byte against local sizes (state `uploaded`). Stale
+4.3.1 artifacts deleted from `out/make/`.
+
+**Build detail:** Steve landed the EDA factor-coercion fix
 (`e97195d`, "fixing factor coercion in EDA"): a shared `eda_safe_numeric()` coerces
 factors through `as.character()` at every measurement-column site in descriptives,
 intervals, normality, natural tolerance, boxplots, histograms, quantiles, and pooling.
@@ -68,11 +74,6 @@ Build (Node 22.18.0 / ABI 127, `npm run make`, exit 0):
   shows libR/BLAS/gfortran/propagate.so all mapped from inside `stats4ROI.app`, zero
   `/Library/Frameworks` mappings, no warnings.
 
-Stale never-released 4.3.1 artifacts still sit in `out/make/` (git-ignored); safe to
-delete once 4.3.3 ships.
-
-No push, tag, or release has occurred. Commit is local on `sync/v4.3.3`.
-
 **Hand-test focus for Jason:** EDA with a text column selected as *data* (expect n=0 or
 parsed numbers, never 1,2,3); EDA factor mode with a text grouping column (labels
 intact); boxplot hover tooltip; histogram y-axis toggle; Transform Data → random column
@@ -92,13 +93,11 @@ support — use Grep/Glob for anything under `shiny/`. See LEARNING-LOG 2026-07-
 
 ## Next Actions
 
-1. Jason hand-tests `stats4roi/out/make/stats4ROI-4.3.3.dmg` (tabs above).
-2. On approval: fast-forward `main` to `sync/v4.3.3`, tag `v4.3.3`, push commit + tag to
-   `jason21wc` only, create the release empty, upload DMG and ZIP separately, verify
-   asset sizes (PROJECT-MEMORY "Release Procedure").
-3. Send Steve BACKLOG #7 (boundary display nit + test-helper dependency) with thanks
-   for the EDA fix.
-4. Delete the stale 4.3.1 artifacts from `out/make/`; consider BACKLOG #5 (Node pin).
+1. Send Steve BACKLOG #7 (R=0 / R=n exclusion renders blank cells; test helper depends on
+   root-only `quantile_type6.R`) with thanks for the EDA fix.
+2. Optional: BACKLOG #5 (Node 22 pin) before the next build.
+3. Branches `sync/v4.3.3` (merged) and `checkpoint/v4.3.1-upstream-review` (superseded)
+   can be deleted locally and on origin.
 
 ## Open Questions
 
