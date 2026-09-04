@@ -94,10 +94,11 @@ support — use Grep/Glob for anything under `shiny/`. See LEARNING-LOG 2026-07-
 ## Next Actions
 
 1. Send Steve BACKLOG #7 (R=0 / R=n exclusion renders blank cells; test helper depends on
-   root-only `quantile_type6.R`) with thanks for the EDA fix.
+   root-only `quantile_type6.R`) with thanks for the EDA fix. Draft prepared Sep 3, 2026.
 2. Optional: BACKLOG #5 (Node 22 pin) before the next build.
-3. Branches `sync/v4.3.3` (merged) and `checkpoint/v4.3.1-upstream-review` (superseded)
-   can be deleted locally and on origin.
+
+Branch cleanup done (Sep 3, 2026): `sync/v4.3.3` and `checkpoint/v4.3.1-upstream-review`
+deleted locally and on origin, both fully merged. `main` is the only branch.
 
 ## Open Questions
 
