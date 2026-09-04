@@ -42,12 +42,14 @@ mismatch. See LEARNING-LOG 2026-09-03.
 
 ### #7 — Report residual discrete-distribution boundary display to Steve
 
-**Status:** Open — upstream nit, not a release blocker.
-**Trigger:** Next message to Steve.
+**Status:** Reported to Steve 2026-09-03 — awaiting his call. Upstream nit, not a
+release blocker; nothing for us to do but resync if he changes it.
+**Trigger:** Next upstream sync — check whether the boundary lookup changed.
 
 Excluding R=0 in the lower tail or R=n in the upper tail of binomial/Poisson/
 hypergeometric moves the cutoff outside the support (-1 or n+1) and the table lookup
 returns empty/NA, so the UI renders `p(-1) = ` with blank cells instead of 0 and 1.
+The upper case also propagates NA into the two-tail `p(between)` and `p(tails)` rows.
 Reproduced against upstream `ee8379a`. No wrong number is shown; the cells are blank.
 Also mention: `tests/testthat/helpers/extract_app_outputs.R` sources
 `modules/statistical/eda/utils/quantile_type6.R`, which is absent from `deployment/`.

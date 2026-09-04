@@ -9,7 +9,7 @@
 |-------|-------|
 | Phase | v4.3.3 Released / Maintenance |
 | Mode | `main` at `c166718` = `origin/main`, tag `v4.3.3` pushed |
-| Active Task | None — next upstream sync when Steve ships changes |
+| Active Task | None — idle until Steve ships upstream changes |
 | Blocked By | Nothing |
 
 ## Context
@@ -93,16 +93,18 @@ support — use Grep/Glob for anything under `shiny/`. See LEARNING-LOG 2026-07-
 
 ## Next Actions
 
-1. Send Steve BACKLOG #7 (R=0 / R=n exclusion renders blank cells; test helper depends on
-   root-only `quantile_type6.R`) with thanks for the EDA fix. Draft prepared Sep 3, 2026.
-2. Optional: BACKLOG #5 (Node 22 pin) before the next build.
+1. Nothing outstanding. BACKLOG #7 was sent to Steve on Sep 3, 2026 (boundary display
+   plus the test-helper note); his call whether to change it, and we pick it up on the
+   next sync.
+2. Optional before the next build: BACKLOG #5 (pin the Node 22 build version).
 
 Branch cleanup done (Sep 3, 2026): `sync/v4.3.3` and `checkpoint/v4.3.1-upstream-review`
 deleted locally and on origin, both fully merged. `main` is the only branch.
 
 ## Open Questions
 
-None blocking. Whether Steve wants the R=0 / R=n exclusion edge to show 0 and 1.
+None blocking. Whether Steve clamps the R=0 / R=n exclusion edge to show 0 and 1;
+reported to him Sep 3, 2026, no reply yet.
 
 ---
 *Last Updated: 2026-09-03*
