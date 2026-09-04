@@ -79,6 +79,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Upstream Sync v4.3.1 (distribution/EDA reliability fixes) | Superseded — blocked on upstream defects, never released | 2026-08-30 |
 | Upstream Sync v4.3.3 (EDA factor fix, boxplot hover, seeded random columns) | Complete — released | 2026-09-03 |
 | propagate fork rebuilt under bundled R; fork script uses bin/R + build-version check | Complete | 2026-09-03 |
+| Build Node pinned and enforced (.nvmrc + engine-strict + premake gate) | Complete | 2026-09-03 |
 | AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
 | propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |
 
@@ -136,11 +137,14 @@ Quote the `--include="*.R"` glob or zsh fails with "no matches found".
 
 ## Release Procedure
 
-1. Put the build Node's complete `bin` directory first in `PATH` (currently Node
-   22.18.0 / ABI 127), verify `node` reports ABI 127 in that environment, then run
-   `npm run make`. Calling the Node 22 `npm` executable by absolute path is insufficient:
-   its `env node` shebang and child scripts still resolve `node` from `PATH`. Forge emits
-   the versioned DMG directly: `out/make/stats4ROI-<version>.dmg`.
+1. Put the build Node's complete `bin` directory first in `PATH` (pinned to 22.18.0 in
+   `stats4roi/.nvmrc`), then run `npm run make`. Calling the Node 22 `npm` executable by
+   absolute path is insufficient: its `env node` shebang and child scripts still resolve
+   `node` from `PATH`. Since 2026-09-03 this is enforced rather than remembered —
+   `premake`/`prepackage` run `scripts/check-build-node.js`, which blocks the build and
+   prints the exact `PATH` export; `.npmrc` `engine-strict` blocks `npm install` under
+   the wrong Node. Forge emits the versioned DMG directly:
+   `out/make/stats4ROI-<version>.dmg`.
 2. Smoke-test headless, verify `hdiutil verify` on the DMG, and confirm the packaged
    `.app` bundles the propagate fork.
 3. For upstream statistical changes, independently verify at least one expected result

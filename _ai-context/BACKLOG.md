@@ -30,6 +30,17 @@ instead of skipping. Verified end-to-end against a simulated CRAN state.
 `forge.config.js` derives the DMG name from package.json. The v4.3.1 build emitted and
 verified `out/make/stats4ROI-4.3.1.dmg`; no manual rename is required.
 
+### #5 — Pin the supported Node build version — DONE 2026-09-03
+
+`stats4roi/.nvmrc` pins Node 22.18.0 as the single source of truth; `engines` and
+`.npmrc` `engine-strict=true` refuse `npm install` under another major (which would
+compile `macos-alias` for the wrong ABI); `scripts/check-build-node.js` runs as
+`premake`/`prepackage` and blocks the build, printing the exact `PATH` export to fix it.
+The gate loads the native module rather than only comparing versions, so it also catches
+dependencies installed under the wrong Node. Verified: passes under Node 22, blocks
+`npm run make` under Node 25 before packaging starts, and both failure branches print
+actionable remediation.
+
 ### #6 — Fork script built propagate under system R via `r-mac/bin/Rscript` — DONE 2026-09-03
 
 `r-mac/bin/Rscript` hardwires the system framework path, so the fork shipped compiled
@@ -71,18 +82,6 @@ Decide whether the distribution volume justifies it.
 
 Apple Silicon only, by decision (PROJECT-MEMORY, 2024-01-24). Would require a second
 bundled R runtime and a universal or separate build. Revisit only on real demand.
-
-### #5 — Pin the supported Node build version
-
-**Status:** Active — small build-reproducibility improvement.
-**Trigger:** After the v4.3.1 candidate is built and hand-tested.
-
-The installed `macos-alias` native module targets Node ABI 127 (Node 22), while the
-default Homebrew PATH can select Node 25 / ABI 141 and fail only at DMG creation. Add a
-single canonical Node pin (`.nvmrc` plus package metadata or equivalent) and document
-the intentional dependency refresh path when changing it. The build entry point must
-put Node 22's complete `bin` directory first in `PATH` for npm and all children, then
-verify ABI 127; `.nvmrc` or `engines` alone does not enforce the child process tree.
 
 ---
 *Last Updated: 2026-09-03*

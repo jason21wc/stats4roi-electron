@@ -105,10 +105,26 @@ User Action → BrowserWindow → HTTP → Shiny Server → R computation → HT
 
 ## Build Process
 
+The build requires Node 22 (pinned in `stats4roi/.nvmrc`). The DMG maker reaches the
+compiled `macos-alias` module through `ds-store`, and a compiled module is locked to a
+single Node major version. Under any other version the build packages the app and writes
+the ZIP, then fails at the final DMG step. `npm run make` and `npm run package` therefore
+run `scripts/check-build-node.js` first, which refuses to start and prints the exact
+`PATH` line to fix it. `.npmrc` sets `engine-strict` so `npm install` under the wrong Node
+is refused too, since installing there would compile the module for the wrong version.
+
 ```
 npm run make
      │
      ▼
+┌─────────────────────────┐
+│  Preflight (premake)    │
+│  check-build-node.js    │
+│  - Node major = .nvmrc  │
+│  - macos-alias loads    │
+└───────────┬─────────────┘
+            │
+            ▼
 ┌─────────────────────────┐
 │   Electron Forge        │
 │   (forge.config.js)     │
@@ -143,4 +159,4 @@ The DMG maker calls macOS `hdiutil`, so this final step requires a build process
 working DiskArbitration in addition to workspace write access.
 
 ---
-*Last Updated: 2026-09-03 (v4.3.3 candidate)*
+*Last Updated: 2026-09-03 (v4.3.3 released)*

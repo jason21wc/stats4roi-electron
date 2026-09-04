@@ -4,10 +4,16 @@
   "version": "4.3.3",
   "description": "Statistical Analysis Tool for ROI",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "make": "electron-forge make",
+    "check-node": "node scripts/check-build-node.js",
+    "prepackage": "npm run check-node",
+    "premake": "npm run check-node"
   },
   "author": {
     "name": "Steven Ouellette",

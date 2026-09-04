@@ -24,9 +24,11 @@ Memory lives in `_ai-context/` (unified layout, v2.62.0). Technical docs stay at
 
 ```bash
 cd stats4roi
+nvm use            # Node 22, per .nvmrc — required to build
 npm start          # Dev mode
-npm run make       # Build DMG
+npm run make       # Build DMG (blocks itself if Node is wrong)
 
+npm run check-node                   # why a build refused to start
 ./ensure-propagate-fork.sh --check   # MUST exit 0 before any build
 ./ensure-propagate-fork.sh           # repair: install the fork if missing
 ```
@@ -34,6 +36,11 @@ npm run make       # Build DMG
 **Run `--check` after any `r-mac/` rebuild.** The runtime silently reverts to CRAN
 `propagate`, which corrupts scatterplot CI/PI rendering. See PROJECT-MEMORY
 "R Runtime Assembly".
+
+**The build pins Node 22.** The DMG maker loads a compiled module locked to one Node
+major version, and the default `PATH` here selects a newer one. `npm run make` refuses
+to start under the wrong Node and prints the `PATH` line to fix it. See ARCHITECTURE
+"Build Process".
 
 ## Critical: Push Safety
 

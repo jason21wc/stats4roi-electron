@@ -272,3 +272,20 @@ harness rather than trusting a pass in upstream's own root layout, and treat a
 test-only dependency that is not shipped as a test-hygiene note for Steve, not a sync
 gap.
 **Apply When:** Running upstream testthat files during a sync.
+
+### 2026-09-03 — Gate a Build on the Thing That Breaks, Not a Proxy for It
+
+**Context:** The DMG maker loads `macos-alias`, a compiled module locked to one Node
+major version, and the machine's default Node is a different major than the build's.
+The obvious guard is comparing `process.version` against a pin. That catches only half
+the failure: running the correct Node but having installed dependencies under a
+different one compiles the binary for the wrong version, and a version comparison
+reports everything fine. The preflight therefore `require()`s the module itself. Both
+branches were exercised before shipping, the second by temporarily claiming the wrong
+version in `.nvmrc`.
+**Lesson:** When a build depends on a compiled artifact, assert on loading the artifact,
+not on the environment that usually produces it. A version check tests the input; the
+load tests the actual precondition. Pair it with `engine-strict` so the wrong-install
+path is closed at its source rather than only detected later.
+**Apply When:** Guarding any build against native-module ABI mismatches, or writing a
+preflight for a step that fails late and expensively.
