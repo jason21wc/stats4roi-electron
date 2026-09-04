@@ -8,7 +8,7 @@
 | Field | Value |
 |-------|-------|
 | Phase | v4.3.3 Released / Maintenance |
-| Mode | `main` at `c166718` = `origin/main`, tag `v4.3.3` pushed |
+| Mode | `main` = `origin/main`, only branch; tag `v4.3.3` pushed |
 | Active Task | None — idle until Steve ships upstream changes |
 | Blocked By | Nothing |
 
@@ -88,18 +88,43 @@ carries the launcher fix (native `bin/exec/R` + dyld env), the Node 22 pin, and 
 versioned DMG name, all of which v4.3.3 builds on. v4.3.0 released Jul 25, 2026:
 https://github.com/jason21wc/stats4roi-electron/releases/tag/v4.3.0
 
+**BUILD NODE PINNED AND ENFORCED (Sep 3, 2026):** BACKLOG #5 closed. The DMG maker
+reaches the compiled `macos-alias` module through `ds-store`, and a compiled module is
+locked to one Node major version. The default `PATH` on this Mac selects Node 25 while
+the module targets Node 22, so a wrong-Node build packaged the app and wrote the ZIP
+before dying at the final DMG step. Three layers now enforce it: `stats4roi/.nvmrc`
+pins 22.18.0 as the single source of truth; `engines` plus `.npmrc` `engine-strict`
+refuse `npm install` under another major (which would compile the module for the wrong
+ABI and break the build in the opposite direction); and
+`stats4roi/scripts/check-build-node.js` runs as `premake`/`prepackage`, blocking the
+build and printing the exact `PATH` export resolved against the real nvm install.
+
+The gate `require()`s the native module rather than only comparing version numbers, so
+it catches dependencies installed under the wrong Node as well as running under one.
+Verified by execution, not inspection: passes under 22; `npm run make` under 25 exits 1
+before packaging; `npm install` under 25 is refused with `EBADENGINE`; both failure
+branches print actionable remediation (the second exercised by temporarily claiming the
+wrong version in `.nvmrc`); and a full build under 22 with the gate active produced a
+valid DMG and ZIP. Use `npm run check-node` to see why a build refused to start.
+
+**Local `out/make/` no longer matches the released assets.** That verification rebuild
+replaced the local DMG, and its SHA-256 differs from the released one
+(`8bca0f7a…` local vs `d406293b…` released), so builds here are not byte-reproducible.
+The GitHub release assets are untouched and canonical; re-download from the release page
+rather than trusting the local file if the exact shipped artifact is needed.
+
 **Search caveat:** the context-engine index covers only docs + Electron JS. It has no R
 support — use Grep/Glob for anything under `shiny/`. See LEARNING-LOG 2026-07-25.
 
 ## Next Actions
 
-1. Nothing outstanding. BACKLOG #7 was sent to Steve on Sep 3, 2026 (boundary display
-   plus the test-helper note); his call whether to change it, and we pick it up on the
-   next sync.
-2. Optional before the next build: BACKLOG #5 (pin the Node 22 build version).
+Nothing outstanding. The only open item is BACKLOG #7, which is Steve's call: the
+boundary-display nit and the test-helper note were emailed to him Sep 3, 2026. Check on
+the next sync whether the discrete boundary lookup changed.
 
-Branch cleanup done (Sep 3, 2026): `sync/v4.3.3` and `checkpoint/v4.3.1-upstream-review`
-deleted locally and on origin, both fully merged. `main` is the only branch.
+Housekeeping completed Sep 3, 2026: branches `sync/v4.3.3` and
+`checkpoint/v4.3.1-upstream-review` deleted locally and on origin (both fully merged),
+leaving `main` alone; BACKLOG #5 closed by the Node pin below.
 
 ## Open Questions
 
