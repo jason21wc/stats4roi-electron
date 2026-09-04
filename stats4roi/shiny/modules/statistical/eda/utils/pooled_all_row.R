@@ -11,7 +11,10 @@ needs_pooled_all_row <- function(n_groups) {
 }
 
 pool_data_frame_columns <- function(dat) {
-  vals <- suppressWarnings(as.numeric(unlist(dat, use.names = FALSE)))
+  # Convert each column through eda_safe_numeric before unlisting so that
+  # factor columns are coerced via their labels (not internal level codes).
+  converted <- lapply(dat, eda_safe_numeric)
+  vals <- unlist(converted, use.names = FALSE)
   vals <- vals[!is.na(vals)]
   if (length(vals) == 0L) {
     return(data.frame(All = numeric(0), stringsAsFactors = FALSE))
@@ -23,7 +26,18 @@ pool_data_frame_columns <- function(dat) {
 }
 
 pool_numeric_vector <- function(...) {
-  vals <- suppressWarnings(as.numeric(na.omit(unlist(list(...), use.names = FALSE))))
+  # Convert each element (column or vector) through eda_safe_numeric before
+  # unlisting so that factor columns have their labels parsed rather than
+  # internal level codes returned.
+  args <- list(...)
+  converted <- lapply(args, function(x) {
+    if (is.data.frame(x)) {
+      unlist(lapply(x, eda_safe_numeric), use.names = FALSE)
+    } else {
+      eda_safe_numeric(x)
+    }
+  })
+  vals <- unlist(converted, use.names = FALSE)
   vals[!is.na(vals)]
 }
 
@@ -236,7 +250,7 @@ prepend_normality_factor_all_row <- function(output, data, dep_name, group_cols,
   }
   
   dep_name_m <- make.names(dep_name)
-  pooled_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+  pooled_x <- eda_safe_numeric(data[[dep_name_m]])
   pooled_x <- pooled_x[!is.na(pooled_x)]
   if (length(pooled_x) == 0L) {
     return(output)

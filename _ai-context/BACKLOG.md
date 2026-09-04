@@ -30,7 +30,27 @@ instead of skipping. Verified end-to-end against a simulated CRAN state.
 `forge.config.js` derives the DMG name from package.json. The v4.3.1 build emitted and
 verified `out/make/stats4ROI-4.3.1.dmg`; no manual rename is required.
 
+### #6 — Fork script built propagate under system R via `r-mac/bin/Rscript` — DONE 2026-09-03
+
+`r-mac/bin/Rscript` hardwires the system framework path, so the fork shipped compiled
+under R 4.5.2 while running in bundled 4.5.1 (startup warning in v4.3.0 and the v4.3.1
+candidate). `ensure-propagate-fork.sh` now uses `bin/R` with `R_HOME_DIR`, pins
+`PKG_LIBS` past the Makevars `Rscript` call, and `--check` fails on a build-version
+mismatch. See LEARNING-LOG 2026-09-03.
+
 ## Open
+
+### #7 — Report residual discrete-distribution boundary display to Steve
+
+**Status:** Open — upstream nit, not a release blocker.
+**Trigger:** Next message to Steve.
+
+Excluding R=0 in the lower tail or R=n in the upper tail of binomial/Poisson/
+hypergeometric moves the cutoff outside the support (-1 or n+1) and the table lookup
+returns empty/NA, so the UI renders `p(-1) = ` with blank cells instead of 0 and 1.
+Reproduced against upstream `ee8379a`. No wrong number is shown; the cells are blank.
+Also mention: `tests/testthat/helpers/extract_app_outputs.R` sources
+`modules/statistical/eda/utils/quantile_type6.R`, which is absent from `deployment/`.
 
 ### #2 — Code signing and notarization
 
@@ -63,4 +83,4 @@ put Node 22's complete `bin` directory first in `PATH` for npm and all children,
 verify ABI 127; `.nvmrc` or `engines` alone does not enforce the child process tree.
 
 ---
-*Last Updated: 2026-08-30*
+*Last Updated: 2026-09-03*

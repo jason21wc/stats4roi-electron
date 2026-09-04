@@ -65,6 +65,7 @@ reset_eda_data_driven_ui <- function(session) {
   safe_eda_update(updateTextInput(session, "hist_title", value = ""))
   safe_eda_update(updateTextInput(session, "hist_x_lab", value = ""))
   safe_eda_update(updateCheckboxInput(session, "hist_big", value = FALSE))
+  safe_eda_update(updateMaterialSwitch(session, "hist_freq_y_axis", value = FALSE))
   safe_eda_update(updateMaterialSwitch(session, "hist_freq_dist", value = FALSE))
   safe_eda_update(updateNumericInput(session, "freq_dist_dec", value = 5))
   

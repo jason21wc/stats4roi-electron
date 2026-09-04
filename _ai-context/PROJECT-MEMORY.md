@@ -10,7 +10,7 @@
 | Name | stats4roi-electron |
 | Purpose | Electron wrapper for stats4ROI R Shiny application |
 | Target Platform | Apple Silicon Macs (ARM64) |
-| Current Version | 4.3.0 |
+| Current Version | 4.3.3 (candidate, pending hand-test) |
 | Status | Production |
 
 ## Specification Summary
@@ -76,7 +76,9 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Upstream Sync v4.2.0 (DOE module) | Complete | 2026-04-25 |
 | Upstream Sync v4.2.1 (Taguchi optimization) | Complete | 2026-06-28 |
 | Upstream Sync v4.3.0 (Reliability + SPC expansion) | Complete | 2026-07-25 |
-| Upstream Sync v4.3.1 (distribution/EDA reliability fixes) | In Progress | 2026-08-30 |
+| Upstream Sync v4.3.1 (distribution/EDA reliability fixes) | Superseded — blocked on upstream defects, never released | 2026-08-30 |
+| Upstream Sync v4.3.3 (EDA factor fix, boxplot hover, seeded random columns) | Built, awaiting hand-test | 2026-09-03 |
+| propagate fork rebuilt under bundled R; fork script uses bin/R + build-version check | Complete | 2026-09-03 |
 | AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
 | propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |
 
@@ -194,10 +196,15 @@ cd stats4roi
 The script encapsulates the whole procedure: it blanks `FLIBS` (the bundled R
 hardcodes `FLIBS=/opt/gfortran`, usually absent, so the link fails with
 `ld: library 'emutls_w' not found`; propagate is Fortran-free so blanking is safe),
-installs with `force=TRUE` into `r-mac/library` using the bundled `Rscript`, then
-**verifies the artifact on disk and restores its backup if the result is wrong.**
-It reads `RemoteUsername` straight from `DESCRIPTION` rather than starting R, so it
-still reports correctly when the installed package is broken. Requires Xcode CLT clang.
+pins `PKG_LIBS` so the fork's Makevars does not shell out to `Rscript` for the
+long-empty `Rcpp:::LdFlags()`, installs with `force=TRUE` into `r-mac/library` using
+`r-mac/bin/R` with `R_HOME_DIR` exported (**never `r-mac/bin/Rscript`, which hardwires
+the system framework and silently builds under system R** — see LEARNING-LOG
+2026-09-03), then **verifies the artifact on disk and restores its backup if the result
+is wrong.** It reads `RemoteUsername` and the `Built:` R version straight from
+`DESCRIPTION` rather than starting R, so it still reports correctly when the installed
+package is broken, and `--check` fails if the fork was built under a different R than
+the bundled runtime. Requires Xcode CLT clang.
 
 **Gate on WHICH propagate is installed, never on whether one is.** CRAN propagate
 often arrives as a transitive dependency, so a `!require("propagate")` guard sees a
@@ -206,7 +213,7 @@ regressed. `install_stats4roi_packages.R` now checks `RemoteUsername` and hard-f
 rather than skipping.
 
 **Verify:** `./ensure-propagate-fork.sh --check` exits 0, and the `npm start` log
-must NOT contain "does not appear to be the Shiny fork".
+must NOT contain "does not appear to be the Shiny fork" or "was built under R version".
 
 ## R Runtime Dynamic-Library Containment (CRITICAL)
 
@@ -222,4 +229,4 @@ Verify a packaged launch with `lsof -p <R-pid>`: `libR.dylib`, BLAS, and gfortra
 map from inside `stats4ROI.app`, never `/Library/Frameworks/R.framework`.
 
 ---
-*Last Updated: 2026-08-30*
+*Last Updated: 2026-09-03*

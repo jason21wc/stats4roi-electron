@@ -143,4 +143,4 @@ The DMG maker calls macOS `hdiutil`, so this final step requires a build process
 working DiskArbitration in addition to workspace write access.
 
 ---
-*Last Updated: 2026-08-30 (v4.3.1 candidate)*
+*Last Updated: 2026-09-03 (v4.3.3 candidate)*

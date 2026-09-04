@@ -138,7 +138,7 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             col_data <- spec$data
             
             tryCatch({
-              x_num <- suppressWarnings(as.numeric(spec$x))
+              x_num <- eda_safe_numeric(spec$x)
               n_valid <- sum(!is.na(x_num))
               if (n_valid == 0) {
                 col_result <- data.frame(
@@ -168,7 +168,7 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             }, error = function(e) {
               results_list[[k]] <<- data.frame(
                 Variable = col_name,
-                n = sum(!is.na(suppressWarnings(as.numeric(spec$x)))),
+                n = sum(!is.na(eda_safe_numeric(spec$x))),
                 Error = paste("Could not process:", e$message)
               )
             })
@@ -192,7 +192,7 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             col_data <- spec$data
             
             tryCatch({
-              x_num <- suppressWarnings(as.numeric(spec$x))
+              x_num <- eda_safe_numeric(spec$x)
               n_valid <- sum(!is.na(x_num))
               if (n_valid == 0) {
                 col_result <- data.frame(
@@ -213,7 +213,7 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
             }, error = function(e) {
               results_list[[k]] <<- data.frame(
                 Variable = col_name,
-                n = sum(!is.na(suppressWarnings(as.numeric(spec$x)))),
+                n = sum(!is.na(eda_safe_numeric(spec$x))),
                 Error = paste("Could not process:", e$message)
               )
             })
@@ -239,7 +239,7 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
           dep_name <- colnames(data)[selected_data_cols[as.numeric(data_col)]]
           
           dep_name_m <- make.names(dep_name)
-          dep_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+          dep_x <- eda_safe_numeric(data[[dep_name_m]])
           if (sum(!is.na(dep_x)) == 0) {
             return(list(
               data = data.frame(Message = paste0("Selected dependent column '", dep_name, "' contains no valid numeric observations.")),

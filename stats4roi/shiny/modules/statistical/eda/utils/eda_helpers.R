@@ -1,6 +1,25 @@
 # EDA Helper Functions
 # Common utility functions for EDA module
 
+# Safe numeric coercion for EDA measurement columns.
+#
+# When the import pipeline has converted a character column to a factor,
+# calling as.numeric() directly returns internal level codes (1, 2, 3, …)
+# rather than the labels' numeric values.  This helper coerces through
+# as.character() first so that:
+#   factor(c("10", "20", "bad"))  → c(10, 20, NA)   (labels parsed)
+#   factor(c("Pass","Fail","Pending")) → c(NA, NA, NA)  (non-numeric → all NA)
+#
+# For grouping/factor columns (eda_UI1) use as.numeric() directly on the
+# column-index integers, not this function.
+eda_safe_numeric <- function(x) {
+  if (is.factor(x)) {
+    suppressWarnings(as.numeric(as.character(x)))
+  } else {
+    suppressWarnings(as.numeric(x))
+  }
+}
+
 # Helper function to safely get values from reactive objects
 safe_get <- function(obj, key, default = NULL) {
   if (is.null(obj) || is.null(key)) {

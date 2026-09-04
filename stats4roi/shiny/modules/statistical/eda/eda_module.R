@@ -120,7 +120,16 @@ create_eda_ui <- function(id) {
                 )
               ),
               column(11,
-                plotOutput(ns("box_plot"), width = "auto", height = "auto")
+                div(
+                  style = "position:relative; display:inline-block; overflow:visible;",
+                  plotOutput(
+                    ns("box_plot"),
+                    width = "auto",
+                    height = "auto",
+                    hover = hoverOpts(ns("box_hover"), delay = 100, delayType = "debounce")
+                  ),
+                  uiOutput(ns("hover_info_box"), style = "pointer-events: none;")
+                )
               )
             ),
             # Plot customization and controls
@@ -417,6 +426,7 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
         hist_height = if (is.null(input$hist_height)) 400 else input$hist_height,
         hist_type = input$hist_type,
         norm_curve = input$norm_curve,
+        hist_freq_y_axis = input$hist_freq_y_axis,
         hist_specs = input$hist_specs,
         hist_LSL = input$hist_LSL,
         hist_target = input$hist_target,
@@ -681,6 +691,104 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
     downloadServer("boxplot", boxplots_result$box_plot,
                   width = download_width, 
                   height = download_height)
+
+    # Boxplots hover tooltip (mirrors Intervals hover_info_ci pattern)
+    output$hover_info_box <- renderUI({
+      # No tooltip in violin mode
+      if (isTRUE(input$box_violin)) return(NULL)
+
+      hover <- input$box_hover
+      if (is.null(hover)) return(NULL)
+
+      hover_data <- isolate(boxplots_result$box_plot_hover_data())
+      if (is.null(hover_data)) return(NULL)
+
+      fence_samples  <- hover_data$fence_samples
+      outlier_points <- hover_data$outlier_points
+
+      ro <- get_global_config()$ro
+      R  <- 4  # default rounding digits for boxplot hover
+
+      # --- Outlier hit-test takes precedence ---
+      if (!is.null(outlier_points) && nrow(outlier_points) > 0) {
+        near_outliers <- nearPoints(
+          df        = outlier_points,
+          coordinfo = hover,
+          xvar      = "ID",
+          yvar      = "Data",
+          threshold = 25,
+          maxpoints = 20,
+          addDist   = TRUE
+        )
+        if (nrow(near_outliers) > 0) {
+          left_px <- hover$coords_css$x
+          top_px  <- hover$coords_css$y
+          style <- paste0(
+            "position:absolute; z-index:1000; background-color: rgba(245, 245, 245, 0.92); ",
+            "left:", left_px + 12, "px; top:", top_px + 12, "px; ",
+            "padding:6px 10px; border:1px solid #ccc; border-radius:4px; ",
+            "box-shadow:0 1px 4px rgba(0,0,0,0.2); white-space:nowrap;"
+          )
+          # Show group header + outlier values
+          grp <- as.character(near_outliers$ID[1])
+          kind_label <- ifelse(near_outliers$outlier_kind == "wild",
+                               "Extreme Outlier", "Outlier")
+          vals <- paste0(
+            "<b>", kind_label, ": </b>", ro(near_outliers$Data, R),
+            collapse = "<br/>"
+          )
+          return(div(
+            style = style,
+            HTML(paste0(
+              "<div style='text-align:center; font-weight:bold; margin-bottom:4px;'>",
+              grp, "</div>", vals
+            ))
+          ))
+        }
+      }
+
+      # --- Fence / box-whisker hit-test ---
+      if (!is.null(fence_samples) && nrow(fence_samples) > 0) {
+        near_fence <- nearPoints(
+          df        = fence_samples,
+          coordinfo = hover,
+          xvar      = "ID",
+          yvar      = "Data",
+          threshold = 25,
+          maxpoints = 1,
+          addDist   = TRUE
+        )
+        if (nrow(near_fence) > 0) {
+          left_px <- hover$coords_css$x
+          top_px  <- hover$coords_css$y
+          style <- paste0(
+            "position:absolute; z-index:1000; background-color: rgba(245, 245, 245, 0.92); ",
+            "left:", left_px + 12, "px; top:", top_px + 12, "px; ",
+            "padding:6px 10px; border:1px solid #ccc; border-radius:4px; ",
+            "box-shadow:0 1px 4px rgba(0,0,0,0.2); white-space:nowrap;"
+          )
+          s <- near_fence[1, ]
+          return(div(
+            style = style,
+            HTML(paste0(
+              "<div style='text-align:center; font-weight:bold; margin-bottom:4px;'>",
+              as.character(s$ID), "</div>",
+              "<b>Median: </b>",       ro(s$Median, R),       "<br/>",
+              "<b>Q1: </b>",           ro(s$Q1, R),           "<br/>",
+              "<b>Q3: </b>",           ro(s$Q3, R),           "<br/>",
+              "<b>IQR: </b>",          ro(s$IQR, R),          "<br/>",
+              "<b>Inner Fence Lower: </b>", ro(s$Inner_Lower, R), "<br/>",
+              "<b>Inner Fence Upper: </b>", ro(s$Inner_Upper, R), "<br/>",
+              "<b>Outer Fence Lower: </b>", ro(s$Outer_Lower, R), "<br/>",
+              "<b>Outer Fence Upper: </b>", ro(s$Outer_Upper, R)
+            ))
+          ))
+        }
+      }
+
+      NULL
+    })
+    outputOptions(output, "hover_info_box", suspendWhenHidden = FALSE)
     
     # Histograms download server (following architectural pattern)
     hist_download_width <- reactive({

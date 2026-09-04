@@ -239,3 +239,36 @@ parse its labels through character form or reject it as nonnumeric; never treat 
 IDs as measured values. Test both roles through the production import pipeline.
 **Apply When:** R analytical interfaces let users choose the same imported column as a
 factor, predictor, dependent measurement, or general EDA column.
+
+### 2026-09-03 — The Bundled `Rscript` Binary Is Not the Bundled R
+
+**Context:** `ensure-propagate-fork.sh` compiled the propagate fork with
+`r-mac/bin/Rscript`. That binary hardwires `R_HOME` to `/Library/Frameworks` and
+silently ran the developer Mac's system R 4.5.2, so the shipped fork was built under a
+different R than the runtime it loads in ("package 'propagate' was built under R
+version 4.5.2" at every launch, in v4.3.0 and the blocked v4.3.1 candidate). The
+`bin/R` shell wrapper honours `R_HOME_DIR` from the environment and sets the loader
+path itself, so it and its `R CMD INSTALL` children stay inside `r-mac/`. A second
+trap: the fork's `src/Makevars` shells out to `$(R_HOME)/bin/Rscript` for
+`Rcpp:::LdFlags()`, which hops to the system wrapper whose "ignoring environment value
+of R_HOME" warning lands on the link line and breaks it. Overriding `PKG_LIBS` in the
+user Makevars removes the call (Rcpp has been header-only for years).
+**Lesson:** Every R entry point in a packaging script must be proven to resolve to the
+bundled runtime; `R.home()` from inside the process is the test. Record the build R
+version in the verification (`Built:` in DESCRIPTION) so a mismatch fails `--check`
+instead of surfacing as a startup warning.
+**Apply When:** Compiling or installing packages into `r-mac/`, or writing any script
+that invokes `r-mac/bin/Rscript`.
+
+### 2026-09-03 — Upstream Tests May Depend on Files Outside `deployment/`
+
+**Context:** Upstream's `tests/testthat/helpers/extract_app_outputs.R` sources
+`modules/statistical/eda/utils/quantile_type6.R`, a leftover in upstream's root
+`modules/` that is absent from `deployment/` and referenced by no shipped module.
+Running the EDA tests against our synced tree errored on the missing file until the
+helper's dependency was copied into the scratch harness.
+**Lesson:** Run upstream tests against the synced `deployment/` tree in a scratch
+harness rather than trusting a pass in upstream's own root layout, and treat a
+test-only dependency that is not shipped as a test-hygiene note for Steve, not a sync
+gap.
+**Apply When:** Running upstream testthat files during a sync.

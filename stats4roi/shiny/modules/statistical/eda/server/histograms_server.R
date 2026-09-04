@@ -151,6 +151,16 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
       if (is.null(freq_dist)) return(FALSE)
       freq_dist
     })
+
+    # =========================================================================
+    # Y-AXIS MODE (count vs relative frequency) - for histogram only
+    # =========================================================================
+    hist_freq_y_axis <- reactive({
+      input_vals <- input_values()
+      y_freq <- input_vals$hist_freq_y_axis
+      if (is.null(y_freq)) return(FALSE)
+      y_freq
+    })
     
     freq_dist_dec <- reactive({
       input_vals <- input_values()
@@ -232,7 +242,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           selected_cols <- as.numeric(UI1)
           plot_data <- data.frame(transform.dependent.format.to.independent.format(data = data[selected_cols]))
           names(plot_data) <- c("ID", "Data")
-          plot_data$Data <- suppressWarnings(as.numeric(plot_data$Data))
+          plot_data$Data <- eda_safe_numeric(plot_data$Data)
           
         } else {
           # Factor analysis
@@ -256,7 +266,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           
           # Create plot data directly (same as boxplots server)
           plot_data <- data.frame(
-            Data = suppressWarnings(as.numeric(data[, data_col_name])),
+            Data = eda_safe_numeric(data[, data_col_name]),
             ID = group_var
           )
           
@@ -356,6 +366,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
       type <- hist_type()
       norm_curve_val <- norm_curve()
       hist_specs_val <- hist_specs()
+      hist_freq_y_axis_val <- hist_freq_y_axis()
       hist_LSL_val <- hist_LSL()
       hist_target_val <- hist_target()
       hist_USL_val <- hist_USL()
@@ -393,7 +404,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           selected_cols <- as.numeric(UI1)
           plot_data <- data.frame(transform.dependent.format.to.independent.format(data = data[selected_cols]))
           names(plot_data) <- c("ID", "Data")
-          plot_data$Data <- suppressWarnings(as.numeric(plot_data$Data))
+          plot_data$Data <- eda_safe_numeric(plot_data$Data)
           comboname <- c("Histogram", "Frequency Polygon", "Density")[as.numeric(type)]
           dataname <- "Data"
         } else {
@@ -420,7 +431,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
           
           # Create plot data directly (same as boxplots server)
           plot_data <- data.frame(
-            Data = suppressWarnings(as.numeric(data[, data_col_name])),
+            Data = eda_safe_numeric(data[, data_col_name]),
             ID = group_var
           )
           
@@ -468,12 +479,26 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
                            color = colors[1]) +
               scale_fill_manual(values = leg_names)
           } else {
-            p <- p +
-              geom_histogram(aes(fill = "Data"), 
-                           binwidth = bin_w, bins = bins, center = center, 
-                           color = colors[1]) +
-              labs(y = "Count") +
-              scale_fill_manual(values = leg_names)
+            if (isTRUE(hist_freq_y_axis_val)) {
+              # Relative frequency: count / total count (per panel)
+              p <- p +
+                geom_histogram(
+                  aes(fill = "Data", y = after_stat(count / sum(count))),
+                  binwidth = bin_w, bins = bins, center = center,
+                  color = colors[1]
+                ) +
+                labs(y = "Frequency") +
+                scale_fill_manual(values = leg_names)
+            } else {
+              p <- p +
+                geom_histogram(
+                  aes(fill = "Data"),
+                  binwidth = bin_w, bins = bins, center = center,
+                  color = colors[1]
+                ) +
+                labs(y = "Count") +
+                scale_fill_manual(values = leg_names)
+            }
           }
         } else if (type == 2) {
           # Frequency Polygon
@@ -632,6 +657,7 @@ create_histograms_server <- function(id, data_source, data_type_reactive, input_
       mult_data_choice = mult_data_choice,
       combine_data_choice = combine_data_choice,
       hist_freq_dist = hist_freq_dist,
+      hist_freq_y_axis = hist_freq_y_axis,
       hist_title = hist_title,
       hist_x_lab = hist_x_lab,
       hist_big = hist_big

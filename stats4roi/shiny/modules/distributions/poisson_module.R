@@ -3,6 +3,7 @@
 
 # Source global configuration for ro() function and colors
 source("modules/config/global_config.R")
+source("modules/distributions/discrete_x_of_interest.R")
 
 # Poisson Distribution UI (replicating app.R lines 808-866)
 create_poisson_ui <- function(id) {
@@ -129,7 +130,7 @@ create_poisson_server <- function(id, color_palette) {
       if (input$one_or_two_po == 2) {
         radioButtons(
           inputId = ns("po_low_inc"),
-          label = "Include X Lower?",
+          label = "Include X in lower tail",
           choices = c("Yes" = 1, "No" = 2),
           selected = 1
         )
@@ -142,7 +143,7 @@ create_poisson_server <- function(id, color_palette) {
       if (input$one_or_two_po == 2) {
         radioButtons(
           inputId = ns("po_hi_inc"),
-          label = "Include X Upper?",
+          label = "Include X in upper tail",
           choices = c("Yes" = 1, "No" = 2),
           selected = 1
         )
@@ -195,6 +196,14 @@ create_poisson_server <- function(id, color_palette) {
       
       min_po <- max(0, as.integer(lambda - 6 * (lambda)^0.5))
       max_po <- as.integer(lambda + 6 * (lambda)^0.5)
+      if (r_po && !is.null(r_l) && is.finite(r_l)) {
+        min_po <- min(min_po, r_l)
+        max_po <- max(max_po, r_l)
+      }
+      if (r_po && one_or_two == 2 && !is.null(r_u) && is.finite(r_u)) {
+        min_po <- min(min_po, r_u)
+        max_po <- max(max_po, r_u + 1)
+      }
       
       # Create data for plotting
       R_seq <- min_po:max_po
@@ -215,12 +224,13 @@ create_poisson_server <- function(id, color_palette) {
       if (r_po) {
         low_inc <- input$po_low_inc
         hi_inc <- input$po_hi_inc
+        adj <- adjust_discrete_x_of_interest(
+          r_l, low_inc, r_u, hi_inc, two_tails = (one_or_two == 2)
+        )
+        r_l <- adj$x_l
+        r_u <- adj$x_u
         
         if (one_or_two == 1) {
-          # One tail
-          if (low_inc == 2) {
-            r_l <- r_l - 1
-          }
           validate(need(r_l >= min_po, "X out of range of the graph!"),
                    need(r_l <= max_po, "X out of range of the graph!"))
           
@@ -228,18 +238,11 @@ create_poisson_server <- function(id, color_palette) {
           pl <- pl + geom_col(data = highlight_data, aes(x = factor(R), y = pdf), 
                               fill = colors()$col_fill_highlight, color = colors()$col_plot_line)
         } else {
-          # Two tails
-          if (low_inc == 2) {
-            r_l <- r_l - 1
-          }
-          if (hi_inc == 2) {
-            r_u <- r_u - 1
-          }
           validate(need(r_l >= min_po, "X Lower out of range of the graph!"),
                    need(r_u <= max_po, "X Upper out of range of the graph!"),
-                   need(r_l <= r_u, "X Lower must be less than or equal to X Upper"))
+                   need(r_l < r_u, "X Lower must be less than X Upper"))
           
-          highlight_data <- data[data$R >= r_l & data$R <= r_u, ]
+          highlight_data <- data[data$R <= r_l | data$R >= r_u, ]
           pl <- pl + geom_col(data = highlight_data, aes(x = factor(R), y = pdf), 
                               fill = colors()$col_fill_highlight, color = colors()$col_plot_line)
         }
@@ -277,74 +280,49 @@ create_poisson_server <- function(id, color_palette) {
       
       if (!r_po) return(HTML(""))
       
-      # Calculate probabilities
       po_table <- table.dist.poisson(lambda = lambda)
+      two_tails <- (one_or_two == 2)
+      probs <- discrete_x_of_interest_probs(
+        po_table, r_l, input$po_low_inc, r_u, input$po_hi_inc, two_tails = two_tails
+      )
+      r_l <- probs$lower$x
       
       if (one_or_two == 1) {
-        # One tail
-        low_inc <- input$po_low_inc
-        if (low_inc == 2) {
-          r_l <- r_l - 1
-        }
-        
-        p_at_r <- po_table$p.at.x[r_l + 1]
-        p_and_above <- po_table$eq.and.above[r_l + 1]
-        p_and_below <- po_table$eq.and.below[r_l + 1]
-        
         output <- HTML(paste0(
           "<b>Poisson Distribution Results</b>",
           "<br><br>",
           "<table style='width: 100%; margin-bottom: 20px;'>",
           "<tr>",
-          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(p_at_r, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(p_and_below, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(p_and_above, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(probs$lower$p_at, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(probs$lower$p_and_below, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(probs$lower$p_and_above, R), "</td>",
           "</tr>",
           "</table>"
         ))
       } else {
-        # Two tails
-        low_inc <- input$po_low_inc
-        hi_inc <- input$po_hi_inc
-        
-        if (low_inc == 2) {
-          r_l <- r_l - 1
-        }
-        if (hi_inc == 2) {
-          r_u <- r_u - 1
-        }
-        
-        p_at_r_l <- po_table$p.at.x[r_l + 1]
-        p_at_r_u <- po_table$p.at.x[r_u + 1]
-        p_and_below_l <- po_table$eq.and.below[r_l + 1]
-        p_and_above_l <- po_table$eq.and.above[r_l + 1]
-        p_and_below_u <- po_table$eq.and.below[r_u + 1]
-        p_and_above_u <- po_table$eq.and.above[r_u + 1]
-        p_between <- 1 - p_and_below_l - p_and_above_u
-        p_tails <- p_and_below_l + p_and_above_u
-        
+        r_u <- probs$upper$x
         output <- HTML(paste0(
           "<b>Poisson Distribution Results</b>",
           "<br><br>",
           "<table style='width: 100%; margin-bottom: 20px;'>",
           "<tr>",
-          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(p_at_r_l, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(p_and_below_l, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(p_and_above_l, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, ") = ", ro(probs$lower$p_at, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and below) = ", ro(probs$lower$p_and_below, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_l, " and above) = ", ro(probs$lower$p_and_above, R), "</td>",
           "</tr>",
           "<tr>",
-          "<td style='padding: 5px;'>p(", r_u, ") = ", ro(p_at_r_u, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_u, " and below) = ", ro(p_and_below_u, R), "</td>",
-          "<td style='padding: 5px;'>p(", r_u, " and above) = ", ro(p_and_above_u, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_u, ") = ", ro(probs$upper$p_at, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_u, " and below) = ", ro(probs$upper$p_and_below, R), "</td>",
+          "<td style='padding: 5px;'>p(", r_u, " and above) = ", ro(probs$upper$p_and_above, R), "</td>",
           "</tr>",
           "<tr>",
           "<td style='padding: 5px; background-color:", colors()$col_fill, ";'></td>",
-          "<td style='padding: 5px;'>p(between) = ", ro(p_between, R), "</td>",
+          "<td style='padding: 5px;'>p(between) = ", ro(probs$p_between, R), "</td>",
           "<td style='padding: 5px;'>", r_l + 1, " ≤ X ≤ ", r_u - 1, "</td>",
           "</tr>",
           "<tr>",
           "<td style='padding: 5px; background-color:", colors()$col_fill_highlight, ";'></td>",
-          "<td style='padding: 5px;'>p(tails) = ", ro(p_tails, R), "</td>",
+          "<td style='padding: 5px;'>p(tails) = ", ro(probs$p_tails, R), "</td>",
           "<td style='padding: 5px;'>X ≤ ", r_l, " + X ≥ ", r_u, "</td>",
           "</tr>",
           "</table>"

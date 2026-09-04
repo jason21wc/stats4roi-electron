@@ -172,7 +172,7 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
           
           for (int in loop) {
             x_raw <- data[UI1][, int]
-            x_num <- suppressWarnings(as.numeric(x_raw))
+            x_num <- eda_safe_numeric(x_raw)
             x_clean <- x_num[!is.na(x_num)]
             if (length(x_clean) >= 2) {
               tryCatch({
@@ -256,7 +256,7 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
           
           for (i in 1:num_col) {
             x_raw <- data[UI1][, i]
-            x_num <- suppressWarnings(as.numeric(x_raw))
+            x_num <- eda_safe_numeric(x_raw)
             x_clean <- x_num[!is.na(x_num)]
             if (length(x_clean) >= 2) {
               tryCatch({
@@ -353,7 +353,7 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
               # Safer factor filtering using Reduce and Map instead of eval(parse)
               filter_condition <- Reduce(`&`, Map(function(col, val) data[[col]] == val, colnames(combos), combos[i, ]))
               subdata <- data[filter_condition, ]
-              t_out <- t.test.onesample(subdata[[dep_name]], conf.level = conf)
+              t_out <- t.test.onesample(eda_safe_numeric(subdata[[dep_name]]), conf.level = conf)
               
               output$CI_low[i] <- t_out[["conf.int"]][1]
               output$CI_high[i] <- t_out[["conf.int"]][2]
@@ -380,7 +380,7 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
               # Safer factor filtering using Reduce and Map instead of eval(parse)
               filter_condition <- Reduce(`&`, Map(function(col, val) data[[col]] == val, colnames(combos), combos[i, ]))
               subdata <- data[filter_condition, ]
-              subdata <- data.frame(na.omit(subdata[[dep_name]]))
+              subdata <- data.frame(na.omit(eda_safe_numeric(subdata[[dep_name]])))
               
               if (nrow(subdata) > 0) {
                 output$n[i] <- nrow(subdata)
@@ -419,7 +419,7 @@ create_intervals_server <- function(id, data_source, data_type_reactive, input_v
         }
         
         if (needs_pooled_all_row(nrow(output))) {
-          pooled_x <- na.omit(data[[dep_name]])
+          pooled_x <- na.omit(eda_safe_numeric(data[[dep_name]]))
           all_row <- output[1, , drop = FALSE]
           all_row[1, ] <- NA
           all_row <- label_factor_group_row(all_row, colnames(combos))

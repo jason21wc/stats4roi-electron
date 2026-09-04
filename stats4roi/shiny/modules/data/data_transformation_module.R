@@ -113,23 +113,148 @@ check_nonfinite <- function(data) {
   )
 }
 
+# Parse optional RNG seed from a text input. Blank/whitespace => seed NULL (unseeded).
+# Valid signed integer string => seed as integer. Otherwise ok = FALSE.
+parse_optional_seed <- function(x) {
+  if (is.null(x) || length(x) == 0L) return(list(ok = TRUE, seed = NULL))
+  s <- trimws(as.character(x[[1]]))
+  if (identical(s, "") || is.na(s)) return(list(ok = TRUE, seed = NULL))
+  if (!grepl("^-?[0-9]+$", s)) return(list(ok = FALSE, seed = NULL))
+  seed <- suppressWarnings(as.integer(s))
+  if (is.na(seed)) return(list(ok = FALSE, seed = NULL))
+  list(ok = TRUE, seed = seed)
+}
+
 # Generate a random column of length n. params: A, B, C per distribution.
+# Optional seed: when not NULL, set.seed inside a save/restore of .Random.seed.
 # Returns numeric vector or NULL on error.
-generate_random_column <- function(type, n, A, B, C = 0) {
+generate_random_column <- function(type, n, A, B, C = 0, seed = NULL) {
   n <- as.integer(n)
   if (is.na(n) || n < 1) return(NULL)
   A <- as.numeric(A)
   B <- as.numeric(B)
   C <- as.numeric(C)
-  tryCatch({
-    switch(type,
-      uniform = runif(n, min = A, max = B),
-      normal = rnorm(n, mean = A, sd = B),
-      exponential = A + rexp(n, rate = 1 / B),
-      chisq = C + B * rchisq(n, df = A),
-      NULL
-    )
-  }, error = function(e) NULL)
+  draw <- function() {
+    tryCatch({
+      switch(type,
+        uniform = runif(n, min = A, max = B),
+        normal = rnorm(n, mean = A, sd = B),
+        exponential = A + rexp(n, rate = 1 / B),
+        chisq = C + B * rchisq(n, df = A),
+        NULL
+      )
+    }, error = function(e) NULL)
+  }
+  if (is.null(seed)) return(draw())
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  old_seed <- if (had_seed) get(".Random.seed", envir = .GlobalEnv, inherits = FALSE) else NULL
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+  set.seed(seed)
+  draw()
+}
+
+# Pad or trim a vector to length n. Shorter vectors get NA of the same type.
+pad_vector_to_n <- function(vec, n) {
+  n <- as.integer(n)
+  if (is.na(n) || n < 0L) n <- 0L
+  len <- length(vec)
+  if (len == n) return(vec)
+  if (len > n) return(vec[seq_len(n)])
+  if (len == 0L) {
+    if (is.integer(vec)) return(rep(NA_integer_, n))
+    if (is.logical(vec)) return(rep(NA, n))
+    if (is.character(vec)) return(rep(NA_character_, n))
+    return(rep(NA_real_, n))
+  }
+  fill <- if (is.integer(vec)) {
+    NA_integer_
+  } else if (is.logical(vec)) {
+    NA
+  } else if (is.character(vec)) {
+    NA_character_
+  } else {
+    NA_real_
+  }
+  c(vec, rep(fill, n - len))
+}
+
+# Pad every column of a data frame to nrow = n.
+pad_dataframe_to_n <- function(data, n) {
+  n <- as.integer(n)
+  if (is.null(data) || !is.data.frame(data) || ncol(data) == 0L) {
+    return(data.frame(row.names = if (n > 0L) seq_len(n) else NULL))
+  }
+  if (nrow(data) == n) return(data)
+  out <- as.data.frame(lapply(data, pad_vector_to_n, n = n), stringsAsFactors = FALSE)
+  names(out) <- names(data)
+  out
+}
+
+is_random_spec <- function(x) {
+  !is.null(x$values) && is.null(x$column) &&
+    !identical(x$type, "run_number") && !identical(x$type, "global_rank")
+}
+
+# Build working data + transform/random columns, aligned to the longest column.
+# When wd is NULL/empty, random-only specs still produce a data frame.
+# Returns NULL when there is no base and no usable random specs.
+assemble_transformed_data <- function(wd, specs) {
+  has_base <- is.data.frame(wd) && ncol(wd) > 0L
+  specs <- if (is.null(specs)) list() else specs
+  random_lens <- integer(0)
+  if (length(specs) > 0L) {
+    for (x in specs) {
+      if (is_random_spec(x)) random_lens <- c(random_lens, length(x$values))
+    }
+  }
+  max_random <- if (length(random_lens) == 0L) 0L else max(random_lens)
+
+  if (!has_base) {
+    if (max_random < 1L) return(NULL)
+    n_out <- max_random
+    out <- data.frame(row.names = seq_len(n_out))
+  } else {
+    n_base <- nrow(wd)
+    n_out <- max(n_base, max_random)
+    if (n_out < 1L && length(specs) == 0L) return(wd)
+    out <- pad_dataframe_to_n(wd, n_out)
+  }
+
+  if (length(specs) == 0L) return(out)
+
+  for (x in specs) {
+    if (identical(x$type, "run_number")) {
+      if (!has_base) next
+      newcol <- generate_run_numbers(wd, x$factor_columns)
+      if (!is.null(newcol)) {
+        out[[x$newname]] <- pad_vector_to_n(newcol, n_out)
+      }
+    } else if (identical(x$type, "global_rank")) {
+      if (!has_base) next
+      ranked <- compute_global_rank(wd, x$columns)
+      if (!is.null(ranked)) {
+        for (i in seq_along(x$columns)) {
+          out[[x$newnames[i]]] <- pad_vector_to_n(ranked[[x$columns[i]]], n_out)
+        }
+      }
+    } else if (!is.null(x$column)) {
+      if (!has_base || is.null(wd[[x$column]])) next
+      p <- x$params
+      newcol <- compute_transform(x$type, wd[[x$column]], p["A"], p["B"], p["C"])
+      if (!is.null(newcol)) {
+        out[[x$newname]] <- pad_vector_to_n(newcol, n_out)
+      }
+    } else if (is_random_spec(x)) {
+      out[[x$newname]] <- pad_vector_to_n(x$values, n_out)
+    }
+  }
+  out
 }
 
 # Assign integer run numbers to each unique factor combination (sorted order).
@@ -221,6 +346,7 @@ create_data_transformation_ui <- function(id) {
         column(4, numericInput(ns("rand_c"), "C", value = 0, width = "100%"))
       ),
       textInput(ns("rand_colname"), "Column name (optional)", value = "", placeholder = "e.g. my_random"),
+      textInput(ns("rand_seed"), "Seed (optional)", value = "", placeholder = "Leave blank for random"),
       actionButton(ns("add_random"), "Add column", class = "btn-primary")
     ),
     column(
@@ -371,6 +497,11 @@ create_data_transformation_server <- function(id, working_data) {
       if (is.null(wd) || nrow(wd) == 0) n <- max(1L, n)
       dist_type <- input$rand_dist
       if (is.null(dist_type) || dist_type == "") return(invisible(NULL))
+      seed_parsed <- parse_optional_seed(input$rand_seed)
+      if (!isTRUE(seed_parsed$ok)) {
+        shiny::showNotification("Seed must be an integer (or leave blank for a random sample).", type = "warning")
+        return(invisible(NULL))
+      }
       A <- if (is.null(input$rand_a) || is.na(input$rand_a)) 0 else input$rand_a
       B <- if (is.null(input$rand_b) || is.na(input$rand_b)) 1 else input$rand_b
       C <- if (is.null(input$rand_c) || is.na(input$rand_c)) 0 else input$rand_c
@@ -378,7 +509,7 @@ create_data_transformation_server <- function(id, working_data) {
       if (dist_type == "normal" && B < 0) B <- 0
       if (dist_type == "exponential" && B <= 0) B <- 1
       if (dist_type == "chisq" && A <= 0) A <- 1
-      vec <- generate_random_column(dist_type, n, A, B, C)
+      vec <- generate_random_column(dist_type, n, A, B, C, seed = seed_parsed$seed)
       if (is.null(vec)) {
         shiny::showNotification("Invalid parameters for random distribution.", type = "error")
         return(invisible(NULL))
@@ -394,7 +525,8 @@ create_data_transformation_server <- function(id, working_data) {
         params = c(A = A, B = B, C = C),
         newname = newname,
         values = vec,
-        n = n
+        n = n,
+        seed = seed_parsed$seed
       )))
       specs(new_specs)
     })
@@ -477,8 +609,9 @@ create_data_transformation_server <- function(id, working_data) {
                         i, x$column, x$newname, p["A"], p["B"]))
           }
         } else {
-          cat(sprintf("%s: [random %s] -> %s (A=%.4g, B=%.4g, C=%.4g, n=%s)\n",
-                      i, x$type, x$newname, p["A"], p["B"], p["C"], x$n))
+          seed_part <- if (!is.null(x$seed)) sprintf(", seed=%s", x$seed) else ""
+          cat(sprintf("%s: [random %s] -> %s (A=%.4g, B=%.4g, C=%.4g, n=%s%s)\n",
+                      i, x$type, x$newname, p["A"], p["B"], p["C"], x$n, seed_part))
         }
       }
       invisible(NULL)
@@ -486,45 +619,7 @@ create_data_transformation_server <- function(id, working_data) {
 
     # Data reactive: working data + all transformed and random columns
     data <- reactive({
-      wd <- working_data()
-      if (is.null(wd) || !is.data.frame(wd)) return(wd)
-      s <- specs()
-      if (length(s) == 0) return(wd)
-      out <- wd
-      n_out <- nrow(wd)
-      for (x in s) {
-        if (identical(x$type, "run_number")) {
-          newcol <- generate_run_numbers(wd, x$factor_columns)
-          if (!is.null(newcol)) {
-            out <- dplyr::bind_cols(out, tibble::tibble(!!x$newname := newcol))
-          }
-        } else if (identical(x$type, "global_rank")) {
-          ranked <- compute_global_rank(wd, x$columns)
-          if (!is.null(ranked)) {
-            for (i in seq_along(x$columns)) {
-              out <- dplyr::bind_cols(out, tibble::tibble(!!x$newnames[i] := ranked[[x$columns[i]]]))
-            }
-          }
-        } else if (!is.null(x$column)) {
-          type <- x$type
-          col_vec <- wd[[x$column]]
-          p <- x$params
-          newcol <- compute_transform(type, col_vec, p["A"], p["B"], p["C"])
-          if (!is.null(newcol)) {
-            out <- dplyr::bind_cols(out, tibble::tibble(!!x$newname := newcol))
-          }
-        } else {
-          # Random column: use stored values, truncate or pad to match current nrow
-          vec <- x$values
-          if (length(vec) >= n_out) {
-            newcol <- vec[seq_len(n_out)]
-          } else {
-            newcol <- c(vec, rep(NA_real_, n_out - length(vec)))
-          }
-          out <- dplyr::bind_cols(out, tibble::tibble(!!x$newname := newcol))
-        }
-      }
-      out
+      assemble_transformed_data(working_data(), specs())
     })
 
     return(list(data = data))

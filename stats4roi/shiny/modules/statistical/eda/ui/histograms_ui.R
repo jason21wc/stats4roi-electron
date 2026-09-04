@@ -32,6 +32,17 @@ create_histograms_ui <- function(ns) {
           label = "Normal Curve?",
           value = FALSE
         ),
+        # Y-axis mode toggle (only for histograms without normal overlay)
+        conditionalPanel(
+          condition = "input.hist_type == 1 && input.norm_curve == 0",
+          ns = ns,
+          materialSwitch(
+            inputId = ns("hist_freq_y_axis"),
+            label = "Frequency (relative) Y-axis?",
+            value = FALSE,
+            status = "success"
+          )
+        ),
         # Draw specifications option
         checkboxInput(
           inputId = ns("hist_specs"),

@@ -114,8 +114,105 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
     })
     
     # =========================================================================
+    # HELPER: Build standardized long-form plot data (ID, Data) with outlier
+    # detection.  Returns list(plot_data, outliers, wild_outliers, stats).
+    # =========================================================================
+    build_boxplot_data <- function(data, data_type, selections, data_col) {
+      if (data_type == 1) {
+        # Column analysis
+        if (ncol(data) == 1) {
+          clean_vals <- eda_safe_numeric(data[, 1])
+          clean_vals <- clean_vals[!is.na(clean_vals)]
+          if (length(clean_vals) == 0) return(NULL)
+          plot_data <- data.frame(ID = names(data)[1], Data = clean_vals,
+                                 stringsAsFactors = FALSE)
+        } else {
+          num_data <- as.data.frame(lapply(data, eda_safe_numeric))
+          data_long <- num_data %>%
+            tidyr::pivot_longer(everything(), names_to = "variable", values_to = "value")
+          data_long <- data_long[which(!is.na(data_long$value)), ]
+          if (nrow(data_long) == 0) return(NULL)
+          plot_data <- data.frame(ID = data_long$variable, Data = data_long$value,
+                                 stringsAsFactors = FALSE)
+        }
+      } else if (data_type == 2) {
+        if (is.null(data_col)) return(NULL)
+        factors <- as.numeric(selections$eda_UI1)
+        data_col_idx <- as.numeric(selections$eda_UI2)[as.numeric(data_col)]
+        group_var <- interaction(data[, factors, drop = FALSE], sep = ", ")
+        dep_var <- eda_safe_numeric(data[, data_col_idx])
+        plot_data <- data.frame(Data = dep_var, ID = group_var, stringsAsFactors = FALSE)
+      } else {
+        return(NULL)
+      }
+
+      plot_data$ID <- factor(plot_data$ID)
+      plot_data <- plot_data[which(!is.na(plot_data$Data)), ]
+      if (nrow(plot_data) == 0) return(NULL)
+
+      # Outlier detection (type = 6 to match original app)
+      wild_outliers <- plot_data %>%
+        dplyr::group_by(ID) %>%
+        dplyr::filter(Data < quantile(Data, probs = .25, type = 6) - 3 * IQR(Data, type = 6) |
+                      Data > quantile(Data, probs = .75, type = 6) + 3 * IQR(Data, type = 6))
+
+      outliers <- plot_data %>%
+        dplyr::group_by(ID) %>%
+        dplyr::filter(Data < quantile(Data, probs = .25, type = 6) - 1.5 * IQR(Data, type = 6) |
+                      Data > quantile(Data, probs = .75, type = 6) + 1.5 * IQR(Data, type = 6)) %>%
+        dplyr::anti_join(wild_outliers, by = c("ID", "Data"))
+
+      # Per-group summary stats for hover
+      stats <- plot_data %>%
+        dplyr::group_by(ID) %>%
+        dplyr::summarise(
+          Q1     = quantile(Data, probs = .25, type = 6),
+          Median = median(Data),
+          Q3     = quantile(Data, probs = .75, type = 6),
+          IQR    = Q3 - Q1,
+          Inner_Lower = Q1 - 1.5 * IQR,
+          Inner_Upper = Q3 + 1.5 * IQR,
+          Outer_Lower = Q1 - 3 * IQR,
+          Outer_Upper = Q3 + 3 * IQR,
+          .groups = "drop"
+        )
+
+      list(plot_data = plot_data, outliers = outliers,
+           wild_outliers = wild_outliers, stats = stats)
+    }
+
+    # =========================================================================
     # PLOT REACTIVE (following graphics template pattern)
     # =========================================================================
+
+    # Generate title following original app pattern
+    generate_title <- function(data_type, data, UI1, UI2, data_col, x_lab, y_lab, title, violin = FALSE) {
+      if (data_type == 1) {
+        combo <- "ID"
+        dataname <- "Data"
+        if (isTruthy(x_lab)) combo <- x_lab
+        if (isTruthy(y_lab)) dataname <- y_lab
+        if (violin) {
+          comboname <- paste0("Violin Plot of ", dataname, " by ", combo)
+        } else {
+          comboname <- paste0("Boxplot of ", dataname, " by ", combo)
+        }
+      } else {
+        UI1_numeric <- as.numeric(UI1)
+        combo <- paste0(names(data)[UI1_numeric], collapse = ", ")
+        if (isTruthy(x_lab)) combo <- x_lab
+        dataname <- names(data)[data_col]
+        if (isTruthy(y_lab)) dataname <- y_lab
+        if (violin) {
+          comboname <- paste0("Violin Plot of ", dataname, " by ", combo)
+        } else {
+          comboname <- paste0("Boxplot of ", dataname, " by ", combo)
+        }
+      }
+      if (isTruthy(title)) comboname <- title
+      return(comboname)
+    }
+
     box_plot <- reactive({
       data <- processed_data()
       data_type <- data_type_reactive()
@@ -127,207 +224,86 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
         return(NULL)
       }
       
-      # Get color palette
       color_palette <- unname(colors)
       
-      # Generate title following original app pattern
-      generate_title <- function(data_type, data, UI1, UI2, data_col, x_lab, y_lab, title, violin = FALSE) {
-        if (data_type == 1) {
-          # Column analysis - always use "ID" for combo (like original app)
-          combo <- "ID"
-          dataname <- "Data"
-          if (isTruthy(x_lab)) combo <- x_lab
-          if (isTruthy(y_lab)) dataname <- y_lab
-          if (violin) {
-            comboname <- paste0("Violin Plot of ", dataname, " by ", combo)
-          } else {
-            comboname <- paste0("Boxplot of ", dataname, " by ", combo)
-          }
-        } else {
-          # Factor analysis
-          UI1_numeric <- as.numeric(UI1)
-          combo <- paste0(names(data)[UI1_numeric], collapse = ", ")
-          if (isTruthy(x_lab)) combo <- x_lab
-          dataname <- names(data)[data_col]
-          if (isTruthy(y_lab)) dataname <- y_lab
-          if (violin) {
-            comboname <- paste0("Violin Plot of ", dataname, " by ", combo)
-          } else {
-            comboname <- paste0("Boxplot of ", dataname, " by ", combo)
-          }
-        }
-        
-        # Override with custom title if provided
-        if (isTruthy(title)) comboname <- title
-        return(comboname)
-      }
-      
       tryCatch({
+        bp <- build_boxplot_data(data, data_type, selections, data_col)
+        if (is.null(bp)) return(NULL)
+
+        plot_data     <- bp$plot_data
+        outliers      <- bp$outliers
+        wild_outliers <- bp$wild_outliers
+
         if (data_type == 1) {
-          # Column analysis - data contains only the selected columns
-          if (ncol(data) == 1) {
-            # Single column - simple boxplot
-            plot_title <- generate_title(data_type, data, selections$eda_UI1, selections$eda_UI2, 
-                                       1, box_xlab(), box_ylab(), box_title(), box_violin())
-            
-            # Filter out NAs (following original app pattern)
-            clean_vals <- suppressWarnings(as.numeric(data[, 1]))
-            clean_vals <- clean_vals[!is.na(clean_vals)]
-            if (length(clean_vals) == 0) {
-              return(NULL)
-            }
-            
-            # Create data frame with column name as x-axis label (like original app)
-            plot_data <- data.frame(
-              ID = names(data)[1],  # Use actual column name
-              Data = clean_vals
-            )
-            
-            p <- ggplot(plot_data, aes(x = ID, y = Data))
-            
-            if (box_violin()) {
-              # Violin plot (replaces boxplot, like original app)
-              p <- p +
-                geom_violin(fill = color_palette[2], alpha = 0.5, bw = "sj") +
-                stat_summary(fun = "mean", geom = "point", size = 4)
-            } else {
-              # Boxplot
-              p <- p +
-                stat_boxplot(geom = "errorbar", width = 0.5) +  # Whisker caps
-                geom_boxplot(
-                  fill = color_palette[2], 
-                  notch = notch_box(),
-                  outlier.color = color_palette[1]
-                )
-            }
-            
-            p <- p +
-              theme_minimal() +
-              labs(
-                title = plot_title,
-                x = ifelse(box_xlab() == "", "ID", box_xlab()),
-                y = ifelse(box_ylab() == "", "Data", box_ylab())
-              )
-          } else {
-            # Multiple columns - grouped boxplot
-            plot_title <- generate_title(data_type, data, selections$eda_UI1, selections$eda_UI2, 
-                                       1, box_xlab(), box_ylab(), box_title(), box_violin())
-            
-            num_data <- as.data.frame(lapply(data, function(col) suppressWarnings(as.numeric(col))))
-            data_long <- num_data %>%
-              tidyr::pivot_longer(everything(), names_to = "variable", values_to = "value")
-            
-            # Filter out NAs (following original app pattern)
-            data_long <- data_long[which(!is.na(data_long$value)), ]
-            if (nrow(data_long) == 0) {
-              return(NULL)
-            }
-            
-            p <- ggplot(data_long, aes(x = variable, y = value))
-            
-            if (box_violin()) {
-              # Violin plot (replaces boxplot, like original app)
-              p <- p +
-                geom_violin(fill = color_palette[2], alpha = 0.5, bw = "sj") +
-                stat_summary(fun = "mean", geom = "point", size = 4)
-            } else {
-              # Boxplot
-              p <- p +
-                stat_boxplot(geom = "errorbar", width = 0.5) +  # Whisker caps
-                geom_boxplot(
-                  fill = color_palette[2], 
-                  notch = notch_box(),
-                  outlier.color = color_palette[1]
-                )
-            }
-            
-            p <- p +
-              theme_minimal() +
-              labs(
-                title = plot_title,
-                x = ifelse(box_xlab() == "", "ID", box_xlab()),
-                y = ifelse(box_ylab() == "", "Data", box_ylab())
-              ) +
-              scale_x_discrete() +  # This shows the original column names as tick marks
-              theme(axis.text.x = element_text(angle = 45, hjust = 1))
-          }
-        } else if (data_type == 2) {
-          # Factor analysis - following original app pattern exactly
-          if (is.null(data_col)) {
-            return(NULL)
-          }
-          
-          # Get factor and data column indices (following original app)
-          factors <- as.numeric(selections$eda_UI1)  # Factor columns
-          data_col_idx <- as.numeric(selections$eda_UI2)[as.numeric(data_col)]  # Selected data column
-          
-          # Always use interaction (monolithic pattern) so numeric factors are discrete x levels
-          group_var <- interaction(data[, factors, drop = FALSE], sep = ", ")
-          
-          # Get dependent variable (following original app)
-          dep_var <- suppressWarnings(as.numeric(data[, data_col_idx]))
-          
-          # Generate title for factor analysis
-          plot_title <- generate_title(data_type, data, selections$eda_UI1, selections$eda_UI2, 
-                                     data_col_idx, box_xlab(), box_ylab(), box_title(), box_violin())
-          
-          # Create plot data exactly like original app
-          plot_data <- data.frame(
-            Data = dep_var,
-            ID = group_var,
-            stringsAsFactors = FALSE
-          )
-          plot_data$ID <- factor(plot_data$ID)
-          
-          # Filter out NAs (following original app pattern)
-          plot_data <- plot_data[which(!is.na(plot_data$Data)), ]
-          if (nrow(plot_data) == 0) {
-            return(NULL)
-          }
-          
-          if (nrow(plot_data) == 0) {
-            return(NULL)
-          }
-          
-          # Outlier detection (following original app pattern)
-          wild_outliers <- plot_data %>%
-            group_by(ID) %>%
-            filter(Data < quantile(Data, probs = .25, type = 6) - 3 * IQR(Data, type = 6) |
-                   Data > quantile(Data, probs = .75, type = 6) + 3 * IQR(Data, type = 6))
-          
-          outliers <- plot_data %>%
-            group_by(ID) %>%
-            filter(Data < quantile(Data, probs = .25, type = 6) - 1.5 * IQR(Data, type = 6) |
-                   Data > quantile(Data, probs = .75, type = 6) + 1.5 * IQR(Data, type = 6)) %>%
-            anti_join(wild_outliers, by = c("ID", "Data"))
-          
+          plot_title <- generate_title(data_type, data, selections$eda_UI1,
+                                      selections$eda_UI2, 1,
+                                      box_xlab(), box_ylab(), box_title(), box_violin())
+
           p <- ggplot(plot_data, aes(x = ID, y = Data))
-          
+
           if (box_violin()) {
-            # Violin plot (replaces boxplot, like original app)
             p <- p +
               geom_violin(fill = color_palette[2], alpha = 0.5, bw = "sj") +
               stat_summary(fun = "mean", geom = "point", size = 4)
           } else {
-            # Boxplot (exactly like original app)
             p <- p +
-              stat_boxplot(geom = "errorbar", width = 0.5) +  # Inner fences
-              geom_boxplot(notch = notch_box(), fill = color_palette[2], outlier.color = NA)
+              stat_boxplot(geom = "errorbar", width = 0.5) +
+              geom_boxplot(fill = color_palette[2], notch = notch_box(),
+                           outlier.color = NA)
           }
-          
-          # Add outliers and styling (exactly like original app)
+
+          # Explicitly plot outliers so hover hit-testing works
+          if (!box_violin() && nrow(outliers) > 0) {
+            p <- p + geom_point(data = outliers, shape = 16, size = 2)
+          }
+          if (!box_violin() && nrow(wild_outliers) > 0) {
+            p <- p + geom_point(data = wild_outliers, shape = "*", size = 8,
+                                color = color_palette[1])
+          }
+
+          p <- p +
+            theme_minimal() +
+            labs(title = plot_title,
+                 x = ifelse(box_xlab() == "", "ID", box_xlab()),
+                 y = ifelse(box_ylab() == "", "Data", box_ylab()))
+
+          if (ncol(data) > 1) {
+            p <- p +
+              scale_x_discrete() +
+              theme(axis.text.x = element_text(angle = 45, hjust = 1))
+          }
+
+        } else if (data_type == 2) {
+          data_col_idx <- as.numeric(selections$eda_UI2)[as.numeric(data_col)]
+          plot_title <- generate_title(data_type, data, selections$eda_UI1,
+                                      selections$eda_UI2, data_col_idx,
+                                      box_xlab(), box_ylab(), box_title(), box_violin())
+
+          p <- ggplot(plot_data, aes(x = ID, y = Data))
+
+          if (box_violin()) {
+            p <- p +
+              geom_violin(fill = color_palette[2], alpha = 0.5, bw = "sj") +
+              stat_summary(fun = "mean", geom = "point", size = 4)
+          } else {
+            p <- p +
+              stat_boxplot(geom = "errorbar", width = 0.5) +
+              geom_boxplot(notch = notch_box(), fill = color_palette[2],
+                           outlier.color = NA)
+          }
+
           p <- p +
             ggtitle(plot_title) +
             scale_x_discrete() +
             geom_point(data = outliers, shape = 16, size = 2) +
-            geom_point(data = wild_outliers, shape = "*", size = 8, color = color_palette[1]) +
+            geom_point(data = wild_outliers, shape = "*", size = 8,
+                       color = color_palette[1]) +
             theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-            labs(x = ifelse(box_xlab() == "", 
-                            if (data_type == 2) paste0(names(data)[as.numeric(selections$eda_UI1)], collapse = ", ") else "ID", 
+            labs(x = ifelse(box_xlab() == "",
+                            if (data_type == 2) paste0(names(data)[as.numeric(selections$eda_UI1)], collapse = ", ") else "ID",
                             box_xlab()),
                  y = ifelse(box_ylab() == "", "Data", box_ylab()))
-          
-          # Big font option (following original app)
+
           if (box_big()) {
             p <- p +
               theme(axis.title = element_text(size = rel(1.5)),
@@ -340,11 +316,81 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
         
         p
       }, error = function(e) {
-        # Return error plot
         ggplot() +
           annotate("text", x = 0.5, y = 0.5, label = paste("Error:", e$message), size = 5) +
           theme_void()
       })
+    })
+
+    # =========================================================================
+    # HOVER DATA REACTIVE — provides fence_samples + outlier_points for
+    # nearPoints() hit-testing in the coordinator tooltip.
+    # =========================================================================
+    box_plot_hover_data <- reactive({
+      # No hover for violin mode
+      if (box_violin()) return(NULL)
+
+      data <- processed_data()
+      data_type <- data_type_reactive()
+      selections <- input_values()
+      data_col <- data_list_for_box()
+
+      if (is.null(data) || nrow(data) == 0) return(NULL)
+
+      bp <- build_boxplot_data(data, data_type, selections, data_col)
+      if (is.null(bp)) return(NULL)
+
+      stats         <- bp$stats
+      outliers      <- bp$outliers
+      wild_outliers <- bp$wild_outliers
+      plot_data     <- bp$plot_data
+
+      # ----- fence_samples: synthetic points spanning the box/whisker region
+      # so nearPoints can match anywhere within that vertical range.
+      # We sample a handful of y-values between the inner whisker endpoints.
+      fence_rows <- lapply(seq_len(nrow(stats)), function(i) {
+        s <- stats[i, ]
+        # Actual whisker endpoints: clamped to data range within inner fences
+        grp_vals <- plot_data$Data[plot_data$ID == s$ID]
+        whisker_lo <- min(grp_vals[grp_vals >= s$Inner_Lower], na.rm = TRUE)
+        whisker_hi <- max(grp_vals[grp_vals <= s$Inner_Upper], na.rm = TRUE)
+        y_pts <- unique(c(whisker_lo, s$Q1, s$Median, s$Q3, whisker_hi))
+        data.frame(
+          ID          = s$ID,
+          Data        = y_pts,
+          Q1          = s$Q1,
+          Median      = s$Median,
+          Q3          = s$Q3,
+          IQR         = s$IQR,
+          Inner_Lower = s$Inner_Lower,
+          Inner_Upper = s$Inner_Upper,
+          Outer_Lower = s$Outer_Lower,
+          Outer_Upper = s$Outer_Upper,
+          stringsAsFactors = FALSE
+        )
+      })
+      fence_samples <- do.call(rbind, fence_rows)
+      fence_samples$ID <- factor(fence_samples$ID, levels = levels(bp$plot_data$ID))
+
+      # ----- outlier_points
+      build_outlier_df <- function(df, kind) {
+        if (is.null(df) || nrow(df) == 0) {
+          return(data.frame(ID = factor(levels = levels(bp$plot_data$ID)),
+                            Data = numeric(0), outlier_kind = character(0),
+                            stringsAsFactors = FALSE))
+        }
+        data.frame(ID = df$ID, Data = df$Data, outlier_kind = kind,
+                   stringsAsFactors = FALSE)
+      }
+      outlier_points <- rbind(
+        build_outlier_df(as.data.frame(outliers), "inner"),
+        build_outlier_df(as.data.frame(wild_outliers), "wild")
+      )
+      if (nrow(outlier_points) > 0) {
+        outlier_points$ID <- factor(outlier_points$ID, levels = levels(bp$plot_data$ID))
+      }
+
+      list(fence_samples = fence_samples, outlier_points = outlier_points)
     })
     
     # =========================================================================
@@ -355,6 +401,9 @@ create_boxplots_server <- function(id, data_source, original_data_source, data_t
       box_plot = box_plot,
       box_width = plot_width,
       box_height = plot_height,
+      
+      # Hover data
+      box_plot_hover_data = box_plot_hover_data,
       
       # Input reactives
       box_violin = box_violin,

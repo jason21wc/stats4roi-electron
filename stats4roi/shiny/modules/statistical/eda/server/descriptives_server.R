@@ -230,7 +230,7 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           for (j in seq_along(selected_cols)) {
             col_name <- names(desc_dat)[j]
             x_raw <- desc_dat[[j]]
-            x_num <- suppressWarnings(as.numeric(x_raw))
+            x_num <- eda_safe_numeric(x_raw)
             n_valid <- sum(!is.na(x_num))
             
             if (n_valid > 0) {
@@ -297,7 +297,7 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           dep_name <- colnames(data)[selected_data_cols[as.numeric(data_col)]]
           
           dep_name_m <- make.names(dep_name)
-          dep_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+          dep_x <- eda_safe_numeric(data[[dep_name_m]])
           if (sum(!is.na(dep_x)) == 0) {
             return(data.frame(Message = paste0("Selected dependent column '", dep_name, "' contains no valid numeric observations.")))
           }
@@ -329,7 +329,7 @@ create_descriptives_server <- function(id, data_source, data_type_reactive, inpu
           )
           
           if (needs_pooled_all_row(nrow(output))) {
-            pooled_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+            pooled_x <- eda_safe_numeric(data[[dep_name_m]])
             pooled_x <- pooled_x[!is.na(pooled_x)]
             if (length(pooled_x) > 0) {
               pooled_dat <- data.frame(All = pooled_x, stringsAsFactors = FALSE)

@@ -78,7 +78,7 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
         # Column analysis - column-isolated evaluation for damage tolerance
         len <- length(UI1)
         calc_single_nt <- function(x_col) {
-          x_num <- suppressWarnings(as.numeric(x_col))
+          x_num <- eda_safe_numeric(x_col)
           x_clean <- x_num[!is.na(x_num)]
           if (length(x_clean) < 2) {
             if (distr == 1) {
@@ -139,7 +139,7 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
           return(data.frame())
         }
         dep_name_m <- make.names(dep_name)
-        dep_x <- suppressWarnings(as.numeric(data[[dep_name_m]]))
+        dep_x <- eda_safe_numeric(data[[dep_name_m]])
         if (sum(!is.na(dep_x)) < 2) {
           return(data.frame(Message = paste0("Selected dependent column '", dep_name, "' contains insufficient numeric observations.")))
         }
@@ -167,7 +167,7 @@ create_natural_tolerance_server <- function(id, data_source, data_type_reactive,
           }
           
           if (needs_pooled_all_row(nrow(output))) {
-            pooled_x <- na.omit(suppressWarnings(as.numeric(data[[dep_name]])))
+            pooled_x <- na.omit(eda_safe_numeric(data[[dep_name]]))
             if (length(pooled_x) >= 2) {
               if (distr == 1) {
                 all_nt <- natural.tolerance.normal(x = pooled_x)

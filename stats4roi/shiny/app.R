@@ -355,7 +355,7 @@ ui <- fluidPage(
   ),
   useSweetAlert(),
   
-  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.31"), windowTitle = "stats4ROI"),
+  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.33"), windowTitle = "stats4ROI"),
   navbarPage(
     title = NULL,
     # Welcome Page - First tabPanel is the default
@@ -449,7 +449,7 @@ ui <- fluidPage(
       tabPanel(
         title = "Current Working Data",
         h3("Current Working Data"),
-        p("This is the filtered data that will be used by the statistical analysis modules."),
+        p("This is the current table used by statistical analysis modules: imported data plus any transforms or randomly generated columns (after dynamic filters, when applied). Download saves this same table as CSV."),
         downloadButton(outputId = "download_working_data", label = "Download current data (CSV)"),
         br(), br(),
         DT::dataTableOutput(outputId = "w_data")
@@ -722,19 +722,26 @@ server <- function(input, output, session) {
   dynamic_filtering_result <- create_dynamic_filtering_server("dynamic_filtering", transform_result$data)
   
   # Current working data output (same pattern as deployment: static output + renderDT with data)
-  # Shows the same data used by analyses (filtered + transformed)
+  # Shows the same data used by analyses (filtered + transformed / generated)
   output$w_data <- DT::renderDT({
-    req(safe_filtered_data())
-    safe_filtered_data()
+    df <- safe_filtered_data()
+    if (is.null(df) || !is.data.frame(df)) {
+      return(data.frame())
+    }
+    df
   }, options = list(lengthMenu = c(5, 10, 50), pageLength = 10))
 
-  # Safe filtered data reactive (filtered data when available, else working data)
+  # Safe filtered data reactive (filtered data when available, else transformed/generated)
+  # datamods filter may return an empty 0-col frame before any data exists — prefer transform then.
   safe_filtered_data <- reactive({
-    tryCatch({
+    transformed <- transform_result$data()
+    filtered <- tryCatch({
       dynamic_filtering_result$filtered()
-    }, error = function(e) {
-      working_data_result$data()
-    })
+    }, error = function(e) NULL)
+    if (!is.null(filtered) && is.data.frame(filtered) && ncol(filtered) > 0L) {
+      return(filtered)
+    }
+    transformed
   })
 
   # Download current data (transformed + filtered) as CSV
@@ -744,10 +751,11 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       df <- safe_filtered_data()
-      if (is.null(df) || nrow(df) == 0) {
-        df <- data.frame(Message = "No data to export.")
+      if (is.null(df) || !is.data.frame(df) || (nrow(df) == 0L && ncol(df) == 0L)) {
+        readr::write_csv(data.frame(), file)
+      } else {
+        readr::write_csv(df, file)
       }
-      readr::write_csv(df, file)
     }
   )
   

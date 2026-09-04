@@ -3,6 +3,7 @@
 
 # Source global configuration for ro() function and colors
 source("modules/config/global_config.R")
+source("modules/distributions/discrete_x_of_interest.R")
 
 # Hypergeometric Distribution UI (replicating app.R lines 664-738)
 create_hypergeometric_ui <- function(id) {
@@ -146,12 +147,18 @@ create_hypergeometric_server <- function(id, color_palette) {
     
     output$ui_hype3 <- renderUI({
       enterX <- input$x_hype
+      one_or_two <- input$one_or_two_hype
       if (!enterX) {
         output <- NULL
       } else {
+        low_label <- if (!is.null(one_or_two) && one_or_two == 2) {
+          "Include X in lower tail"
+        } else {
+          "Include X?"
+        }
         output <- radioButtons(
           inputId = ns("hype_low_inc"),
-          label = "Include X?",
+          label = low_label,
           choices = c("≤" = 1, "<" = 2)
         )
       }
@@ -166,7 +173,7 @@ create_hypergeometric_server <- function(id, color_palette) {
       } else {
         output <- radioButtons(
           inputId = ns("hype_hi_inc"),
-          label = "Include X?",
+          label = "Include X in upper tail",
           choices = c("≥" = 1, ">" = 2)
         )
       }
@@ -235,16 +242,18 @@ create_hypergeometric_server <- function(id, color_palette) {
       
       # Add highlighting for X of interest
       if (x_hype) {
+        adj <- adjust_discrete_x_of_interest(
+          x_l, low_inc, x_u, hi_inc, two_tails = (one_or_two == 2)
+        )
+        x_l <- adj$x_l
+        x_u <- adj$x_u
         if (one_or_two == 1) {
-          if (low_inc == 2) x_l <- x_l - 1
           lower <- data.frame(x = x, p = p_x)
           lower[which(lower$x > x_l), 2] <- 0
           lower$x <- factor(lower$x)
           pl <- pl +
             geom_col(data = lower, aes(x = x, y = p), fill = unname(colors()$col_fill_highlight), color = unname(colors()$col_plot_line))
         } else {
-          if (low_inc == 2) x_l <- x_l - 1
-          if (hi_inc == 2) x_u <- x_u - 1
           tails <- data.frame(x = x, p = p_x)
           tails[which(tails$x > x_l & tails$x < x_u), 2] <- 0
           tails$x <- factor(tails$x)
@@ -290,29 +299,32 @@ create_hypergeometric_server <- function(id, color_palette) {
       hype_table <- table.dist.hypergeometric(pop.success.count = m, total.count = N, sample.size = k)
       
       req(x_l, low_inc)
-      if (low_inc == 2) x_l <- x_l - 1
+      two_tails <- (one_or_two == 2)
+      if (two_tails) req(x_u, hi_inc)
+      probs <- discrete_x_of_interest_probs(
+        hype_table, x_l, low_inc, x_u, hi_inc, two_tails = two_tails
+      )
+      x_l <- probs$lower$x
       
       # Build results table
       output <- paste(
         "<table width=100%; style='border-spacing: 10px; border-collapse: separate;'><tr>",
-        "<td style='padding: 5px;'>p(", x_l, ") =", ro(hype_table$p.at.x[x_l + 1], R), "</td>",
-        "<td style='padding: 5px;'>p(", x_l, " and below) =", ro(hype_table$eq.and.below[x_l + 1], R), "</td>",
-        "<td style='padding: 5px;'>p(", x_l, " and above) =", ro(hype_table$eq.and.above[x_l + 1], R), "</td></tr>"
+        "<td style='padding: 5px;'>p(", x_l, ") =", ro(probs$lower$p_at, R), "</td>",
+        "<td style='padding: 5px;'>p(", x_l, " and below) =", ro(probs$lower$p_and_below, R), "</td>",
+        "<td style='padding: 5px;'>p(", x_l, " and above) =", ro(probs$lower$p_and_above, R), "</td></tr>"
       )
       
-      if (one_or_two == 2) {
-        req(x_u, hi_inc)
-        if (hi_inc == 2) x_u <- x_u - 1
-        
+      if (two_tails) {
+        x_u <- probs$upper$x
         output <- paste(output,
           paste(
-            "<tr><td style='padding: 5px;'>p(", x_u, ") =", ro(hype_table$p.at.x[x_u + 1], R), "</td>",
-            "<td style='padding: 5px;'>p(", x_u, " and below) =", ro(hype_table$eq.and.below[x_u + 1], R), "</td>",
-            "<td style='padding: 5px;'>p(", x_u, " and above) =", ro(hype_table$eq.and.above[x_u + 1], R), "</td></tr>",
+            "<tr><td style='padding: 5px;'>p(", x_u, ") =", ro(probs$upper$p_at, R), "</td>",
+            "<td style='padding: 5px;'>p(", x_u, " and below) =", ro(probs$upper$p_and_below, R), "</td>",
+            "<td style='padding: 5px;'>p(", x_u, " and above) =", ro(probs$upper$p_and_above, R), "</td></tr>",
             "<tr><td style='background-color:", colors()$col_fill, "; padding: 5px;'></td>",
-            "<td style='padding: 5px;'>p(between) =", ro(1 - hype_table$eq.and.below[x_l + 1] - hype_table$eq.and.above[x_u + 1], R), "</td><td style='padding: 5px;'>", paste0(x_l + 1, " ≤ X ≤ ", x_u - 1), "</td></tr>",
+            "<td style='padding: 5px;'>p(between) =", ro(probs$p_between, R), "</td><td style='padding: 5px;'>", paste0(x_l + 1, " ≤ X ≤ ", x_u - 1), "</td></tr>",
             "<tr><td style='background-color:", colors()$col_fill_highlight, "; padding: 5px;'></td>",
-            "<td style='padding: 5px;'>p(tails) =", ro(hype_table$eq.and.below[x_l + 1] + hype_table$eq.and.above[x_u + 1], R), "</td><td style='padding: 5px;'>", paste0("X ≤ ", x_l, " + X ≥ ", x_u), "</td></tr>"
+            "<td style='padding: 5px;'>p(tails) =", ro(probs$p_tails, R), "</td><td style='padding: 5px;'>", paste0("X ≤ ", x_l, " + X ≥ ", x_u), "</td></tr>"
           )
         )
       }

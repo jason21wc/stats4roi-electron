@@ -140,7 +140,7 @@ create_binomial_server <- function(id, color_palette) {
       if (input$one_or_two_bi == 2) {
         radioButtons(
           inputId = ns("bi_low_inc"),
-          label = "Include R Lower?",
+          label = "Include R in lower tail",
           choices = c("Yes" = 1, "No" = 2),
           selected = 1
         )
@@ -153,7 +153,7 @@ create_binomial_server <- function(id, color_palette) {
       if (input$one_or_two_bi == 2) {
         radioButtons(
           inputId = ns("bi_hi_inc"),
-          label = "Include R Upper?",
+          label = "Include R in upper tail",
           choices = c("Yes" = 1, "No" = 2),
           selected = 1
         )

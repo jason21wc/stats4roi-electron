@@ -184,7 +184,7 @@ percentile_column_names <- function(probs) {
 
 append_percentiles <- function(base_row, x, probs, type = DEFAULT_QUANTILE_TYPE) {
   type <- normalize_quantile_type(type)
-  x_num <- suppressWarnings(as.numeric(x))
+  x_num <- eda_safe_numeric(x)
   x_clean <- x_num[!is.na(x_num)]
   if (length(x_clean) == 0L) {
     pct <- as.data.frame(as.list(rep(NA_real_, length(probs))), stringsAsFactors = FALSE)
@@ -203,7 +203,7 @@ append_percentiles_type6 <- function(base_row, x, probs) {
 compute_quantiles_column_mode <- function(quant_dat, probs, type = DEFAULT_QUANTILE_TYPE) {
   rows <- lapply(names(quant_dat), function(nm) {
     x_raw <- quant_dat[[nm]]
-    x_num <- suppressWarnings(as.numeric(x_raw))
+    x_num <- eda_safe_numeric(x_raw)
     base <- data.frame(
       dv.name = nm,
       n = sum(!is.na(x_num)),
@@ -224,7 +224,7 @@ compute_quantiles_factor_mode <- function(data, dep_name, group_cols, probs, typ
   groups <- split(data, group_key, drop = TRUE)
   rows <- lapply(groups, function(sub) {
     x_raw <- sub[[dep_name]]
-    x_num <- suppressWarnings(as.numeric(x_raw))
+    x_num <- eda_safe_numeric(x_raw)
     base <- sub[1, group_cols, drop = FALSE]
     base$n <- sum(!is.na(x_num))
     base$missing <- sum(is.na(x_num))
@@ -234,7 +234,8 @@ compute_quantiles_factor_mode <- function(data, dep_name, group_cols, probs, typ
 }
 
 compute_quantiles_pooled_all_column <- function(quant_dat, probs, label = POOLED_ALL_LABEL, type = DEFAULT_QUANTILE_TYPE) {
-  x_num <- suppressWarnings(as.numeric(unlist(quant_dat, use.names = FALSE)))
+  # Convert each column before unlisting to avoid factor→level-code coercion.
+  x_num <- unlist(lapply(quant_dat, eda_safe_numeric), use.names = FALSE)
   base <- data.frame(
     dv.name = label,
     n = sum(!is.na(x_num)),
@@ -253,7 +254,7 @@ compute_quantiles_pooled_all_factor <- function(
   type = DEFAULT_QUANTILE_TYPE
 ) {
   x_raw <- data[[dep_name]]
-  x_num <- suppressWarnings(as.numeric(x_raw))
+  x_num <- eda_safe_numeric(x_raw)
   base <- data.frame(matrix(label, nrow = 1L, ncol = length(group_cols)), stringsAsFactors = FALSE)
   names(base) <- group_cols
   base$n <- sum(!is.na(x_num))

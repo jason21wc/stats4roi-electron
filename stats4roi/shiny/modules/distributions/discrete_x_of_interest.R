@@ -1,8 +1,7 @@
-# Shared include/exclude handling for discrete distribution points of interest.
-# Include (1): keep the entered X/R. Exclude (2): move off that integer so it
-# is not in the reported "at / and below / and above" (and two-tail) results.
-# Exclude always takes the next lower integer (Poisson convention):
-# one-tail / lower: X -> X-1; upper two-tail: X -> X-1.
+# Tail-membership cutoffs for discrete X/R of interest.
+# Include (1): keep the entered integer. Exclude (2): move the cutoff so that
+# integer is not in that tail — lower/one-tail: X -> X-1 (X <= cutoff);
+# upper two-tail: X -> X+1 (X >= cutoff).
 
 adjust_discrete_x_of_interest <- function(x_l, low_inc, x_u = NULL, hi_inc = NULL,
                                           two_tails = FALSE) {
@@ -10,7 +9,7 @@ adjust_discrete_x_of_interest <- function(x_l, low_inc, x_u = NULL, hi_inc = NUL
     x_l <- x_l - 1
   }
   if (isTRUE(two_tails) && !is.null(hi_inc) && as.numeric(hi_inc) == 2) {
-    x_u <- x_u - 1
+    x_u <- x_u + 1
   }
   list(x_l = x_l, x_u = x_u)
 }
