@@ -70,12 +70,18 @@ Go to **System Settings → Privacy & Security**, scroll down, and click **Open 
 
 ```bash
 cd stats4roi
+nvm use          # Node 22, per .nvmrc — required; see below
 npm install
 npm start        # Run in dev mode
 npm run make     # Build DMG
 ```
 
 Build output: `stats4roi/out/make/stats4ROI-<version>.dmg`
+
+**The build requires Node 22.** The DMG maker loads a compiled module locked to one
+Node major version, so a newer Node fails at the final DMG step. `npm install` and
+`npm run make` both refuse to run under the wrong version and print the fix, so you
+will get a clear message rather than a broken build.
 
 ### Project Structure
 
@@ -88,6 +94,8 @@ stats4roi-electron/
 │   ├── src/                # Electron source
 │   ├── r-mac/              # Bundled R runtime (not in repo)
 │   └── package.json        # Electron config
+├── _ai-context/            # Project memory (state, decisions, lessons, backlog)
+├── ARCHITECTURE.md         # Component design and data flow
 ├── CLAUDE.md               # Development notes
 ├── LICENSE.md
 └── README.md

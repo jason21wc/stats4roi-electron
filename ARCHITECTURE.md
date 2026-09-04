@@ -89,7 +89,7 @@ Most submodules follow a `<name>_module.R` entry point plus `ui/`, `server/`, an
 `utils/` subdirectories. `spc` is the largest, covering variables/attributes charts,
 CUSUM, EWMA, Process Performance Analysis, capability, and distribution fitting.
 
-**Codebase stats:** 170 module files, ~79,500 lines of R code (app.R + modules).
+**Codebase stats:** 170 module files, ~79,800 lines of R code (app.R + modules).
 
 ## Data Flow
 

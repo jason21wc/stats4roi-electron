@@ -111,8 +111,10 @@ cp -r /tmp/upstream/deployment/www/* stats4roi/shiny/www/
 # Clean up
 rm -rf /tmp/upstream
 
-# Test and rebuild
-cd stats4roi && npm start
+# Test and rebuild (Node 22 first on PATH — see Release Procedure step 1;
+# `npm run make` blocks itself otherwise and prints the fix)
+cd stats4roi && nvm use
+npm start
 npm run make
 ```
 

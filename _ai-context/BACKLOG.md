@@ -65,6 +65,24 @@ Reproduced against upstream `ee8379a`. No wrong number is shown; the cells are b
 Also mention: `tests/testthat/helpers/extract_app_outputs.R` sources
 `modules/statistical/eda/utils/quantile_type6.R`, which is absent from `deployment/`.
 
+### #8 — `package.json` repository URL points at a repo that does not exist
+
+**Status:** Open — needs your call, no functional effect.
+**Trigger:** Next time `stats4roi/package.json` is edited for any other reason.
+
+`stats4roi/package.json` declares
+`"repository": "https://github.com/roi-ally/stats4roi"`. Verified 2026-09-03: that
+repository does not resolve (`Could not resolve to a Repository`). It is neither the
+push target `jason21wc/stats4roi-electron` nor upstream `ProfessorPeregrine/stats4ROI`,
+so it looks like an inherited placeholder from Steve's original template. Nothing reads
+this field here (the package is never published to npm, and npm does not use it to
+resolve push targets), so it is cosmetic.
+
+Left unchanged deliberately: repository identity is push-safety-relevant in this
+project, and the `author` field is correctly Steve. Decide whether the field should name
+the packaging repo, name Steve's upstream, or be dropped. Flagged by the coherence audit
+of 2026-09-03.
+
 ### #2 — Code signing and notarization
 
 **Status:** Discussion — needs a cost/benefit decision.
