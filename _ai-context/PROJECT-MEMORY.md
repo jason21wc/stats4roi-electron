@@ -73,6 +73,7 @@ quarantined copy is what they experience, and a local build never shows it.
 | Slow first launch | Normal; R runtime initializing (~10-15 seconds) |
 | "Damaged" on a 4.3.5-or-older download | Those builds had no bundle seal (see the 2026-10-19 decision). From 4.3.6 on, users get the unidentified-developer prompt instead: Open Anyway in Privacy & Security on macOS 15+, right-click → Open on 14 and earlier. A locally built app has no quarantine flag, so the maintainer never sees either prompt |
 | Intel Mac: "not supported on this type of Mac" | The build is arm64-only by decision. Not a bug |
+| Local tags `v1.0.2308`, `v1.24.0114`, `v1.24.0129` are not on origin | They were inherited from the template author (Jinhwan Kim, shiny-electron-template-m1) and are deliberately unpushed. Push only the release tag by name (`git push origin v<version>`), never `git push --tags` |
 | `r-mac/bin/R -e '...'` reports `'\.' is an unrecognized escape` | The `bin/R` wrapper strips one level of backslashes from `-e` arguments. Put ad-hoc checks in a script file and run `bin/R -f <file>`, or write `[.]` instead of `\\.` |
 
 ## Phase Gates

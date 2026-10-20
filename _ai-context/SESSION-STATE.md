@@ -33,8 +33,9 @@ sample size; Greek letters and better graphics on power curves.
 
 **lolcat 2.0.0 → 2.0.2 @ f0b8af6 (bundled runtime).** Required: the app calls two
 functions that 2.0.0 lacks. Installed with bundled `bin/R` (built under 4.5.1). It is
-the only package changed in `r-mac/library`, and the old one is backed up in this
-session's scratchpad. `install_stats4roi_packages.R` now gates on `RemoteSha` (see
+the only package changed in `r-mac/library`. To roll back, reinstall 2.0.0 with
+`remotes::install_github("burrm/lolcat@95394e4d9a81f8188d3c0fa8dbe917197e279eec")`
+using bundled `bin/R`. `install_stats4roi_packages.R` now gates on `RemoteSha` (see
 PROJECT-MEMORY decision). Upstream overrides of `spc.controlviolation.zones.classify`
 and `cor.bowker.symmetry.1948` are safe, because neither file changed between the two
 lolcat versions.
