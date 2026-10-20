@@ -114,6 +114,24 @@ right-click → Open or run `xattr -cr`, and downloads can present as "damaged."
 Signing requires a paid Apple Developer account and a notarization step in the build.
 Decide whether the distribution volume justifies it.
 
+**Finding 2026-10-19 (likely cause of the Aug 2026 student reports).** The bundle's
+signature is *structurally broken*, not just unsigned. Only the main executable has
+the linker's ad-hoc signature, and there is no bundle seal, so
+`codesign --verify --deep --strict` fails with "code has no resources but signature
+indicates they must be present". For a quarantined (browser-downloaded) app on Apple
+Silicon, that produces "damaged and can't be opened — Move to Trash". The only way past
+that is `xattr -cr` in Terminal, and Privacy & Security offers no "Open Anyway". Students
+who skipped the README's Terminal step would have been stuck; others got through.
+**Free fix, tested on a scratch copy:** ad-hoc sign inside-out, needing no Apple
+account. Sign each `Contents/Frameworks/*.framework` and `*.app` helper with
+`codesign --force --sign -`, then the outer `.app`. The result is "valid on disk,
+satisfies its Designated Requirement", and the CRAN signature and entitlements on
+`r-mac/bin/exec/R` are untouched. Users would then get the ordinary unidentified-developer
+prompt, with Open Anyway in Settings. Do NOT use `--deep`: it would re-sign `exec/R` and
+strip `allow-dyld-environment-variables`, which the launcher depends on. Hook it into Forge
+`postPackage` before the makers, and verify with
+`codesign --verify --deep --strict` in the release checklist.
+
 ### #4 — Intel (x86_64) builds
 
 **Status:** Deferred — deliberately out of scope.
