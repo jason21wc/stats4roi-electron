@@ -50,6 +50,12 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 
 **All R/Shiny code is Steve's work.** This repository provides Electron packaging only.
 
+**Distribution path:** Jason publishes the Mac build, then emails Steve, who re-hosts it on
+roi-ally.com for his students. In July 2026 that went through a shared Dropbox link; since
+then it has been a GitHub release on `jason21wc/stats4roi-electron`. Students download
+through a browser, so every copy they get is quarantined. Gatekeeper behavior on a
+quarantined copy is what they experience, and a local build never shows it.
+
 ## Constraints
 
 - **Platform:** Apple Silicon only (M1/M2/M3/M4)
@@ -62,8 +68,8 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 
 | Issue | Solution |
 |-------|----------|
-| Gatekeeper blocks first launch | Right-click → Open, or run `xattr -cr /Applications/stats4ROI.app` |
-| "Damaged" warning on download | Same as above — extended attributes issue |
+| Gatekeeper blocks first launch | Right-click → Open, or run `xattr -cr /Applications/stats4ROI.app` *(pre-4.3.6 advice; superseded by the rows below)* |
+| "Damaged" warning on download | Same as above — extended attributes issue *(root cause was the missing bundle seal; see the 2026-10-19 rows)* |
 | Slow first launch | Normal; R runtime initializing (~10-15 seconds) |
 | "Damaged" on a 4.3.5-or-older download | Those builds had no bundle seal (see the 2026-10-19 decision). From 4.3.6 on, users get the unidentified-developer prompt instead: Open Anyway in Privacy & Security on macOS 15+, right-click → Open on 14 and earlier. A locally built app has no quarantine flag, so the maintainer never sees either prompt |
 | Intel Mac: "not supported on this type of Mac" | The build is arm64-only by decision. Not a bug |
@@ -86,6 +92,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | propagate fork rebuilt under bundled R; fork script uses bin/R + build-version check | Complete | 2026-09-03 |
 | Build Node pinned and enforced (.nvmrc + engine-strict + premake gate) | Complete | 2026-09-03 |
 | Upstream Sync v4.3.6 (v4.36: deferred module loading, exact Pearson r power, Wilcoxon CIs; lolcat 2.0.0 → 2.0.2 @ f0b8af6) | Built and verified — awaiting hand-test | 2026-10-19 |
+| Ad-hoc inside-out signing step in Forge `postPackage` (`scripts/adhoc-sign.js`), with `npm run check-signature` | Built and verified — awaiting hand-test with v4.3.6 | 2026-10-19 |
 | AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
 | propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |
 

@@ -104,10 +104,30 @@ upgrade did not cause them. Upstream's deferred-load smoke test passes.
   assignment" for a design it expects to be resolution V. `test_taguchi_loss_mvp`
   predicts NA, and coefficient `c` is missing from the model.
 
+### #10 — Make the launcher tolerant of slow first launches
+
+**Status:** Open. A possible cause of student failures, not a confirmed one.
+**Trigger:** Any report of the app hanging on the loading screen, or a student error
+message that mentions startup.
+
+`stats4roi/src/main.js` `tryStartWebserver` gives R 25 s per attempt (50 × 500 ms), then
+kills it and starts again, up to 100 attempts. It picks one random port (3000–8000) at
+startup and reuses it on every retry. Possible failures:
+- If a first launch on a slow or antivirus-scanned Mac takes more than 25 s, each retry
+  throws away the progress so far.
+- If the port is taken (AirPlay Receiver holds 5000 and 7000), every attempt fails.
+- Any other local server on that port that answers 200 would be loaded as the app.
+v4.36's deferred loading cut startup to about 1.4 s warm here, which lowers the risk.
+Candidate changes: a longer first attempt, a fresh port per retry, and a check that the
+served page is stats4ROI.
+
 ### #2 — Code signing and notarization
 
-**Status:** Discussion — needs a cost/benefit decision.
-**Trigger:** If Gatekeeper friction generates real user support load.
+**Status:** Partly done. A free ad-hoc bundle seal ships from v4.3.6 (2026-10-19),
+which ends the "damaged" dead end. Developer ID signing plus notarization, which would
+remove the one-time Open Anyway step, is still a cost/benefit decision.
+**Trigger:** Students still report trouble opening 4.3.6 or later, or the Open Anyway
+step generates real support load.
 
 `forge.config.js` sets `osxSign: false` / `osxNotarize: false`. Every user must
 right-click → Open or run `xattr -cr`, and downloads can present as "damaged."

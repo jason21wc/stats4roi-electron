@@ -119,7 +119,12 @@ support — use Grep/Glob for anything under `shiny/`. See LEARNING-LOG 2026-07-
 2. On approval: fast-forward `main` from `sync/v4.3.6`, tag `v4.3.6`, push to `origin`
    (jason21wc ONLY), then create the release empty and upload the DMG and ZIP
    separately (PROJECT-MEMORY Release Procedure).
-3. Optional: when replying to Steve, include the test-debt note (BACKLOG #9).
+3. Email Steve the release link. Include:
+   - The likely cause of the student failures (no bundle seal → "damaged"), fixed in
+     4.3.6. Students who hit it should download 4.3.6 fresh.
+   - A request that his download page say "Apple Silicon (M1 or later) only".
+   - A request for the exact error text from any student who still cannot open it.
+   - Optional: his own failing tests (BACKLOG #9).
 
 ## Open Questions
 
