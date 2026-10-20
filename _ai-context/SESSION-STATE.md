@@ -7,12 +7,24 @@
 
 | Field | Value |
 |-------|-------|
-| Phase | v4.3.6 sync + ad-hoc signing step — rebuilt and verified, **awaiting Jason's hand-test** |
-| Mode | branch `sync/v4.3.6` (local, unpushed); `main` = `origin/main` at v4.3.3 docs |
-| Active Task | Hand-test of `stats4roi/out/make/stats4ROI-4.3.6.dmg` |
-| Blocked By | Jason's hand-test — do NOT push, tag, or release before he approves |
+| Phase | v4.3.6 Released / Maintenance |
+| Mode | `main` = `origin/main`, only branch; tag `v4.3.6` pushed |
+| Active Task | None. Waiting for Steve's next upstream change and the email to him (below) |
+| Blocked By | Nothing |
 
 ## Context
+
+**v4.3.6 RELEASED (Oct 19, 2026):** https://github.com/jason21wc/stats4roi-electron/releases/tag/v4.3.6
+Jason hand-tested the signed build and approved it. `main` was fast-forwarded from
+`sync/v4.3.6` to `a8f0236` and tagged `v4.3.6` (pushed by name to jason21wc only). The
+release was created empty, then the DMG and ZIP were uploaded separately. GitHub sizes
+match the local files byte for byte (380,156,632 and 386,519,627), with state
+`uploaded`. The release is marked Latest. The branch was deleted after merge (it was
+never pushed). The "damaged" fix was captured in the Reference Library as
+`ref-ai-coding-macos-adhoc-inside-out-seal-electron`, committed in
+`dev-tools/reference-library` (`c49ae47`, not pushed), and the governance index was
+rebuilt with the server's runtime and env.
+
 
 **Request (Oct 19, 2026):** Steve's email ("Re: New version of stats4ROI!") said v4.36
 is on GitHub and asked us to build the Mac version. He was using his lolcat fork until
@@ -85,7 +97,7 @@ lolcat versions.
   sync (the NAMESPACE/DESCRIPTION files have been in `shiny/` since v4.1.0) and is
   harmless because there is no `R/` dir.
 
-**Hand-test focus for Jason:**
+**Hand-test performed by Jason (approved 2026-10-19):**
 0. Gatekeeper path, as a student sees it. Before opening the DMG, mark it as downloaded:
    `xattr -w com.apple.quarantine "0081;$(printf %x $(date +%s));Safari;" stats4roi/out/make/stats4ROI-4.3.6.dmg`
    Then open it, drag the app to Applications, and double-click. Expect the
@@ -116,11 +128,7 @@ support — use Grep/Glob for anything under `shiny/`. See LEARNING-LOG 2026-07-
 
 ## Next Actions
 
-1. Jason hand-tests the signed 4.3.6 DMG, including the quarantined-install path (item 0).
-2. On approval: fast-forward `main` from `sync/v4.3.6`, tag `v4.3.6`, push to `origin`
-   (jason21wc ONLY), then create the release empty and upload the DMG and ZIP
-   separately (PROJECT-MEMORY Release Procedure).
-3. Email Steve the release link. Include:
+1. Email Steve the release link. Include:
    - The likely cause of the student failures (no bundle seal → "damaged"), fixed in
      4.3.6. Students who hit it should download 4.3.6 fresh.
    - A request that his download page say "Apple Silicon (M1 or later) only".
@@ -133,4 +141,4 @@ None blocking. BACKLOG #7 (discrete boundary display) is still awaiting Steve; t
 distributions code was unchanged in v4.36.
 
 ---
-*Last Updated: 2026-10-19*
+*Last Updated: 2026-10-19 (v4.3.6 released)*

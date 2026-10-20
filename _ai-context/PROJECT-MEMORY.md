@@ -92,8 +92,8 @@ quarantined copy is what they experience, and a local build never shows it.
 | Upstream Sync v4.3.3 (EDA factor fix, boxplot hover, seeded random columns) | Complete — released | 2026-09-03 |
 | propagate fork rebuilt under bundled R; fork script uses bin/R + build-version check | Complete | 2026-09-03 |
 | Build Node pinned and enforced (.nvmrc + engine-strict + premake gate) | Complete | 2026-09-03 |
-| Upstream Sync v4.3.6 (v4.36: deferred module loading, exact Pearson r power, Wilcoxon CIs; lolcat 2.0.0 → 2.0.2 @ f0b8af6) | Built and verified — awaiting hand-test | 2026-10-19 |
-| Ad-hoc inside-out signing step in Forge `postPackage` (`scripts/adhoc-sign.js`), with `npm run check-signature` | Built and verified — awaiting hand-test with v4.3.6 | 2026-10-19 |
+| Upstream Sync v4.3.6 (v4.36: deferred module loading, exact Pearson r power, Wilcoxon CIs; lolcat 2.0.0 → 2.0.2 @ f0b8af6) | Complete — released | 2026-10-19 |
+| Ad-hoc inside-out signing step in Forge `postPackage` (`scripts/adhoc-sign.js`), with `npm run check-signature` | Complete — shipped in v4.3.6 | 2026-10-19 |
 | AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
 | propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |
 
