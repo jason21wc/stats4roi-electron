@@ -323,3 +323,41 @@ with `diff -rq`, then run the tests in the layout they were written for. To attr
 remaining failure, change exactly one variable (here, the lolcat on `R_LIBS`) and rerun.
 Do not reason about whether a failure "looks related."
 **Apply When:** Interpreting upstream test failures during any sync.
+
+### 2026-10-19 — "Works on My Mac" Cannot Test a Signature Defect
+
+**Context:** Students reported the Mac app "not working". It always worked for the
+maintainer. The packaged bundle had only the linker's ad-hoc signature on the main
+executable and no bundle seal, so `codesign --verify --deep --strict` failed with "code
+has no resources but signature indicates they must be present". A browser-downloaded
+copy carries `com.apple.quarantine`, and on Apple Silicon Gatekeeper reports such an app
+as "damaged — Move to Trash", with no Open Anyway. A locally built app never carries
+quarantine, so the maintainer could not see what users saw. Sealing only the outer app
+failed "In subcomponent: Electron Framework.framework". Signing each
+`Contents/Frameworks/*` framework and helper first, then the outer app, gave a valid
+seal. I first claimed `--deep` would re-sign the CRAN-signed `exec/R` under `Resources/`.
+Tested, it did not, so the claim was withdrawn. The build hook still verifies `exec/R`
+afterwards, because a signer that walks every Mach-O file (Forge `osxSign`) would replace
+its signature.
+**Lesson:** Test distribution behavior on a copy that looks like a download: `ditto`
+it, add a quarantine xattr, and run `codesign --verify --deep --strict` and
+`syspolicy_check distribution`. Treat a plausible mechanism ("--deep would strip it") as
+a hypothesis until a scratch-copy test confirms it.
+**Apply When:** Triaging user reports that an unsigned or ad-hoc-signed app "won't
+open", or changing packaging or signing.
+
+### 2026-10-19 — Measure Launch Time Without Perturbing It or Matching Yourself
+
+**Context:** Timing the packaged app's startup first gave 81 s, then 78 s, then 40 s. A
+stack sample at 15 s showed R already idle in Shiny's event loop with connections open.
+The real figure is 1.4 s. The inflated numbers were the probe: `lsof` takes seconds per
+call on a busy Mac, so the polling loop, not the app, was slow. Separately, a cleanup
+`pkill -f "stats4ROI.app/Contents"` matched the shell running the check, because the
+pattern was in its own command line. That killed the check midway and left the app open.
+**Lesson:** When a timing looks wrong, check the subject's state (`sample <pid>`, CPU%)
+before believing the stopwatch. Read cheap facts directly: the launcher passes
+`RE_SHINY_PORT` to R, readable with `ps eww -o command= -p <pid>`. Kill by PID, or by
+`pgrep -P <parent>`, never with a pattern that also appears in your own command line.
+Run probes from a script file, so the command line holding the pattern is not the
+shell's own.
+**Apply When:** Timing app startup, or writing any cleanup that uses `pkill -f`/`pgrep -f`.

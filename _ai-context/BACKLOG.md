@@ -127,10 +127,15 @@ account. Sign each `Contents/Frameworks/*.framework` and `*.app` helper with
 `codesign --force --sign -`, then the outer `.app`. The result is "valid on disk,
 satisfies its Designated Requirement", and the CRAN signature and entitlements on
 `r-mac/bin/exec/R` are untouched. Users would then get the ordinary unidentified-developer
-prompt, with Open Anyway in Settings. Do NOT use `--deep`: it would re-sign `exec/R` and
-strip `allow-dyld-environment-variables`, which the launcher depends on. Hook it into Forge
-`postPackage` before the makers, and verify with
-`codesign --verify --deep --strict` in the release checklist.
+prompt, with Open Anyway in Settings. Hook it into Forge `postPackage` before the makers,
+and verify with `codesign --verify --deep --strict` in the release checklist.
+*Correction, same day:* an earlier draft of this note said `--deep` would re-sign
+`exec/R`. Tested, it does not, because codesign does not descend into `Resources/`. The
+real hazard is a signer that re-signs every Mach-O file it finds, such as Forge's own
+`osxSign`. **Implemented 2026-10-19:** `stats4roi/scripts/adhoc-sign.js`, called from the
+`postPackage` hook. It also verifies that `exec/R` keeps CRAN's TeamIdentifier and its
+`allow-dyld-environment-variables` entitlement, and fails the build otherwise.
+`npm run check-signature` reruns the check.
 
 ### #4 — Intel (x86_64) builds
 

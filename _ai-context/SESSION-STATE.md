@@ -7,7 +7,7 @@
 
 | Field | Value |
 |-------|-------|
-| Phase | v4.3.6 sync — built and verified, **awaiting Jason's hand-test** |
+| Phase | v4.3.6 sync + ad-hoc signing step — rebuilt and verified, **awaiting Jason's hand-test** |
 | Mode | branch `sync/v4.3.6` (local, unpushed); `main` = `origin/main` at v4.3.3 docs |
 | Active Task | Hand-test of `stats4roi/out/make/stats4ROI-4.3.6.dmg` |
 | Blocked By | Jason's hand-test — do NOT push, tag, or release before he approves |
@@ -56,17 +56,28 @@ lolcat versions.
   fail or error identically under lolcat 2.0.0, so they are pre-existing upstream test
   debt (BACKLOG #9).
 - `./ensure-propagate-fork.sh --check` exit 0. Node 22.18.0 gate passes.
-- Build: `npm run make` exit 0.
-  - `stats4roi/out/make/stats4ROI-4.3.6.dmg`: 379,944,135 bytes, SHA-256
-    `ec97377754fb7591ba279c8050cff1d9bef0bb1f05ef0a8ed33eea9cfab7f349`;
+- Build (rebuilt 2026-10-19 with the `postPackage` ad-hoc signing hook): `npm run make` exit 0.
+  - `stats4roi/out/make/stats4ROI-4.3.6.dmg`: 380,156,632 bytes, SHA-256
+    `7949966cf17680a58700a3bd020eb8ee96030b8f2c597c9bdca007f78d59df54`;
     `hdiutil verify` VALID.
   - `stats4roi/out/make/zip/darwin/arm64/stats4ROI-darwin-arm64-4.3.6.zip`:
-    386,316,769 bytes, SHA-256
-    `695bcb42d8475bd81999e6210cc6ef7a0f9b16e231fdd1743148c964575f8bde`;
+    386,519,627 bytes, SHA-256
+    `c838d4611eef34e299667ed263b5d9a3a39887b8810e65e4a9c6dbb99cb681c3`;
     `unzip -tq` clean.
+  - Signature: `npm run check-signature` passes on `out/`, on the app inside the mounted
+    DMG, and on the app extracted from the ZIP. Bundle seal valid; `exec/R` still
+    CRAN-signed (VZLD955F6P) with `allow-dyld-environment-variables`. A quarantined
+    copy run through `syspolicy_check distribution` reports only "Adhoc Signed App"
+    (Warning). The old unsealed build gave "code has no resources but signature
+    indicates they must be present" (the "damaged" path).
+  - The first, unsigned 4.3.6 build (DMG SHA-256 `ec977377…f349`) is superseded.
+    Do not hand-test or ship it.
   - Info.plist 4.3.6. The packaged `shiny/` equals the tree. Packaged lolcat is 2.0.2 @
     f0b8af6, and packaged propagate is the fork, built under 4.5.1.
-- Packaged R launched exactly as `main.js` does: HTTP 200 in **4.2 s** (4.3.3 took
+- Full signed Electron app launched 3×: GPU, renderer and utility helpers all run.
+  R serves the page **1.4 s** after launch, with 0 `/Library/Frameworks/R.framework`
+  mappings.
+- First (unsigned) build, R alone launched exactly as `main.js` does, cold: HTTP 200 in **4.2 s** (4.3.3 took
   ~7 s); serves v4.36 with 32 deferred placeholders. libR, BLAS, LAPACK and gfortran
   map from inside the `.app`, with zero `/Library/Frameworks/R.framework` mappings.
   The only log warning is Shiny's `warn_if_app_dir_is_package`, which predates this
@@ -74,6 +85,12 @@ lolcat versions.
   harmless because there is no `R/` dir.
 
 **Hand-test focus for Jason:**
+0. Gatekeeper path, as a student sees it. Before opening the DMG, mark it as downloaded:
+   `xattr -w com.apple.quarantine "0081;$(printf %x $(date +%s));Safari;" stats4roi/out/make/stats4ROI-4.3.6.dmg`
+   Then open it, drag the app to Applications, and double-click. Expect the
+   unidentified-developer warning, NOT "damaged". On macOS 15+, approve it with Privacy
+   & Security → Open Anyway. (This sets a flag on the local DMG file only; rebuilding
+   clears it.)
 1. Cold launch: time to the Welcome page; first visit to a heavy tab (SPC, ANOVA
    Multi-Factor) shows a spinner, then loads; revisiting is instant.
 2. Sample Size/Power → one-sample Pearson r **exact**: power and sample size, each
@@ -86,12 +103,19 @@ lolcat versions.
 6. The One- and Two-Sample Tests, MSA, and ANOVA menus are now built in `app.R` as
    deferred tabs (previously inside each module). Click every entry once.
 
+**Mac student launch failures (Steve, Aug 28 – Oct 13, 2026):** the most likely cause is
+the unsealed bundle, which shows "damaged — Move to Trash" for browser downloads with no
+Open Anyway. That is fixed in this build (PROJECT-MEMORY 2026-10-19 decision). Other
+candidates: Intel Macs (arm64-only; README now names the error), and the launcher's
+25 s-per-attempt limit on very slow or antivirus-scanned first launches (unconfirmed).
+No error text ever came back from students.
+
 **Search caveat:** the context-engine index covers only docs + Electron JS. It has no R
 support — use Grep/Glob for anything under `shiny/`. See LEARNING-LOG 2026-07-25.
 
 ## Next Actions
 
-1. Jason hand-tests the 4.3.6 DMG.
+1. Jason hand-tests the signed 4.3.6 DMG, including the quarantined-install path (item 0).
 2. On approval: fast-forward `main` from `sync/v4.3.6`, tag `v4.3.6`, push to `origin`
    (jason21wc ONLY), then create the release empty and upload the DMG and ZIP
    separately (PROJECT-MEMORY Release Procedure).

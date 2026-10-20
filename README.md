@@ -40,20 +40,30 @@ This repository packages Steve's stats4ROI application as a standalone Electron 
 
 3. **Drag** the stats4ROI app to your Applications folder
 
-4. **First launch** — Right-click (or Control-click) the app and select **Open**
-   - You'll see a warning that the app is from an unidentified developer
-   - Click **Open** to confirm
+4. **First launch** — the app is not notarized by Apple, so macOS asks once:
+   - **macOS 15 (Sequoia) or later:** double-click the app, dismiss the warning, then go
+     to **System Settings → Privacy & Security**, scroll down, click **Open Anyway** next
+     to the stats4ROI message, and confirm
+   - **macOS 14 or earlier:** Right-click (or Control-click) the app, select **Open**,
+     then click **Open** to confirm
 
 5. The app will start — this may take 10-15 seconds on first launch while R initializes
 
 ### Troubleshooting
 
-**"stats4ROI is damaged and can't be opened"**
+**"stats4ROI is damaged and can't be opened"** (versions before 4.3.6)
 
-Run this command in Terminal, then try opening again:
+Releases before 4.3.6 lacked a complete code signature, so a downloaded copy could
+show this message. Install 4.3.6 or later, or run this command in Terminal and try
+opening again:
 ```bash
 xattr -cr /Applications/stats4ROI.app
 ```
+
+**"You can't open the application "stats4ROI" because it is not supported on this type of Mac"**
+
+stats4ROI for Mac requires Apple Silicon (M1 or later). Intel Macs are not supported.
+To check, open  → **About This Mac**: the **Chip** line must read Apple M1, M2, M3, or M4.
 
 **App won't open at all**
 

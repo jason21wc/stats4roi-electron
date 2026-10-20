@@ -12,6 +12,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "check-node": "node scripts/check-build-node.js",
+    "check-signature": "node scripts/adhoc-sign.js --check out/stats4ROI-darwin-arm64/stats4ROI.app",
     "prepackage": "npm run check-node",
     "premake": "npm run check-node"
   },

@@ -25,6 +25,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Bundle R 4.5.1 runtime | Self-contained app; no user R installation required | 2024-01-24 |
 | Apple Silicon only | Simplifies build; Intel builds possible but not prioritized | 2024-01-24 |
 | One-way sync from upstream | We package, Steve develops; no code modifications | 2024-01-24 |
+| Ad-hoc sign the packaged .app inside-out in a Forge `postPackage` hook (`scripts/adhoc-sign.js`) | The unsealed bundle made quarantined downloads report "damaged — Move to Trash", with no Open Anyway. This was the likely cause of the Aug 2026 Mac student reports. A valid ad-hoc seal is free and gives the normal unidentified-developer prompt. It is still unnotarized (BACKLOG #2). The hook fails the build unless the seal verifies and `exec/R` keeps CRAN's signature plus `allow-dyld-environment-variables` | 2026-10-19 |
 | Pin lolcat by commit SHA (`LOLCAT_SHA` in `install_stats4roi_packages.R`) | lolcat's 2.0.2 version bump (2026-10-03) predates the exact Pearson r functions v4.36 calls, so presence and version both pass on a build that fails in Sample Size/Power. Gate on `RemoteSha`, hard-fail after install. Pinned `burrm/lolcat@f0b8af6`, Mike's merge of Steve's fork; zero file diff from Steve's fork head `92a9910` | 2026-10-19 |
 
 ## Technical Stack
@@ -64,6 +65,8 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Gatekeeper blocks first launch | Right-click → Open, or run `xattr -cr /Applications/stats4ROI.app` |
 | "Damaged" warning on download | Same as above — extended attributes issue |
 | Slow first launch | Normal; R runtime initializing (~10-15 seconds) |
+| "Damaged" on a 4.3.5-or-older download | Those builds had no bundle seal (see the 2026-10-19 decision). From 4.3.6 on, users get the unidentified-developer prompt instead: Open Anyway in Privacy & Security on macOS 15+, right-click → Open on 14 and earlier. A locally built app has no quarantine flag, so the maintainer never sees either prompt |
+| Intel Mac: "not supported on this type of Mac" | The build is arm64-only by decision. Not a bug |
 | `r-mac/bin/R -e '...'` reports `'\.' is an unrecognized escape` | The `bin/R` wrapper strips one level of backslashes from `-e` arguments. Put ad-hoc checks in a script file and run `bin/R -f <file>`, or write `[.]` instead of `\\.` |
 
 ## Phase Gates
@@ -177,7 +180,10 @@ the sync. See LEARNING-LOG 2026-10-19.
    the wrong Node. Forge emits the versioned DMG directly:
    `out/make/stats4ROI-<version>.dmg`.
 2. Smoke-test headless, verify `hdiutil verify` on the DMG, and confirm the packaged
-   `.app` bundles the propagate fork.
+   `.app` bundles the propagate fork. Run `npm run check-signature`; it must pass. The
+   `postPackage` hook already enforces it, so a failure here means `out/` was modified
+   after the build. `spctl -a` will still say "rejected": that is expected for an
+   unnotarized app and is not a failure.
 3. For upstream statistical changes, independently verify at least one expected result
    against the UI/math contract and exercise data-damage paths with the types produced
    by the real import pipeline. Passing upstream tests is not sufficient when those

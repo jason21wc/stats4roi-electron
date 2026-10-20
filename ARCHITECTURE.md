@@ -140,10 +140,28 @@ npm run make
             │
             ▼
 ┌─────────────────────────┐
-│   Create DMG            │
+│  postPackage hook       │
+│  adhoc-sign.js          │
+│  - sign Frameworks/*    │
+│  - seal outer .app      │
+│  - verify seal + exec/R │
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│   Create ZIP + DMG      │
 │ out/make/stats4ROI-<version>.dmg │
 └─────────────────────────┘
 ```
+
+**Code signing.** There is no Developer ID and no notarization. Without a bundle seal, a
+browser-downloaded copy is reported as "damaged and can't be opened", with no Open
+Anyway. So the `postPackage` hook ad-hoc signs inside-out: each `Contents/Frameworks/*`
+framework and helper app, then the outer `.app`. Users then get the ordinary
+unidentified-developer prompt. The bundled `r-mac/bin/exec/R` must keep CRAN's signature
+and its `allow-dyld-environment-variables` entitlement, which the launcher's
+`DYLD_LIBRARY_PATH` depends on. The hook verifies that after signing and fails the build
+otherwise. `npm run check-signature` reruns the check on `out/`.
 
 ## File Size Breakdown
 
