@@ -289,3 +289,37 @@ load tests the actual precondition. Pair it with `engine-strict` so the wrong-in
 path is closed at its source rather than only detected later.
 **Apply When:** Guarding any build against native-module ABI mismatches, or writing a
 preflight for a step that fails late and expensively.
+
+### 2026-10-19 — A Version Number Can Predate the Features You Need
+
+**Context:** stats4ROI v4.36 calls `power.cor.pearson.r.onesample.exact` and
+`sample.size.cor.pearson.r.onesample.exact`. lolcat was bumped to 2.0.2 on 2026-10-03,
+and those functions landed on 2026-10-16 with no further bump. A `>= 2.0.2` guard would
+have accepted a build that errors in Sample Size/Power. The `lolcat::` pre-flight grep
+also came back clean, because the app calls these functions unqualified (lolcat is
+attached). A text parse of the new NAMESPACE returned zero exports, because lolcat uses
+`exportPattern()`.
+**Lesson:** This is the second failure mode of the 2026-07-25 presence-check lesson.
+For a GitHub-sourced dependency, the commit is the identity: gate on `RemoteSha`, not
+on version. To find what a sync needs, ask R rather than grepping text. Install the
+candidate into a scratch library, diff `getNamespaceExports()` old vs new, then grep
+the app for each added name, qualified or not.
+**Apply When:** Upgrading any GitHub-installed R package, or when upstream says "use my
+fork / the fixed version" without naming a commit.
+
+### 2026-10-19 — Run Upstream Tests Where Their Fixtures Live, After Proving Code Identity
+
+**Context:** Running the 62 upstream testthat files against a harness built from
+`deployment/` produced errors in about 30 files, nearly all `cannot open the
+connection`. The tests read fixtures and dev-only helpers that `deployment/` does not
+ship. `diff -rq` showed that upstream's root `modules/` holds every deployment file
+byte-identical, plus extras only. Rerunning from upstream's root cleared all but 16
+files. Rerunning those 16 with lolcat 2.0.0 first on `R_LIBS` gave identical
+pass/fail/error counts, which proved the sync did not introduce them.
+**Lesson:** This refines the 2026-09-03 entry. A deployment-only harness is right for
+proving the shipped tree is self-contained, through the parse/source check and
+`tools/smoke_deferred_load.R`, but it is wrong for the unit suite. Prove code identity
+with `diff -rq`, then run the tests in the layout they were written for. To attribute a
+remaining failure, change exactly one variable (here, the lolcat on `R_LIBS`) and rerun.
+Do not reason about whether a failure "looks related."
+**Apply When:** Interpreting upstream test failures during any sync.

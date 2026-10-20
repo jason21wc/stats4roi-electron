@@ -63,11 +63,12 @@ safe_get <- function(obj, name, default = NULL) {
 # Some types have no test radio (or a stale sample_calc); match main results mapping
 effective_sample_calc <- function(sample_size_type, sample_calc) {
   st <- as.integer(sample_size_type)
-  if (!is.na(st) && st == 5L) {
+  if (length(st) == 1L && !is.na(st) && st == 5L) {
     return(15L)
   }
   sc <- as.integer(sample_calc)
-  if (is.na(sc)) {
+  # NULL / missing inputs become integer(0); is.na(integer(0)) is length 0 and breaks if()
+  if (length(sc) != 1L || is.na(sc)) {
     return(NA_integer_)
   }
   sc
@@ -86,7 +87,7 @@ sample_size_power_resolved_calc <- function(sample_size_type, sample_calc) {
     "3" = c(12L, 13L, 14L),
     "4" = c(16L, 17L, 18L),
     "5" = 15L,
-    "6" = c(11L, 19L),
+    "6" = c(11L, 20L, 19L),
     integer(0)
   )
   if (sc %in% allowed) {
@@ -151,7 +152,7 @@ power_curve_default_start <- function(sc, s_sizeUI1, s_sizeUI2 = NULL) {
     if (!is.null(s_sizeUI1) && is.finite(s_sizeUI1) && s_sizeUI1 > 0) {
       return(s_sizeUI1)
     }
-  } else if (sc == 11L) {
+  } else if (sc %in% c(11L, 20L)) {
     if (!is.null(s_sizeUI1) && is.finite(s_sizeUI1) && s_sizeUI1 >= -1 && s_sizeUI1 <= 1) {
       return(s_sizeUI1)
     }
@@ -165,26 +166,37 @@ power_curve_default_start <- function(sc, s_sizeUI1, s_sizeUI2 = NULL) {
   0
 }
 
-# Plain-text label for power_curve_start (avoid MathJax in renderUI; prevents RGui instability)
-power_curve_start_ui_label <- function(sample_calc) {
-  sc <- as.integer(sample_calc)
-  labels <- c(
-    "9" = "Null \u03c3\u2080",
-    "10" = "Null \u03c3\u2081",
-    "11" = "Null \u03c1\u2080",
-    "19" = "Expected \u03c1\u2083\u2084",
-    "12" = "Null \u03c0\u2080",
-    "13" = "Null \u03c0\u2080",
-    "15" = "Null mean",
-    "16" = "Null \u03bb\u2080",
-    "17" = "Null \u03bb\u2080"
+# One symbol list for the start field (plain text), the table, and the plot axis.
+# plot is plotmath; symbol and start are Unicode so renderUI and renderTable stay plain text.
+power_curve_label_spec <- function(sample_calc) {
+  sc <- as.character(as.integer(sample_calc))
+  mu <- list(symbol = "\u03bc", start = "Null \u03bc", plot = expression(mu))
+  spec <- list(
+    "1" = mu,
+    "3" = mu,
+    "5" = mu,
+    "6" = mu,
+    "7" = mu,
+    "8" = mu,
+    "15" = mu,
+    "9" = list(symbol = "\u03c3\u2081", start = "Null \u03c3\u2080", plot = expression(sigma[1])),
+    "10" = list(symbol = "\u03c3\u2082", start = "Null \u03c3\u2081", plot = expression(sigma[2])),
+    "11" = list(symbol = "\u03c1\u2081", start = "Null \u03c1\u2080", plot = expression(rho[1])),
+    "20" = list(symbol = "\u03c1\u2081", start = "Null \u03c1\u2080", plot = expression(rho[1])),
+    "19" = list(symbol = "\u03c1\u2083\u2084", start = "\u03c1\u2083\u2084", plot = expression(rho[34])),
+    "12" = list(symbol = "\u03c0\u2081", start = "Null \u03c0\u2080", plot = expression(pi[1])),
+    "13" = list(symbol = "\u03c0\u2081", start = "Null \u03c0\u2080", plot = expression(pi[1])),
+    "14" = list(symbol = "\u03c0\u2082", start = "\u03c0\u2082", plot = expression(pi[2])),
+    "16" = list(symbol = "\u03bb\u2081", start = "Null \u03bb\u2080", plot = expression(lambda[1])),
+    "17" = list(symbol = "\u03bb\u2081", start = "Null \u03bb\u2080", plot = expression(lambda[1])),
+    "18" = list(symbol = "\u03bb\u2081", start = "Null \u03bb\u2081", plot = expression(lambda[1]))
   )
-  lbl <- labels[as.character(sc)]
-  if (is.na(lbl)) {
-    power_curve_center_label(sc)
-  } else {
-    lbl
-  }
+  entry <- spec[[sc]]
+  if (is.null(entry)) mu else entry
+}
+
+power_curve_start_ui_label <- function(sample_calc) {
+  power_curve_label_spec(sample_calc)$start
 }
 
 # One sweep for table + plot (avoids duplicate vapply passes per Shiny flush)
@@ -207,8 +219,9 @@ power_curve_compute_sweep <- function(ctx, plot_n_arm = 25L) {
     )
   }
 
-  table_intervals <- power_curve_table_intervals(ctx$S, ctx$I)
-  table_intervals <- power_curve_filter_correlation_intervals(ctx$sample_calc, table_intervals)
+  table_raw <- power_curve_table_intervals(ctx$S, ctx$I)
+  table_intervals <- power_curve_filter_domain_intervals(ctx$sample_calc, table_raw)
+  domain_clipped <- length(table_intervals) < length(table_raw)
   table_powers <- power_at(table_intervals)
   table_df <- power_curve_sort_ascending(data.frame(
     parameter = table_intervals,
@@ -219,8 +232,9 @@ power_curve_compute_sweep <- function(ctx, plot_n_arm = 25L) {
     stringsAsFactors = FALSE
   ))
 
-  plot_intervals <- power_curve_plot_intervals(ctx$S, ctx$I, n_arm = plot_n_arm)
-  plot_intervals <- power_curve_filter_correlation_intervals(ctx$sample_calc, plot_intervals)
+  plot_raw <- power_curve_plot_intervals(ctx$S, ctx$I, n_arm = plot_n_arm)
+  plot_intervals <- power_curve_filter_domain_intervals(ctx$sample_calc, plot_raw)
+  domain_clipped <- domain_clipped || length(plot_intervals) < length(plot_raw)
   plot_powers <- power_at(plot_intervals)
   plot_df <- power_curve_sort_ascending(data.frame(
     parameter = plot_intervals,
@@ -228,7 +242,33 @@ power_curve_compute_sweep <- function(ctx, plot_n_arm = 25L) {
     stringsAsFactors = FALSE
   ))
 
-  list(table = table_df, plot = plot_df)
+  planned <- if (power_curve_uses_ui4(ctx$sample_calc)) ctx$s_sizeUI4 else ctx$s_sizeUI2
+  planned_power <- NA_real_
+  if (isTRUE(power_curve_point_valid(ctx$sample_calc, planned))) {
+    planned_power <- power_curve_power_at_interval(
+      planned,
+      expected = ctx$S,
+      sample_calc = ctx$sample_calc,
+      alt = ctx$alt,
+      s_size_n = ctx$s_size_n,
+      s_sizeUI1 = ctx$s_sizeUI1,
+      s_sizeUI2 = ctx$s_sizeUI2,
+      s_sizeUI3 = ctx$s_sizeUI3,
+      s_sizeUI4 = ctx$s_sizeUI4,
+      s_size_alpha = ctx$s_size_alpha,
+      curve_interval = ctx$I
+    )
+  }
+
+  list(
+    table = table_df,
+    plot = plot_df,
+    domain_clipped = domain_clipped,
+    S = ctx$S,
+    alpha = ctx$s_size_alpha,
+    planned = planned,
+    planned_power = planned_power
+  )
 }
 
 # Table rows: low interval to high (50 ... 70 when S=60, I=1)
@@ -237,7 +277,7 @@ power_curve_table_intervals <- function(S, I) {
   sort(unique(c(S - rev(k) * I, S, S + k * I)))
 }
 
-# Smooth plot: dense sampling near expected value S (both arms meet at S)
+# Uniform grid from S - 10*I to S + 10*I. The sweep passes n_arm = 25.
 power_curve_plot_intervals <- function(S, I, n_arm = 75L) {
   below <- seq(S - 10 * I, S, length.out = n_arm)
   above <- seq(S, S + 10 * I, length.out = n_arm)[-1]
@@ -248,12 +288,80 @@ power_curve_sort_ascending <- function(df) {
   df[order(df$parameter), , drop = FALSE]
 }
 
-# Pearson r is only defined on (-1, 1); exclude sweep points outside that range
-power_curve_filter_correlation_intervals <- function(sample_calc, intervals) {
-  if (!as.integer(sample_calc) %in% c(11L, 19L)) {
-    return(intervals)
+# Natural domain of the swept statistic. Open bounds exclude the endpoint.
+power_curve_domain <- function(sample_calc) {
+  sc <- as.integer(sample_calc)
+  if (sc %in% c(11L, 20L, 19L)) {
+    return(list(lower = -1, upper = 1, lower_open = TRUE, upper_open = TRUE))
   }
-  intervals[is.finite(intervals) & intervals > -1 & intervals < 1]
+  if (sc %in% c(9L, 10L)) {
+    return(list(lower = 0, upper = Inf, lower_open = TRUE, upper_open = FALSE))
+  }
+  if (sc %in% c(12L, 13L, 14L)) {
+    return(list(lower = 0, upper = 1, lower_open = FALSE, upper_open = FALSE))
+  }
+  if (sc %in% c(16L, 17L, 18L)) {
+    return(list(lower = 0, upper = Inf, lower_open = TRUE, upper_open = FALSE))
+  }
+  list(lower = -Inf, upper = Inf, lower_open = TRUE, upper_open = TRUE)
+}
+
+power_curve_in_domain <- function(sample_calc, x) {
+  d <- power_curve_domain(sample_calc)
+  ok <- is.finite(x)
+  if (is.finite(d$lower)) {
+    ok <- ok & if (isTRUE(d$lower_open)) x > d$lower else x >= d$lower
+  }
+  if (is.finite(d$upper)) {
+    ok <- ok & if (isTRUE(d$upper_open)) x < d$upper else x <= d$upper
+  }
+  ok
+}
+
+power_curve_filter_domain_intervals <- function(sample_calc, intervals) {
+  intervals[power_curve_in_domain(sample_calc, intervals)]
+}
+
+# Kept for callers; clips every statistic to its domain.
+power_curve_filter_correlation_intervals <- function(sample_calc, intervals) {
+  power_curve_filter_domain_intervals(sample_calc, intervals)
+}
+
+# Axis limits from the valid swept points, padded, then held inside the domain.
+power_curve_x_limits <- function(sample_calc, parameters) {
+  x <- parameters[power_curve_in_domain(sample_calc, parameters)]
+  if (length(x) == 0) {
+    return(c(NA_real_, NA_real_))
+  }
+  rng <- range(x)
+  span <- diff(rng)
+  pad <- if (is.finite(span) && span > 0) 0.02 * span else 0.02
+  lo <- rng[1] - pad
+  hi <- rng[2] + pad
+  d <- power_curve_domain(sample_calc)
+  if (is.finite(d$lower)) {
+    floor_x <- if (isTRUE(d$lower_open)) {
+      gap <- max(rng[1] - d$lower, 0)
+      d$lower + max(.Machine$double.eps, min(pad, gap / 2))
+    } else {
+      d$lower
+    }
+    lo <- max(lo, floor_x)
+  }
+  if (is.finite(d$upper)) {
+    ceil_x <- if (isTRUE(d$upper_open)) {
+      gap <- max(d$upper - rng[2], 0)
+      d$upper - max(.Machine$double.eps, min(pad, gap / 2))
+    } else {
+      d$upper
+    }
+    hi <- min(hi, ceil_x)
+  }
+  if (!is.finite(lo) || !is.finite(hi) || lo >= hi) {
+    lo <- rng[1]
+    hi <- if (rng[2] > rng[1]) rng[2] else rng[1] + pad
+  }
+  c(lo, hi)
 }
 
 # Conventional curve point when swept sigma equals null (lolcat returns 0); use alpha at null
@@ -271,10 +379,11 @@ power_curve_variance_at_null <- function(sample_calc, interval_val, s_sizeUI1) {
     isTRUE(all.equal(as.numeric(interval_val), as.numeric(s_sizeUI1), tolerance = 1e-12))
 }
 
-# Correlation power curve: sweep rho1 (alternative) about fixed rho0 (null).
-# One-tailed: standard lolcat call (null = rho0, alt = swept rho1, UI alternative).
-# Two-sided: lolcat is symmetric in rho1, so below rho0 use one-sided less with null
-# shifted one interval left (reference / G*Power-style asymmetric curve).
+# Correlation power curve: sweep rho1 about fixed rho0.
+# Every point is the same test lolcat evaluates directly: H0 rho = rho0,
+# true correlation = swept rho1, alternative from the UI. Two-sided Fisher z
+# power is even in artanh(rho1) - artanh(rho0), so with rho0 = 0 the curve is
+# symmetric and smooth through the null (power = alpha).
 power_correlation_curve_lolcat <- function(
     rho0,
     rho1_swept,
@@ -289,37 +398,17 @@ power_correlation_curve_lolcat <- function(
   if (isTRUE(all.equal(rho1_swept, rho0, tolerance = 1e-12))) {
     return(list(at_null = TRUE))
   }
-  if (user_alt %in% c("greater", "less")) {
-    return(list(
-      null = rho0,
-      alt = rho1_swept,
-      alternative = user_alt,
-      at_null = FALSE
-    ))
-  }
-  if (rho1_swept > rho0) {
-    return(list(
-      null = rho0,
-      alt = rho1_swept,
-      alternative = "two.sided",
-      at_null = FALSE
-    ))
-  }
-  null_shifted <- rho1_swept - interval
-  if (null_shifted <= -1) {
-    null_shifted <- rho1_swept
-  }
+  alt_eff <- if (user_alt %in% c("greater", "less")) user_alt else "two.sided"
   list(
-    null = null_shifted,
-    alt = rho0,
-    alternative = "less",
+    null = rho0,
+    alt = rho1_swept,
+    alternative = alt_eff,
     at_null = FALSE
   )
 }
 
 # Two-sample correlation power curve: sweep rho34 with fixed rho12.
-# Use the two-sample power function directly (symmetric two-sided curve); do not
-# apply the one-sample lolcat asymmetric below-null shift (test 11 only).
+# Call the two-sample power function at every sweep point.
 power_correlation_twosample_curve_lolcat <- function(
     r12,
     r34_swept,
@@ -353,7 +442,7 @@ power_curve_power_at_interval <- function(
     return(NA_real_)
   }
   sc <- as.integer(sample_calc)
-  if (sc == 11L &&
+  if (sc %in% c(11L, 20L) &&
       is.finite(s_sizeUI1) &&
       isTRUE(all.equal(as.numeric(interval_val), as.numeric(s_sizeUI1), tolerance = 1e-12))) {
     return(as.numeric(s_size_alpha))
@@ -434,7 +523,7 @@ power_anova_between_var <- function(groups, delta_b, null_mean, swept_mean) {
 }
 
 power_curve_point_valid <- function(sample_calc, parameter_k) {
-  if (sample_calc %in% c(11L, 19L)) {
+  if (sample_calc %in% c(11L, 20L, 19L)) {
     return(
       !is.na(parameter_k) &&
         is.finite(parameter_k) &&
@@ -455,106 +544,19 @@ power_curve_point_valid <- function(sample_calc, parameter_k) {
 }
 
 power_curve_center_label <- function(sample_calc) {
-  if (sample_calc %in% c(1L, 3L, 5L, 6L, 7L, 8L)) {
-    return("Null Mean")
-  }
-  if (sample_calc == 9L) {
-    return("Null Sigma")
-  }
-  if (sample_calc == 10L) {
-    return("Null Sigma")
-  }
-  if (sample_calc == 11L) {
-    return("Null correlation")
-  }
-  if (sample_calc == 19L) {
-    return("Expected correlation (sample 2)")
-  }
-  if (sample_calc %in% c(12L, 13L)) {
-    return("Null Proportion")
-  }
-  if (sample_calc == 14L) {
-    return("Expected proportion")
-  }
-  if (sample_calc == 15L) {
-    return("Null mean")
-  }
-  if (sample_calc %in% c(16L, 17L, 18L)) {
-    return("Null rate")
-  }
-  "Expected value"
+  power_curve_label_spec(sample_calc)$start
 }
 
 power_curve_param_label_text <- function(sample_calc) {
-  labels <- c(
-    "1" = "Actual Mean", "3" = "Actual Mean", "5" = "Actual Mean", "6" = "Actual Mean", "7" = "Actual Mean", "8" = "Actual Mean",
-    "9" = "sigma[1]", "10" = "sigma[2]", "11" = "rho[1]", "19" = "rho[34]",
-    "12" = "pi[1]", "13" = "pi[1]", "14" = "pi[1]",
-    "15" = "Group mean",
-    "16" = "lambda[1]", "17" = "lambda[1]", "18" = "lambda[1]"
-  )
-  lbl <- labels[as.character(sample_calc)]
-  if (is.na(lbl)) "Parameter" else lbl
+  power_curve_label_spec(sample_calc)$symbol
 }
 
-# ggplot axis: plotmath expression for variance tests; plain text otherwise
 power_curve_param_label_plot <- function(sample_calc) {
-  sc <- as.integer(sample_calc)
-  if (sc == 9L) {
-    return(expression(sigma[1]))
-  }
-  if (sc == 10L) {
-    return(expression(sigma[2]))
-  }
-  if (sc == 11L) {
-    return(expression(rho[1]))
-  }
-  if (sc == 19L) {
-    return(expression(rho[34]))
-  }
-  if (sc %in% c(12L, 13L)) {
-    return(expression(pi[1]))
-  }
-  if (sc == 14L) {
-    return(expression(pi[2]))
-  }
-  if (sc == 15L) {
-    return("Group mean")
-  }
-  if (sc %in% c(16L, 17L, 18L)) {
-    return(expression(lambda[1]))
-  }
-  power_curve_param_label_text(sample_calc)
+  power_curve_label_spec(sample_calc)$plot
 }
 
-# Table column header (renderTable does not render MathJax)
 power_curve_param_label_table <- function(sample_calc) {
-  sc <- as.integer(sample_calc)
-  if (sc == 9L) {
-    return("\u03c3\u2081")
-  }
-  if (sc == 10L) {
-    return("\u03c3\u2082")
-  }
-  if (sc == 11L) {
-    return("\u03c1\u2081")
-  }
-  if (sc == 19L) {
-    return("\u03c1\u2083\u2084")
-  }
-  if (sc %in% c(12L, 13L)) {
-    return("\u03c0\u2081")
-  }
-  if (sc == 14L) {
-    return("\u03c0\u2082")
-  }
-  if (sc == 15L) {
-    return("Group mean")
-  }
-  if (sc %in% c(16L, 17L, 18L)) {
-    return("\u03bb\u2081")
-  }
-  power_curve_param_label_text(sample_calc)
+  power_curve_label_spec(sample_calc)$symbol
 }
 
 extract_scalar_power <- function(s_size_out) {
@@ -639,18 +641,13 @@ compute_power_for_test <- function(
   if (sample_calc == 1) {
     ui2 <- s_sizeUI2_eff
     if (alt == "less" && power_curve_lolcat_less_flip(sample_calc)) ui2 <- -ui2
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.mean.z.onesample,
-      list(
-        sample.size = s_size_n,
-        effect.size = ui2,
-        variance = s_sizeUI1^2,
-        alpha = s_size_alpha,
-        alternative = alt
-      ),
-      fix_fn = function(a) {
-        power_z_twosided(mean_z_ncp(a$effect.size, a$sample.size, a$variance), a$alpha)
-      }
+    s_size_out <- power.mean.z.onesample(
+      sample.size = s_size_n,
+      effect.size = ui2,
+      variance = s_sizeUI1^2,
+      alpha = s_size_alpha,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 3) {
     ui2 <- s_sizeUI2_eff
@@ -670,113 +667,75 @@ compute_power_for_test <- function(
   } else if (sample_calc == 5) {
     ui2 <- s_sizeUI2_eff
     if (alt == "less" && power_curve_lolcat_less_flip(sample_calc)) ui2 <- -ui2
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.mean.t.onesample,
-      list(
-        sample.size = s_size_n,
-        effect.size = ui2,
-        variance.est = s_sizeUI1^2,
-        alpha = s_size_alpha,
-        alternative = alt
-      ),
-      fix_fn = function(a) {
-        power_t_twosided(
-          mean_t_ncp_onesample(a$effect.size, a$sample.size, a$variance.est),
-          a$sample.size - 1,
-          a$alpha
-        )
-      }
+    s_size_out <- power.mean.t.onesample(
+      sample.size = s_size_n,
+      effect.size = ui2,
+      variance.est = s_sizeUI1^2,
+      alpha = s_size_alpha,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 6) {
     ui2 <- s_sizeUI2_eff
     if (alt == "less" && power_curve_lolcat_less_flip(sample_calc)) ui2 <- -ui2
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.mean.t.test.twosample.independent.equal.variance,
-      list(
-        mean.g1 = 0,
-        mean.g2 = ui2,
-        variance.est.g1 = s_sizeUI1^2,
-        variance.est.g2 = s_sizeUI1^2,
-        sample.size.g1 = s_size_n,
-        sample.size.g2 = s_sizeUI3,
-        null.hypothesis.difference = 0,
-        alpha = s_size_alpha,
-        alternative = alt
-      ),
-      fix_fn = function(a) {
-        power_t_twosided(
-          mean_t_ncp_twosample_equal(
-            a$mean.g2 - a$mean.g1,
-            a$variance.est.g1,
-            a$sample.size.g1,
-            a$sample.size.g2
-          ),
-          a$sample.size.g1 + a$sample.size.g2 - 2,
-          a$alpha
-        )
-      }
+    s_size_out <- power.mean.t.test.twosample.independent.equal.variance(
+      mean.g1 = 0,
+      mean.g2 = ui2,
+      variance.est.g1 = s_sizeUI1^2,
+      variance.est.g2 = s_sizeUI1^2,
+      sample.size.g1 = s_size_n,
+      sample.size.g2 = s_sizeUI3,
+      null.hypothesis.difference = 0,
+      alpha = s_size_alpha,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 7) {
     ui2 <- s_sizeUI2_eff
     if (alt == "less" && power_curve_lolcat_less_flip(sample_calc)) ui2 <- -ui2
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.mean.t.test.twosample.independent.unequal.variance,
-      list(
-        mean.g1 = 0,
-        mean.g2 = ui2,
-        variance.est.g1 = s_sizeUI1^2,
-        variance.est.g2 = s_sizeUI4^2,
-        sample.size.g1 = s_size_n,
-        sample.size.g2 = s_sizeUI3,
-        null.hypothesis.difference = 0,
-        alpha = s_size_alpha,
-        alternative = alt
-      )
+    s_size_out <- power.mean.t.test.twosample.independent.unequal.variance(
+      mean.g1 = 0,
+      mean.g2 = ui2,
+      variance.est.g1 = s_sizeUI1^2,
+      variance.est.g2 = s_sizeUI4^2,
+      sample.size.g1 = s_size_n,
+      sample.size.g2 = s_sizeUI3,
+      null.hypothesis.difference = 0,
+      alpha = s_size_alpha,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 8) {
     ui2 <- s_sizeUI2_eff
     if (alt == "less" && power_curve_lolcat_less_flip(sample_calc)) ui2 <- -ui2
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.mean.t.onesample,
-      list(
-        sample.size = s_size_n,
-        effect.size = ui2,
-        variance.est = s_sizeUI1^2,
-        alpha = s_size_alpha,
-        alternative = alt
-      ),
-      fix_fn = function(a) {
-        power_t_twosided(
-          mean_t_ncp_onesample(a$effect.size, a$sample.size, a$variance.est),
-          a$sample.size - 1,
-          a$alpha
-        )
-      }
+    s_size_out <- power.mean.t.onesample(
+      sample.size = s_size_n,
+      effect.size = ui2,
+      variance.est = s_sizeUI1^2,
+      alpha = s_size_alpha,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 9) {
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.variance.onesample,
-      list(
-        sample.size = s_size_n,
-        null.hypothesis.variance = s_sizeUI1^2,
-        alternative.hypothesis.variance = s_sizeUI4_eff^2,
-        alpha = s_size_alpha,
-        alternative = alt
-      )
+    s_size_out <- power.variance.onesample(
+      sample.size = s_size_n,
+      null.hypothesis.variance = s_sizeUI1^2,
+      alternative.hypothesis.variance = s_sizeUI4_eff^2,
+      alpha = s_size_alpha,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 10) {
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.variance.twosample.independent,
-      list(
-        variance.estimate.g1 = s_sizeUI1^2,
-        variance.estimate.g2 = s_sizeUI4_eff^2,
-        sample.size.g1 = s_size_n,
-        sample.size.g2 = s_sizeUI3,
-        alpha = s_size_alpha,
-        alternative = alt
-      )
+    s_size_out <- power.variance.twosample.independent(
+      variance.estimate.g1 = s_sizeUI1^2,
+      variance.estimate.g2 = s_sizeUI4_eff^2,
+      sample.size.g1 = s_size_n,
+      sample.size.g2 = s_sizeUI3,
+      alpha = s_size_alpha,
+      alternative = alt,
+      details = TRUE
     )
-  } else if (sample_calc == 11) {
+  } else if (sample_calc %in% c(11, 20)) {
     corr_args <- list(
       null = s_sizeUI1,
       alt = s_sizeUI2_eff,
@@ -808,26 +767,19 @@ compute_power_for_test <- function(
           !is.finite(corr_args$alt) || abs(corr_args$alt) >= 1) {
         s_size_out <- data.frame(error_message = "Correlation coefficients must be from -1 to 1")
       } else {
+        power_fn <- if (sample_calc == 20) {
+          power.cor.pearson.r.onesample.exact
+        } else {
+          power.cor.pearson.r.onesample
+        }
         s_size_out <- tryCatch(
-          lolcat_power_with_twosided_fix(
-            power.cor.pearson.r.onesample,
-            list(
-              sample.size = s_size_n,
-              null.hypothesis.correlation = corr_args$null,
-              alternative.hypothesis.correlation = corr_args$alt,
-              alpha = s_size_alpha,
-              alternative = corr_args$alternative
-            ),
-            fix_fn = function(a) {
-              power_z_twosided(
-                fisher_z_ncp_onesample(
-                  a$null.hypothesis.correlation,
-                  a$alternative.hypothesis.correlation,
-                  a$sample.size
-                ),
-                a$alpha
-              )
-            }
+          power_fn(
+            sample.size = s_size_n,
+            null.hypothesis.correlation = corr_args$null,
+            alternative.hypothesis.correlation = corr_args$alt,
+            alpha = s_size_alpha,
+            alternative = corr_args$alternative,
+            details = TRUE
           ),
           error = function(e) {
             data.frame(error_message = conditionMessage(e))
@@ -879,47 +831,31 @@ compute_power_for_test <- function(
       }
     }
   } else if (sample_calc == 12) {
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.proportion.test.onesample.approximate,
-      list(
-        null.hypothesis.proportion = s_sizeUI1,
-        alternative.hypothesis.proportion = s_sizeUI2_eff,
-        alpha = s_size_alpha,
-        sample.size = s_size_n,
-        alternative = alt
-      ),
-      fix_fn = function(a) {
-        power_z_twosided(
-          proportion_z_ncp(
-            a$null.hypothesis.proportion,
-            a$alternative.hypothesis.proportion,
-            a$sample.size
-          ),
-          a$alpha
-        )
-      }
+    s_size_out <- power.proportion.test.onesample.approximate(
+      null.hypothesis.proportion = s_sizeUI1,
+      alternative.hypothesis.proportion = s_sizeUI2_eff,
+      alpha = s_size_alpha,
+      sample.size = s_size_n,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 13) {
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.proportion.test.onesample.exact,
-      list(
-        null.hypothesis.proportion = s_sizeUI1,
-        alternative.hypothesis.proportion = s_sizeUI2_eff,
-        alpha = s_size_alpha,
-        sample.size = s_size_n,
-        alternative = alt
-      )
+    s_size_out <- power.proportion.test.onesample.exact(
+      null.hypothesis.proportion = s_sizeUI1,
+      alternative.hypothesis.proportion = s_sizeUI2_eff,
+      alpha = s_size_alpha,
+      sample.size = s_size_n,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 14) {
-    s_size_out <- lolcat_power_with_twosided_fix(
-      power.proportion.test.twosample.approximate,
-      list(
-        proportion.g1 = s_sizeUI1,
-        proportion.g2 = s_sizeUI2_eff,
-        alpha = s_size_alpha,
-        sample.size = s_size_n,
-        alternative = alt
-      )
+    s_size_out <- power.proportion.test.twosample.approximate(
+      proportion.g1 = s_sizeUI1,
+      proportion.g2 = s_sizeUI2_eff,
+      alpha = s_size_alpha,
+      sample.size = s_size_n,
+      alternative = alt,
+      details = TRUE
     )
   } else if (sample_calc == 15) {
     if (!is.null(s_sizeUI4) && s_sizeUI4 >= 2) {
@@ -961,7 +897,7 @@ compute_power_for_test <- function(
       alternative = alt
     )
   } else if (sample_calc == 17) {
-    s_size_out <- power.count.poisson.onesample.approximate.app(
+    s_size_out <- lolcat::power.count.poisson.onesample.approximate(
       sample.size = s_size_n,
       lambda.null.hypothesis = s_sizeUI1,
       lambda.alternative.hypothesis = s_sizeUI2_eff,
@@ -981,109 +917,6 @@ compute_power_for_test <- function(
   }
 
   s_size_out
-}
-
-# lolcat <= 2.0.1 has swapped lower.tail flags in two branches of
-# power.count.poisson.onesample.approximate(); see burrm/lolcat R/power.count.poisson.onesample.approximate.R
-.poisson_approx_lolcat_tail_bug <- local({
-  if (!requireNamespace("lolcat", quietly = TRUE)) {
-    return(FALSE)
-  }
-  tryCatch(
-    {
-      r <- lolcat::power.count.poisson.onesample.approximate(
-        sample.size = 100,
-        lambda.null.hypothesis = 10,
-        lambda.alternative.hypothesis = 10,
-        alpha = 0.05,
-        alternative = "less",
-        details = TRUE
-      )
-      isTRUE(abs(r$power - 0.95) < 0.01)
-    },
-    error = function(e) FALSE
-  )
-})
-
-power.count.poisson.onesample.approximate.fixed <- function(
-    sample.size,
-    lambda.null.hypothesis,
-    lambda.alternative.hypothesis,
-    alpha = 0.05,
-    alternative = c("two.sided", "less", "greater"),
-    details = TRUE) {
-  validate.htest.alternative(alternative = alternative)
-
-  z.upper <- qnorm(ifelse(alternative[1] == "two.sided", alpha / 2, alpha), lower.tail = FALSE)
-  z.lower <- qnorm(ifelse(alternative[1] == "two.sided", alpha / 2, alpha), lower.tail = TRUE)
-
-  z.beta <- 2 * sqrt(sample.size) * (
-    sqrt(lambda.alternative.hypothesis) - sqrt(lambda.null.hypothesis)
-  )
-
-  if (alternative[1] == "two.sided") {
-    pow <- power_z_twosided(z.beta, alpha)
-    beta <- 1 - pow
-  } else if (lambda.alternative.hypothesis < lambda.null.hypothesis) {
-    if (alternative[1] == "greater") {
-      beta <- pnorm(z.lower - z.beta, lower.tail = FALSE)
-    } else {
-      beta <- pnorm(z.lower - z.beta, lower.tail = FALSE)
-    }
-    pow <- 1 - beta
-  } else if (lambda.alternative.hypothesis >= lambda.null.hypothesis) {
-    if (alternative[1] == "greater") {
-      beta <- pnorm(z.upper - z.beta, lower.tail = TRUE)
-    } else {
-      beta <- pnorm(z.upper - z.beta, lower.tail = TRUE)
-    }
-    pow <- 1 - beta
-  }
-  if (details) {
-    return(data.frame(
-      test = "poisson",
-      type = "one.sample",
-      alternative = alternative[1],
-      sample.size = sample.size,
-      actual = sample.size,
-      lambda.null = lambda.null.hypothesis,
-      lambda.alternative = lambda.alternative.hypothesis,
-      alpha = alpha,
-      conf.level = 1 - alpha,
-      beta = beta,
-      power = pow,
-      stringsAsFactors = FALSE
-    ))
-  }
-  pow
-}
-
-power.count.poisson.onesample.approximate.app <- function(
-    sample.size,
-    lambda.null.hypothesis,
-    lambda.alternative.hypothesis,
-    alpha = 0.05,
-    alternative = c("two.sided", "less", "greater"),
-    details = TRUE) {
-  if (.poisson_approx_lolcat_tail_bug ||
-      (alternative[1] == "two.sided" && isTRUE(.needs_lolcat_twosided_fix()))) {
-    return(power.count.poisson.onesample.approximate.fixed(
-      sample.size = sample.size,
-      lambda.null.hypothesis = lambda.null.hypothesis,
-      lambda.alternative.hypothesis = lambda.alternative.hypothesis,
-      alpha = alpha,
-      alternative = alternative,
-      details = details
-    ))
-  }
-  lolcat::power.count.poisson.onesample.approximate(
-    sample.size = sample.size,
-    lambda.null.hypothesis = lambda.null.hypothesis,
-    lambda.alternative.hypothesis = lambda.alternative.hypothesis,
-    alpha = alpha,
-    alternative = alternative,
-    details = details
-  )
 }
 
 # Two-sample independent z power (lolcat has sample size only; no power function)
@@ -1142,6 +975,7 @@ power.mean.z.twosample.independent <- function(
 
 # Power function for Poisson one-sample exact test
 power.count.poisson.onesample.exact <- function(lambda_0, lambda_1, n, alpha = 0.05, alternative = c("two.sided", "less", "greater")) {
+  alternative <- match.arg(alternative)
   if (!is.finite(n) || n <= 0 ||
       !is.finite(lambda_0) || !is.finite(lambda_1) ||
       lambda_0 <= 0 || lambda_1 <= 0) {
@@ -1149,68 +983,69 @@ power.count.poisson.onesample.exact <- function(lambda_0, lambda_1, n, alpha = 0
   }
   if (lambda_0 == lambda_1) {
     if (alternative == "two.sided") {
-      return(data.frame(alpha = alpha, power = alpha))
+      return(data.frame(alpha = alpha, power = alpha, crit_x_l = NA_real_, crit_x_u = NA_real_))
     }
     return(data.frame(error_message = "Rates cannot be equal"))
   }
-  
+
   if (alternative == "less") {
     if (lambda_1 >= lambda_0) {
-      output <- data.frame(error_message = "Alternative must be less than null")
-      return(output)
+      return(data.frame(error_message = "Alternative must be less than null"))
     }
     df <- table.dist.poisson(lambda_0 * n)
     df.with.index <- mutate(df, IDX = 1:n())
     result <- data.frame(filter(df.with.index, (eq.and.below <= alpha))$IDX)
     df2 <- table.dist.poisson(lambda_1 * n)
     power <- df2$eq.and.below[length(result$filter.df.with.index...eq.and.below....alpha...IDX) - 1]
-    
-    # Critical Xs
-    crit_x_l <- qpois(p = alpha, lambda = n * lambda_0, lower.tail = T) - 1
-    alpha_r <- ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = T)
-    output <- data.frame(c(alpha = alpha_r, power = power, crti_x_l = crit_x_l))
-    
-    return(output)
+
+    crit_x_l <- qpois(p = alpha, lambda = n * lambda_0, lower.tail = TRUE) - 1
+    alpha_r <- ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = TRUE)
+    return(data.frame(
+      alpha = alpha_r,
+      power = power,
+      crit_x_l = crit_x_l,
+      crit_x_u = NA_real_
+    ))
   }
-  
+
   if (alternative == "greater") {
     if (lambda_1 <= lambda_0) {
-      output <- data.frame(error_message = "Alternative must be greater than null")
-      return(output)
+      return(data.frame(error_message = "Alternative must be greater than null"))
     }
     df <- table.dist.poisson(lambda_0 * n)
     df.with.index <- mutate(df, IDX = 1:n())
     result <- data.frame(filter(df.with.index, (eq.and.above <= alpha))$IDX)
     df2 <- table.dist.poisson(lambda_1 * n)
     power <- df2$eq.and.above[min(result$filter.df.with.index...eq.and.above....alpha...IDX) + 1]
-    
-    # Critical Xs
-    crit_x_u <- qpois(p = 1 - alpha, lambda = n * lambda_0, lower.tail = T) + 1
-    alpha_r <- ppois(q = (crit_x_u - 1), lambda = n * lambda_0, lower.tail = F)
-    output <- data.frame(c(alpha = alpha_r, power = power, crit_x_u = crit_x_u))
-    
-    return(output)
-  }
-  
-  if (alternative == "two.sided") {
-    crit_x_l <- qpois(p = alpha / 2, lambda = n * lambda_0, lower.tail = TRUE) - 1
-    crit_x_u <- qpois(p = 1 - (alpha / 2), lambda = n * lambda_0, lower.tail = TRUE) + 1
-    alpha_r <- ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = TRUE) +
-      ppois(q = crit_x_u - 1, lambda = n * lambda_0, lower.tail = FALSE)
-    power <- ppois(q = crit_x_l, lambda = n * lambda_1, lower.tail = TRUE) +
-      ppois(q = crit_x_u - 1, lambda = n * lambda_1, lower.tail = FALSE)
-    output <- data.frame(c(
+
+    crit_x_u <- qpois(p = 1 - alpha, lambda = n * lambda_0, lower.tail = TRUE) + 1
+    alpha_r <- ppois(q = (crit_x_u - 1), lambda = n * lambda_0, lower.tail = FALSE)
+    return(data.frame(
       alpha = alpha_r,
       power = power,
-      crit_x_l = crit_x_l,
+      crit_x_l = NA_real_,
       crit_x_u = crit_x_u
     ))
-    return(output)
   }
+
+  # two.sided
+  crit_x_l <- qpois(p = alpha / 2, lambda = n * lambda_0, lower.tail = TRUE) - 1
+  crit_x_u <- qpois(p = 1 - (alpha / 2), lambda = n * lambda_0, lower.tail = TRUE) + 1
+  alpha_r <- ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = TRUE) +
+    ppois(q = crit_x_u - 1, lambda = n * lambda_0, lower.tail = FALSE)
+  power <- ppois(q = crit_x_l, lambda = n * lambda_1, lower.tail = TRUE) +
+    ppois(q = crit_x_u - 1, lambda = n * lambda_1, lower.tail = FALSE)
+  data.frame(
+    alpha = alpha_r,
+    power = power,
+    crit_x_l = crit_x_l,
+    crit_x_u = crit_x_u
+  )
 }
 
 # Sample size function for Poisson one-sample exact test
 sample.size.count.poisson.onesample.exact <- function(lambda_0, lambda_1, alpha = 0.05, beta = 0.10, alternative = c("two.sided", "less", "greater")) {
+  alternative <- match.arg(alternative)
   if (lambda_0 == lambda_1) { return(data.frame(error_message = "Rates cannot be equal")) }
   
   if (alternative == "less") {
@@ -1236,31 +1071,34 @@ sample.size.count.poisson.onesample.exact <- function(lambda_0, lambda_1, alpha 
   )
   
   pow <- power.count.poisson.onesample.exact(lambda_0 = lambda_0, lambda_1 = lambda_1, n = n, alpha = alpha, alternative = alternative)
-  beta_this <- 1 - pow["power", ]
-  
-  while (beta_this > beta) {
+  # power.count.poisson.onesample.exact returns a wide data.frame (columns);
+  # do not use tall-format pow["power", ] indexing (length > 1 → while() error).
+  beta_this <- 1 - extract_scalar_power(pow)
+
+  while (isTRUE(beta_this > beta)) {
     n <- n + 1
     pow <- power.count.poisson.onesample.exact(lambda_0 = lambda_0, lambda_1 = lambda_1, n = n, alpha = alpha, alternative = alternative)
-    beta_this <- 1 - pow["power", ]
+    beta_this <- 1 - extract_scalar_power(pow)
   }
   
-  # Critical Xs
-  crit_x_l <- NULL
-  crit_x_u <- NULL
+  # Critical Xs (NA for the unused limb on one-sided tests; NULL breaks data.frame())
+  crit_x_l <- NA_real_
+  crit_x_u <- NA_real_
+  alpha_r <- NA_real_
   
   if (alternative == "less") {
-    crit_x_l <- qpois(p = alpha, lambda = n * lambda_0, lower.tail = T) - 1
-    alpha_r <- ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = T)
+    crit_x_l <- qpois(p = alpha, lambda = n * lambda_0, lower.tail = TRUE) - 1
+    alpha_r <- ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = TRUE)
   }
   if (alternative == "greater") {
-    crit_x_u <- qpois(p = 1 - alpha, lambda = n * lambda_0, lower.tail = T) + 1
-    alpha_r <- ppois(q = (crit_x_u - 1), lambda = n * lambda_0, lower.tail = F)
+    crit_x_u <- qpois(p = 1 - alpha, lambda = n * lambda_0, lower.tail = TRUE) + 1
+    alpha_r <- ppois(q = (crit_x_u - 1), lambda = n * lambda_0, lower.tail = FALSE)
   }
   if (alternative == "two.sided") {
-    crit_x_l <- qpois(p = alpha / 2, lambda = n * lambda_0, lower.tail = T) - 1
-    crit_x_u <- qpois(p = 1 - (alpha / 2), lambda = n * lambda_0, lower.tail = T) + 1
-    alpha_r <- ppois(q = (crit_x_u - 1), lambda = n * lambda_0, lower.tail = F)
-    alpha_r <- alpha_r + ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = T)
+    crit_x_l <- qpois(p = alpha / 2, lambda = n * lambda_0, lower.tail = TRUE) - 1
+    crit_x_u <- qpois(p = 1 - (alpha / 2), lambda = n * lambda_0, lower.tail = TRUE) + 1
+    alpha_r <- ppois(q = (crit_x_u - 1), lambda = n * lambda_0, lower.tail = FALSE)
+    alpha_r <- alpha_r + ppois(q = crit_x_l, lambda = n * lambda_0, lower.tail = TRUE)
   }
   
   output <- data.frame(alpha = alpha_r, power = 1 - beta_this, n = n, crit_x_l = crit_x_l, crit_x_u = crit_x_u)
@@ -1532,7 +1370,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
     }
 
     # Define choice_sample_size in server (like monolithic app)
-    choice_sample_size <- c(seq(1, 19))
+    choice_sample_size <- c(seq(1, 20))
     names(choice_sample_size) <- c(
       "One-sample Mean z",
       "One-sample Mean z - alternate",
@@ -1544,7 +1382,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
       "Two-sample Mean t Dependent",
       "One-sample Variance",
       "Two-sample Variance Independent",
-      "One-sample Pearson r",
+      "One-sample Pearson r - Approximate",
       "One-sample Proportion - Approximate",
       "One-sample Proportion - Exact",
       "Two-sample Proportion - Approximate",
@@ -1552,7 +1390,8 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
       "One-sample Poisson - Exact",
       "One-sample Poisson - Approximate",
       "Two-Sample Poisson - Approximate",
-      "Two-sample independent Pearson r"
+      "Two-sample independent Pearson r",
+      "One-sample Pearson r - Exact"
     )
     
     # s_size_tests - renderUI like monolithic app (replicating app.R lines 7801-7826)
@@ -1592,7 +1431,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
         s_size_test_out <- radioButtons(
           inputId = ns("sample_calc"),
           label = "Select the Test",
-          choices = choice_sample_size[c(11, 19)]
+          choices = choice_sample_size[c(11, 20, 19)]
         )
       } else {
         s_size_test_out <- NULL
@@ -1665,7 +1504,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
         else if (sample_calc == 8) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\sigma_{\\bar{D}}:{ }$$"), value = 1, min = 0, max = 1, width = "150px")
         else if (sample_calc == 9) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\sigma_{0}:{ }$$"), value = 1, min = 0, max = 1, step = 0.05, width = "150px")
         else if (sample_calc == 10) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\sigma_{1}:{ }$$"), value = 1, min = 0, max = 1, step = 0.05, width = "150px")
-        else if (sample_calc == 11) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\rho_{0}:{ }$$"), value = 0.0, min = -1, max = 1, step = 0.05, width = "150px")
+        else if (sample_calc %in% c(11, 20)) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\rho_{0}:{ }$$"), value = 0.0, min = -1, max = 1, step = 0.05, width = "150px")
         else if (sample_calc == 19) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\rho_{12}:{ }$$"), value = 0.0, min = -1, max = 1, step = 0.05, width = "150px")
         else if (sample_calc == 12) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\pi_{0}:{ }$$"), value = 0.5, min = 0, max = 1, step = 0.05, width = "150px")
         else if (sample_calc == 13) numericInput(inputId = ns("s_sizeUI1"), label = withMathJax("$$\\pi_{0}:{ }$$"), value = 0.5, min = 0, max = 1, step = 0.05, width = "150px")
@@ -1707,7 +1546,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
         if (sample_calc == 6) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\Delta:{ }$$"), value = 1, min = 0, max = 1, width = "150px")
         if (sample_calc == 7) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\Delta:{ }$$"), value = 1, min = 0, max = 1, width = "150px")
         if (sample_calc == 8) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\Delta_{\\bar{D}}:{ }$$"), value = 1, min = 0, max = 1, width = "150px")
-        if (sample_calc == 11) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\rho_{1}:{ }$$"), value = 0.5, min = -1, max = 1, step = 0.05, width = "150px")
+        if (sample_calc %in% c(11, 20)) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\rho_{1}:{ }$$"), value = 0.5, min = -1, max = 1, step = 0.05, width = "150px")
         if (sample_calc == 19) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\rho_{34}:{ }$$"), value = 0.5, min = -1, max = 1, step = 0.05, width = "150px")
         if (sample_calc == 12) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\pi_{1}:{ }$$"), value = 0.1, min = 0, max = 1, step = 0.05, width = "150px")
         if (sample_calc == 13) s_size2_out <- numericInput(inputId = ns("s_sizeUI2"), label = withMathJax("$$\\pi_{1}:{ }$$"), value = 0.1, min = 0, max = 1, step = 0.05, width = "150px")
@@ -1923,7 +1762,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
             power.from.actual = FALSE
           )
         }
-        if (sample_calc == 11) { # One-sample Pearson r
+        if (sample_calc == 11) { # One-sample Pearson r (Fisher z)
           s_size_out <- sample.size.cor.pearson.r.onesample(
             null.hypothesis.correlation = s_sizeUI1,
             alternative.hypothesis.correlation = s_sizeUI2,
@@ -1933,6 +1772,33 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
             details = TRUE,
             power.from.actual = FALSE
           )
+        }
+        if (sample_calc == 20) { # One-sample Pearson r exact
+          if (!is.finite(s_sizeUI1) || abs(s_sizeUI1) >= 1 ||
+              !is.finite(s_sizeUI2) || abs(s_sizeUI2) >= 1) {
+            s_size_out <- data.frame(error_message = "Correlation coefficients must be from -1 to 1")
+          } else {
+            s_size_out <- tryCatch(
+              sample.size.cor.pearson.r.onesample.exact(
+                null.hypothesis.correlation = s_sizeUI1,
+                alternative.hypothesis.correlation = s_sizeUI2,
+                alpha = s_size_alpha,
+                beta = s_size_beta,
+                alternative = alt,
+                details = TRUE,
+                power.from.actual = FALSE
+              ),
+              error = function(e) {
+                data.frame(error_message = conditionMessage(e))
+              }
+            )
+            if (is.data.frame(s_size_out) &&
+                "sample.size" %in% names(s_size_out) &&
+                length(s_size_out$sample.size) == 1L &&
+                is.na(s_size_out$sample.size)) {
+              s_size_out <- data.frame(error_message = "Invalid parameter combination for one-sided test")
+            }
+          }
         }
         if (sample_calc == 19) { # Two-sample independent Pearson r
           if (abs(s_sizeUI1) >= 1 || abs(s_sizeUI2) >= 1) {
@@ -2508,6 +2374,40 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
             create_table_row(paste("Power = ", safe_get(results, "power", "N/A"))),
             "</table>"
           )))
+        } else if (sample_calc == 20) { # One-sample Pearson r exact
+          err <- safe_get(results, "error_message", NULL)
+          if (!is.null(err)) {
+            output <- HTML(err)
+          } else {
+            output <- withMathJax(HTML(c(
+              paste("<b>", "Sample Size Calculations - One-sample Pearson r exact: ", safe_get(results, "test", "exact"), " test", "</b>"),
+              "<br>",
+              if (alt == "two.sided") {
+                "<b>Two-Tail</b>"
+              } else {
+                "<b>One-Tail</b>"
+              },
+              "<br><br>",
+              "<table>",
+              create_table_row(
+                paste("$\\alpha = $", safe_get(results, "alpha", s_size_alpha)),
+                paste("$\\beta = $", safe_get(results, "beta", s_size_beta))
+              ),
+              create_table_row(
+                paste("$\\rho_0 = $", s_sizeUI1),
+                ""
+              ),
+              create_table_row(paste("$\\rho_1 = $", s_sizeUI2)),
+              create_table_row(paste("$n_{calc} = $", safe_get(results, "actual", "N/A"))),
+              create_table_row(paste("$n = $", safe_get(results, "sample.size", "N/A"))),
+              create_table_row(
+                paste("Critical $r$ lower = ", safe_get(results, "critical.r.lower", "N/A")),
+                paste("Critical $r$ upper = ", safe_get(results, "critical.r.upper", "N/A"))
+              ),
+              create_table_row(paste("Power = ", safe_get(results, "power", "N/A"))),
+              "</table>"
+            )))
+          }
         } else if (sample_calc == 19) { # Two-sample independent Pearson r
           err <- safe_get(results, "error_message", NULL)
           if (!is.null(err)) {
@@ -3025,6 +2925,39 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
             create_table_row(paste("Power = ", power_value)),
             "</table>"
           )))
+        } else if (sample_calc == 20) { # One-sample Pearson r exact
+          err <- safe_get(results, "error_message", NULL)
+          if (!is.null(err)) {
+            output <- HTML(err)
+          } else {
+            output <- withMathJax(HTML(c(
+              paste("<b>", "Power Calculations - One-sample Pearson r exact: ", safe_get(results, "test", "exact"), " test", "</b>"),
+              "<br>",
+              if (alt == "two.sided") {
+                "<b>Two-Tail</b>"
+              } else {
+                "<b>One-Tail</b>"
+              },
+              "<br><br>",
+              "<table>",
+              create_table_row(
+                paste("$\\alpha = $", s_size_alpha),
+                paste("$\\beta = $", beta_value)
+              ),
+              create_table_row(paste("$n = $", s_size_n)),
+              create_table_row(
+                paste("$\\rho_0 = $", s_sizeUI1),
+                ""
+              ),
+              create_table_row(paste("$\\rho_1 = $", s_sizeUI2)),
+              create_table_row(
+                paste("Critical $r$ lower = ", safe_get(results, "critical.r.lower", "N/A")),
+                paste("Critical $r$ upper = ", safe_get(results, "critical.r.upper", "N/A"))
+              ),
+              create_table_row(paste("Power = ", power_value)),
+              "</table>"
+            )))
+          }
         } else if (sample_calc == 19) { # Two-sample independent Pearson r
           err <- safe_get(results, "error_message", NULL)
           if (!is.null(err)) {
@@ -3195,9 +3128,9 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
               "<br><br>",
               "<table>",
               "<tr>",
-              "<td>", paste("$\\alpha_{actual} = $", results["alpha",]), "</td>",
+              "<td>", paste("$\\alpha_{actual} = $", safe_get(results, "alpha", s_size_alpha)), "</td>",
               "<td>", "</td>",
-              "<td>", paste("$\\beta_{actual} = $", 1 - results["power",]), "</td>",
+              "<td>", paste("$\\beta_{actual} = $", 1 - safe_get(results, "power", 0)), "</td>",
               "</tr>",
               "<tr>",
               "<td>", paste("$\\lambda_0 = $", s_sizeUI1), "</td>",
@@ -3207,10 +3140,10 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
               "<tr>",
               "<td>", paste("$n = $", s_size_n), "</td>",
               "</tr><tr>",
-              "<td>", paste("$X_{crit L} = $", results["crit_x_l",]), "</td><td></td>",
-              "<td>", paste("$X_{crit U} = $", results["crit_x_u",]), "</td>",
+              "<td>", paste("$X_{crit L} = $", safe_get(results, "crit_x_l", "N/A")), "</td><td></td>",
+              "<td>", paste("$X_{crit U} = $", safe_get(results, "crit_x_u", "N/A")), "</td>",
               "</tr><tr>",
-              "<td>", paste("Power = ", results["power",]), "</td>",
+              "<td>", paste("Power = ", safe_get(results, "power", "N/A")), "</td>",
               "</tr>",
               "</table>"
             )))
@@ -3352,7 +3285,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
         args$min <- 0
         args$max <- 1
       }
-      if (sc == 11L) {
+      if (sc %in% c(11L, 20L)) {
         args$min <- -1
         args$max <- 1
         args$step <- 0.05
@@ -3428,13 +3361,13 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
       if (is.null(df)) {
         return(NULL)
       }
-      if (!any(df$valid)) {
+      if (nrow(df) == 0 || !any(df$valid)) {
         return(p(
           style = "color: #a94442;",
           "No swept values are in the valid range. Adjust the expected value or interval."
         ))
       }
-      if (any(!df$valid)) {
+      if (isTRUE(sweep$domain_clipped) || any(!df$valid)) {
         return(p(
           style = "color: #8a6d3b;",
           "Power not calculated for rows outside the valid range (proportions 0\u20131; Poisson rates: \u2265 0; standard deviation > 0; correlations -1 to 1)."
@@ -3450,9 +3383,7 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
         return(NULL)
       }
       sample_calc <- effective_sample_calc(input$sample_size_type, input$sample_calc)
-      if (sample_calc %in% c(11L, 19L)) {
-        df <- df[df$parameter > -1 & df$parameter < 1, , drop = FALSE]
-      }
+      df <- df[power_curve_in_domain(sample_calc, df$parameter), , drop = FALSE]
       param_col <- power_curve_param_label_table(sample_calc)
       out <- data.frame(
         Parameter = df$parameter,
@@ -3479,13 +3410,17 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
         text(0.5, 0.5, "No valid points to plot", cex = 1.2)
         return(invisible(NULL))
       }
-      x_lab <- power_curve_param_label_text(sample_calc)
+      x_lab <- power_curve_param_label_plot(sample_calc)
       table_pts <- table_df[table_df$valid & !is.na(table_df$power_pct), , drop = FALSE]
       cols <- power_curve_colors()
-      xlim_use <- if (sample_calc %in% c(11L, 19L)) {
-        c(-1, 1)
-      } else {
-        range(c(plot_line$parameter, table_pts$parameter), na.rm = TRUE)
+      xlim_use <- power_curve_x_limits(
+        sample_calc,
+        c(plot_line$parameter, table_pts$parameter)
+      )
+      if (anyNA(xlim_use)) {
+        plot.new()
+        text(0.5, 0.5, "No valid points to plot", cex = 1.2)
+        return(invisible(NULL))
       }
       graphics::plot(
         plot_line$parameter,
@@ -3496,14 +3431,43 @@ create_sample_size_power_server <- function(id, color_palette = NULL) {
         xlab = x_lab,
         ylab = "Power (%)",
         ylim = c(0, 100),
-        xlim = xlim_use
+        xlim = xlim_use,
+        xaxs = "i"
       )
+      alpha_pct <- 100 * sweep$alpha
+      if (is.finite(alpha_pct) && alpha_pct >= 0 && alpha_pct <= 100) {
+        graphics::abline(h = alpha_pct, lty = 2, col = "gray50")
+        graphics::text(
+          xlim_use[2],
+          min(alpha_pct, 96),
+          labels = expression(alpha),
+          adj = c(1, -0.35),
+          cex = 0.95
+        )
+      }
+      if (is.finite(sweep$S) &&
+          power_curve_in_domain(sample_calc, sweep$S) &&
+          sweep$S >= xlim_use[1] && sweep$S <= xlim_use[2]) {
+        graphics::abline(v = sweep$S, lty = 3, col = "gray50")
+      }
       if (nrow(table_pts) > 0) {
         graphics::points(
           table_pts$parameter,
           table_pts$power_pct,
           pch = 16,
           col = cols$col_line_control_chart
+        )
+      }
+      planned_pct <- 100 * sweep$planned_power
+      if (is.finite(sweep$planned) && is.finite(planned_pct) &&
+          power_curve_point_valid(sample_calc, sweep$planned) &&
+          sweep$planned >= xlim_use[1] && sweep$planned <= xlim_use[2]) {
+        graphics::points(
+          sweep$planned,
+          planned_pct,
+          pch = 17,
+          cex = 1.6,
+          col = cols$col_plot_line
         )
       }
       invisible(NULL)

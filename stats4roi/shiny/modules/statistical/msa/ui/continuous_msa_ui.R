@@ -87,13 +87,13 @@ create_continuous_msa_ui_internal <- function(ns) {
       conditionalPanel(
         condition = paste0("input['", ns("msa_range_b"), "'] == 1"),
         fluidRow(
-          column(6, numericInput(inputId = ns("msa_LSL"), label = "LSL", value = NA)),
-          column(6, numericInput(inputId = ns("msa_USL"), label = "USL", value = NA))
+          column(6, numericInput(inputId = ns("msa_LSL"), label = "LSL", value = NULL)),
+          column(6, numericInput(inputId = ns("msa_USL"), label = "USL", value = NULL))
         )
       ),
       conditionalPanel(
         condition = paste0("input['", ns("msa_range_b"), "'] == 0"),
-        numericInput(inputId = ns("msa_range"), label = "Spec Range", value = NA)
+        numericInput(inputId = ns("msa_range"), label = "Spec Range", value = NULL)
       ),
       HTML("<p><b>Optional:</b> Enter specs or a spec range, the average of the process and the standard devation of the process <i>without measurement error</i> to see if there is a danger of misclassification and to get the number of distinct categories and discrimination ratio for the process.</p>"),
       fluidRow(
@@ -134,8 +134,8 @@ create_continuous_msa_ui_internal <- function(ns) {
           tags$hr(style = "border-color: black;"),
           uiOutput(ns("lt_plot_2")),
           fluidRow(
-            column(3, downloadButtonUI(ns("msa_lt_overall"))),
-            column(6, tags$div(id = "inline1", class = "inline", downloadSelectUI(ns("msa_lt_overall"))))
+            column(3, downloadButtonUI(ns("msa_lt_overall_dl"))),
+            column(6, tags$div(id = "inline1", class = "inline", downloadSelectUI(ns("msa_lt_overall_dl"))))
           ),
           tags$hr(style = "border-color: black;")
         ),
@@ -158,7 +158,7 @@ create_continuous_msa_ui_internal <- function(ns) {
             numericInput(
               inputId = ns("msa_as_measured"),
               label = "Enter Single As-Measured Reading to Estimate True Value",
-              value = NA,
+              value = NULL,
               width = "100%"
             ),
             DTOutput(ns("msa_linear_est"))

@@ -216,8 +216,8 @@ register_spc_cusum_server <- function(input, output, session, filtered_data, rea
   cusum_w <- reactive(400 * 8)
   cusum_h <- reactive(200 * 8)
   companion_h <- reactive(160 * 8)
-  downloadServer("cusum_chart_out", cusum_plot_gg, height = cusum_h, width = cusum_w)
-  downloadServer("cusum_companion_out", companion_plot_gg, height = companion_h, width = cusum_w)
+  downloadServer("cusum_chart_out_dl", cusum_plot_gg, height = cusum_h, width = cusum_w)
+  downloadServer("cusum_companion_out_dl", companion_plot_gg, height = companion_h, width = cusum_w)
 
   output$cusum_summary_out <- renderUI({
     result <- cusum_result()

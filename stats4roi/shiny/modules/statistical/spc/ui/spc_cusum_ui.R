@@ -36,7 +36,7 @@ create_spc_cusum_ui_internal <- function(ns) {
       h4("2. CUSUM Parameters"),
       dropdown(
         tags$h4("Parameters"),
-        numericInput(ns("spc_cusum_target"), "Target", value = NA, width = "120px"),
+        numericInput(ns("spc_cusum_target"), "Target", value = NULL, width = "120px"),
         numericInput(
           ns("spc_cusum_k"),
           "k (usually 0.5 to 1)",
@@ -115,8 +115,8 @@ create_spc_cusum_ui_internal <- function(ns) {
       ),
       HTML("<p style='text-align:right;'><small>Mouse over for point information</small></p>"),
       fluidRow(
-        column(3, downloadButtonUI(ns("cusum_chart_out"))),
-        column(3, tags$div(class = "inline", downloadSelectUI(ns("cusum_chart_out"))))
+        column(3, downloadButtonUI(ns("cusum_chart_out_dl"))),
+        column(3, tags$div(class = "inline", downloadSelectUI(ns("cusum_chart_out_dl"))))
       ),
       br(),
       fluidRow(
@@ -180,8 +180,8 @@ create_spc_cusum_ui_internal <- function(ns) {
         hr(style = "border-top: 1px solid #000000;"),
         plotOutput(ns("cusum_companion_out"), height = "280px"),
         fluidRow(
-          column(3, downloadButtonUI(ns("cusum_companion_out"))),
-          column(3, tags$div(class = "inline", downloadSelectUI(ns("cusum_companion_out"))))
+          column(3, downloadButtonUI(ns("cusum_companion_out_dl"))),
+          column(3, tags$div(class = "inline", downloadSelectUI(ns("cusum_companion_out_dl"))))
         )
       ),
       conditionalPanel(

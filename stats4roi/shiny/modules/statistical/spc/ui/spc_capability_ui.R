@@ -43,19 +43,19 @@ create_spc_capability_ui_internal <- function(ns) {
             numericInput(
               inputId = ns("cap_usl"),
               label = "USL:",
-              value = NA,
+              value = NULL,
               width = "75px"
             ),
             numericInput(
               inputId = ns("cap_target"),
               label = "Target:",
-              value = NA,
+              value = NULL,
               width = "75px"
             ),
             numericInput(
               inputId = ns("cap_lsl"),
               label = "LSL:",
-              value = NA,
+              value = NULL,
               width = "75px"
             )
           )
@@ -92,13 +92,13 @@ create_spc_capability_ui_internal <- function(ns) {
               numericInput(
                 inputId = ns("cap_upl"),
                 label = "Upper Process Limit:",
-                value = NA,
+                value = NULL,
                 width = "75px"
               ),
               numericInput(
                 inputId = ns("cap_lpl"),
                 label = "Lower Process Limit:",
-                value = NA,
+                value = NULL,
                 width = "75px"
               ),
               numericInput(

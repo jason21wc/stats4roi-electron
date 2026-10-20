@@ -129,18 +129,18 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
         # Reset Distribution Fitting inputs
         updatePickerInput(session, "dfit_column", selected = character(0))
-        updateNumericInput(session, "dfit_lsl", value = NA)
-        updateNumericInput(session, "dfit_target", value = NA)
-        updateNumericInput(session, "dfit_usl", value = NA)
+        updateNumericInput(session, "dfit_lsl", value = NULL)
+        updateNumericInput(session, "dfit_target", value = NULL)
+        updateNumericInput(session, "dfit_usl", value = NULL)
         updateSelectInput(session, "dfit_distribution", selected = 0)
         updateSelectInput(session, "dfit_plot_tab", selected = "histogram")
 
         # Reset Process Performance Analysis inputs
         updateCheckboxInput(session, "ppa_show_spec_limits", value = TRUE)
         updateCheckboxInput(session, "ppa_run_chart", value = FALSE)
-        updateNumericInput(session, "ppa_lsl", value = NA)
-        updateNumericInput(session, "ppa_target", value = NA)
-        updateNumericInput(session, "ppa_usl", value = NA)
+        updateNumericInput(session, "ppa_lsl", value = NULL)
+        updateNumericInput(session, "ppa_target", value = NULL)
+        updateNumericInput(session, "ppa_usl", value = NULL)
         updatePickerInput(session, "ppa_response", selected = character(0))
         updatePickerInput(session, "ppa_sample_id", selected = ppa_sample_time_order_id())
         updatePickerInput(session, "ppa_stream_factors", selected = character(0))
@@ -556,8 +556,19 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
     # -------------------------------------------------------------------------
     plot_data_r <- reactiveVal(NULL)
     plot_data_change <- reactiveVal(0)
+    # Plain env (not reactiveVal): filled when x_chart_out finishes. Writing a
+    # reactiveVal from on.exit still runs mid-reactive and can re-enter outputs.
+    x_chart_last <- new.env(parent = emptyenv())
+    x_chart_last$data <- NULL
 
     x_chart_out <- reactive({
+      # Collect plot-table payload locally; never write reactiveVals here.
+      spc_payload <- new.env(parent = emptyenv())
+      spc_payload$data <- NULL
+      on.exit({
+        x_chart_last$data <- spc_payload$data
+      }, add = TRUE)
+
       data <- filtered_data()
       req(data)
 
@@ -586,7 +597,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       column_defined_subgroups <- !isTRUE(ind_chart) && identical(as.numeric(data_type), 2)
 
       if (any(is.na(UI1)) || any(UI1 < 1) || any(UI1 > ncol(data))) {
-        plot_data_r(NULL)
+        spc_payload$data <- NULL
         return(
           ggplot() +
             theme_void() +
@@ -616,7 +627,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         } else {
           req(UI2)
           if (any(is.na(UI2)) || any(UI2 < 1) || any(UI2 > ncol(data))) {
-            plot_data_r(NULL)
+            spc_payload$data <- NULL
             return(
               ggplot() +
                 theme_void() +
@@ -671,7 +682,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       if (is.factor(d$Data)) d$Data <- as.character(d$Data)
       d$Data <- suppressWarnings(as.numeric(d$Data))
       if (all(is.na(d$Data))) {
-        plot_data_r(NULL)
+        spc_payload$data <- NULL
         return(
           ggplot() +
             theme_void() +
@@ -826,7 +837,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         )
         colnames(hoverdata) <- c("x_pos", "x_label", "n_sample", "set", "measure", "centerline")
 
-        plot_data_r(data.frame(
+        spc_payload$data <- data.frame(
           x_pos = hoverdata$x_pos,
           x_label = hoverdata$x_label,
           facet = "Run Chart",
@@ -853,7 +864,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
           consec_c = NA,
           consec_ab = NA,
           zone_a_b = NA
-        ))
+        )
 
         return(p)
       }
@@ -2624,7 +2635,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
 
       # Guard if unsupported limit options are selected
       if (is.null(plot_data) || is.null(plot_data_disp) || is.null(control_vio_x) || is.null(control_vio_disp)) {
-        plot_data_r(NULL)
+        spc_payload$data <- NULL
         return(
           ggplot() +
             theme_void() +
@@ -2721,8 +2732,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         zone_a_b,
         plot_order
       )
-      # Avoid invalidating this reactive via self-dependency on plot_data_r()
-      plot_data_change(isolate(plot_data_change()) + 1)
+      # plot_data_change is bumped in on.exit after payload is finalized
 
       ooc_x <- input$ooc_rules_x
       ooc_disp <- input$ooc_rules_disp
@@ -2745,7 +2755,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       }
 
       if (is.null(plot_data_p) || nrow(plot_data_p) == 0 || all(is.na(plot_data_p$measure))) {
-        plot_data_r(plot_data_p)
+        spc_payload$data <- plot_data_p
         return(
           ggplot() +
             theme_void() +
@@ -2906,7 +2916,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         p <- p + geom_point(aes(y = zone_a_b), color = color[2], shape = 8, na.rm = TRUE)
       }
 
-      plot_data_r(plot_data_p)
+      spc_payload$data <- plot_data_p
       p
     })
 
@@ -2915,9 +2925,16 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       p
     })
 
+    # Publish hover/table payload after the chart reactive has fully settled.
+    observeEvent(x_chart_out(), {
+      plot_data_r(x_chart_last$data)
+      plot_data_change(isolate(plot_data_change()) + 1L)
+    }, ignoreNULL = FALSE)
+
     xchartout_width <- reactive(400 * 8)
     xchartout_height <- reactive(200 * 8)
-    downloadServer("xchartout", x_chart_out, height = xchartout_height, width = xchartout_width)
+    # Download module id must NOT match plot output id (avoids ns recursion / stack overflow)
+    downloadServer("xchartout_dl", x_chart_out, height = xchartout_height, width = xchartout_width)
 
     output$hover_info_x <- renderUI({
       hover <- input$plot_hover
@@ -2951,17 +2968,14 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
     })
 
     output$xbar_table_out <- DT::renderDataTable({
-      dat <- plot_data_r()
-      if (is.null(dat)) {
-        x_chart_out()
-        dat <- plot_data_r()
-      }
+      # Depend on chart only; payload is in plain env set by x_chart_out on.exit.
+      x_chart_out()
+      dat <- x_chart_last$data
       req(dat)
       R <- input$spc_x_anova_decimals
       dat <- lolcat::round.object(dat, digits = R)
       DT::datatable(data = dat, options = list(dom = "t", paging = FALSE), rownames = FALSE)
     })
-    outputOptions(output, "xbar_table_out", suspendWhenHidden = FALSE)
 
     output$limit_analysis_x <- renderUI({
       data <- filtered_data()
@@ -3817,16 +3831,16 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
       if (loc_type != 3) return(NULL)
 
       if (chart == 1) {
-        return(numericInput(inputId = ns("known_param"), label = "Enter \u03c0", value = NA, min = 0, max = 1))
+        return(numericInput(inputId = ns("known_param"), label = "Enter \u03c0", value = NULL, min = 0, max = 1))
       }
       if (chart == 2) {
-        return(numericInput(inputId = ns("known_param"), label = "Enter n\u03c0", value = NA, min = 0, max = 1))
+        return(numericInput(inputId = ns("known_param"), label = "Enter n\u03c0", value = NULL, min = 0, max = 1))
       }
       if (chart == 3) {
-        return(numericInput(inputId = ns("known_param"), label = "Enter \u03bb", value = NA, min = 0))
+        return(numericInput(inputId = ns("known_param"), label = "Enter \u03bb", value = NULL, min = 0))
       }
       if (chart == 4) {
-        return(numericInput(inputId = ns("known_param"), label = "Enter \u03bb/n", value = NA, min = 0))
+        return(numericInput(inputId = ns("known_param"), label = "Enter \u03bb/n", value = NULL, min = 0))
       }
       NULL
     })
@@ -3863,16 +3877,17 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
     # -------------------------------------------------------------------------
     att_plot_data_r <- reactiveVal(NULL)
     plot_data_change_att <- reactiveVal(0)
-
-    output$attchartout <- renderPlot({
-      att_chart_out()
-    })
-
-    attchartout_width <- reactive(400 * 8)
-    attchartout_height <- reactive(400 * 4)
-    downloadServer("attchartout", att_chart_out, width = attchartout_width, height = attchartout_height)
+    att_chart_last <- new.env(parent = emptyenv())
+    att_chart_last$data <- NULL
 
     att_chart_out <- reactive({ # start attribute plot
+      # Collect payload locally; never write reactiveVals mid-reactive (see x_chart_out).
+      att_payload <- new.env(parent = emptyenv())
+      att_payload$data <- NULL
+      on.exit({
+        att_chart_last$data <- att_payload$data
+      }, add = TRUE)
+
       data <- filtered_data()
       req(data)
 
@@ -4413,8 +4428,7 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         consec_ab,
         zone_a_b
       )
-      isolate(att_plot_data_r(att_plot_data_full))
-      isolate(plot_data_change_att(plot_data_change_att() + 1))
+      att_payload$data <- att_plot_data_full
       att_plot_data_p <- att_plot_data_full
 
       ooc_att <- input$ooc_rules_att
@@ -4604,22 +4618,33 @@ create_spc_server <- function(id, filtered_data, reactive_color_palette) {
         return()
       }
 
-      isolate(att_plot_data_r(att_plot_data_p))
+      att_payload$data <- att_plot_data_p
       p
     })
 
+    output$attchartout <- renderPlot({
+      att_chart_out()
+    })
+
+    # Publish hover/table payload after the attribute chart reactive has settled.
+    observeEvent(att_chart_out(), {
+      att_plot_data_r(att_chart_last$data)
+      plot_data_change_att(isolate(plot_data_change_att()) + 1L)
+    }, ignoreNULL = FALSE)
+
+    attchartout_width <- reactive(400 * 8)
+    attchartout_height <- reactive(400 * 4)
+    # Download module id must NOT match plot output id
+    downloadServer("attchartout_dl", att_chart_out, width = attchartout_width, height = attchartout_height)
+
     output$att_table_out <- DT::renderDataTable({
-      dat <- att_plot_data_r()
-      if (is.null(dat)) {
-        att_chart_out()
-        dat <- att_plot_data_r()
-      }
+      att_chart_out()
+      dat <- att_chart_last$data
       req(dat)
       R <- input$spc_att_decimals
       dat <- lolcat::round.object(dat, digits = R)
       DT::datatable(data = dat, options = list(dom = "t", paging = FALSE), rownames = FALSE)
     })
-    outputOptions(output, "att_table_out", suspendWhenHidden = FALSE)
 
     output$hover_info_att <- renderUI({
       req(input$spc_att_loc_type)

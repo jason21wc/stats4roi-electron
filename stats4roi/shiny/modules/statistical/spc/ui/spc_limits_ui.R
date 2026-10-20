@@ -596,7 +596,7 @@ create_spc_limits_ui_internal <- function(ns) {
           numericInput(
             inputId = ns("kappa_cap_cp"),
             label = "Highest CP",
-            value = NA,
+            value = NULL,
             min = 0,
             max = 1
           )

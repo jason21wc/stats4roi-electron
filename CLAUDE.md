@@ -51,7 +51,7 @@ to start under the wrong Node and prints the `PATH` line to fix it. See ARCHITEC
 
 ## Quick Reference
 
-- **Version:** 4.3.3
+- **Version:** 4.3.6
 - **Status:** Production
 - **Upstream:** [professorperegrine/stats4ROI](https://github.com/ProfessorPeregrine/stats4ROI) (READ ONLY)
 - **Owner:** Steven Ouellette (all R/Shiny code)

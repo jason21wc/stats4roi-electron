@@ -700,7 +700,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
 
   ppa_plot_h <- reactive(300 * 4)
   ppa_plot_w <- reactive(400 * 4)
-  downloadServer("ppa_stacked_bar", reactive({
+  downloadServer("ppa_stacked_bar_dl", reactive({
     result <- ppa_result()
     req(result)
     opts <- ppa_plot_opts()
@@ -712,7 +712,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
       opts$base_size
     )
   }), width = ppa_plot_w, height = reactive(360 * 4))
-  downloadServer("ppa_opportunity_bar", reactive({
+  downloadServer("ppa_opportunity_bar_dl", reactive({
     result <- ppa_result()
     spec <- ppa_spec_reactive()
     req(result)
@@ -728,7 +728,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
       opts$base_size
     )
   }), width = ppa_plot_w, height = reactive(340 * 4))
-  downloadServer("ppa_histogram", reactive({
+  downloadServer("ppa_histogram_dl", reactive({
     prepared <- ppa_prepared()
     spec <- ppa_spec_reactive()
     mappings <- ppa_mappings()
@@ -752,7 +752,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
       show_spec_limits = opts$show_spec_limits
     )
   }), width = ppa_plot_w, height = ppa_plot_h)
-  downloadServer("ppa_boxplot", reactive({
+  downloadServer("ppa_boxplot_dl", reactive({
     prepared <- ppa_prepared()
     spec <- ppa_spec_reactive()
     mappings <- ppa_mappings()
@@ -769,7 +769,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
       show_spec_limits = opts$show_spec_limits
     )
   }), width = ppa_plot_w, height = reactive(320 * 4))
-  downloadServer("ppa_run_chart_plot", reactive({
+  downloadServer("ppa_run_chart_plot_dl", reactive({
     prepared <- ppa_prepared()
     spec <- ppa_spec_reactive()
     mappings <- ppa_mappings()
@@ -795,7 +795,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
       show_spec_limits = opts$show_spec_limits
     )
   }), width = ppa_plot_w, height = ppa_plot_h)
-  downloadServer("ppa_dispersion_chart", reactive({
+  downloadServer("ppa_dispersion_chart_dl", reactive({
     if (isTRUE(input$ppa_run_chart)) {
       return(NULL)
     }
@@ -807,7 +807,7 @@ register_spc_ppa_server <- function(input, output, session, filtered_data, react
       base_size = ppa_plot_opts()$base_size
     )
   }), width = ppa_plot_w, height = reactive(260 * 4))
-  downloadServer("ppa_variance_bar", reactive({
+  downloadServer("ppa_variance_bar_dl", reactive({
     result <- ppa_result()
     req(result)
     opts <- ppa_plot_opts()

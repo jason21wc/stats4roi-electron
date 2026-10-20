@@ -37,10 +37,31 @@ for (pkg in packages_to_install) {
 
 print("Base packages installed. Now installing GitHub packages...")
 
-# Install GitHub packages
-if (!require("lolcat", quietly = TRUE)) {
-  print("Installing lolcat from GitHub...")
-  remotes::install_github("burrm/lolcat", quiet = FALSE)
+# lolcat MUST be the pinned commit, not merely present.
+#
+# stats4ROI v4.36 calls functions added after lolcat's 2.0.2 version bump
+# (power/sample.size.cor.pearson.r.onesample.exact), so neither presence nor the
+# version number identifies a usable build. Gate on the installed commit SHA.
+# Bump LOLCAT_SHA when Steve's upstream needs a newer lolcat.
+LOLCAT_SHA <- "f0b8af6d3385b21c39fa9446bb241435a2abd31c"
+
+lolcat_is_pinned <- function() {
+  isTRUE(tryCatch(
+    utils::packageDescription("lolcat")$RemoteSha == LOLCAT_SHA,
+    error = function(e) FALSE
+  ))
+}
+
+if (!lolcat_is_pinned()) {
+  print(paste("Installing lolcat from GitHub at", substr(LOLCAT_SHA, 1, 7), "..."))
+  remotes::install_github(paste0("burrm/lolcat@", LOLCAT_SHA),
+                          upgrade = "never", force = TRUE, quiet = FALSE)
+  if (!lolcat_is_pinned()) {
+    stop("lolcat is not the pinned commit ", LOLCAT_SHA, " after install. ",
+         "Sample Size/Power Pearson r calculations will fail.")
+  }
+} else {
+  print("lolcat is already the pinned commit")
 }
 
 # propagate MUST be Steve's Shiny fork, not CRAN.

@@ -10,7 +10,7 @@
 | Name | stats4roi-electron |
 | Purpose | Electron wrapper for stats4ROI R Shiny application |
 | Target Platform | Apple Silicon Macs (ARM64) |
-| Current Version | 4.3.3 |
+| Current Version | 4.3.6 |
 | Status | Production |
 
 ## Specification Summary
@@ -25,6 +25,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Bundle R 4.5.1 runtime | Self-contained app; no user R installation required | 2024-01-24 |
 | Apple Silicon only | Simplifies build; Intel builds possible but not prioritized | 2024-01-24 |
 | One-way sync from upstream | We package, Steve develops; no code modifications | 2024-01-24 |
+| Pin lolcat by commit SHA (`LOLCAT_SHA` in `install_stats4roi_packages.R`) | lolcat's 2.0.2 version bump (2026-10-03) predates the exact Pearson r functions v4.36 calls, so presence and version both pass on a build that fails in Sample Size/Power. Gate on `RemoteSha`, hard-fail after install. Pinned `burrm/lolcat@f0b8af6`, Mike's merge of Steve's fork; zero file diff from Steve's fork head `92a9910` | 2026-10-19 |
 
 ## Technical Stack
 
@@ -63,6 +64,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Gatekeeper blocks first launch | Right-click → Open, or run `xattr -cr /Applications/stats4ROI.app` |
 | "Damaged" warning on download | Same as above — extended attributes issue |
 | Slow first launch | Normal; R runtime initializing (~10-15 seconds) |
+| `r-mac/bin/R -e '...'` reports `'\.' is an unrecognized escape` | The `bin/R` wrapper strips one level of backslashes from `-e` arguments. Put ad-hoc checks in a script file and run `bin/R -f <file>`, or write `[.]` instead of `\\.` |
 
 ## Phase Gates
 
@@ -80,6 +82,7 @@ Wrap Steven Ouellette's stats4ROI R Shiny application in Electron for standalone
 | Upstream Sync v4.3.3 (EDA factor fix, boxplot hover, seeded random columns) | Complete — released | 2026-09-03 |
 | propagate fork rebuilt under bundled R; fork script uses bin/R + build-version check | Complete | 2026-09-03 |
 | Build Node pinned and enforced (.nvmrc + engine-strict + premake gate) | Complete | 2026-09-03 |
+| Upstream Sync v4.3.6 (v4.36: deferred module loading, exact Pearson r power, Wilcoxon CIs; lolcat 2.0.0 → 2.0.2 @ f0b8af6) | Built and verified — awaiting hand-test | 2026-10-19 |
 | AI-context migrated to `_ai-context/` unified layout | Complete | 2026-07-25 |
 | propagate fork install automated + presence-check bug fixed | Complete | 2026-07-25 |
 
@@ -130,12 +133,38 @@ grep -rhoE "(library|require|requireNamespace)\(['\"]?[A-Za-z0-9._]+" "$UP" --in
 grep -rhoE "\b[A-Za-z][A-Za-z0-9._]*::" "$UP" --include="*.R" | sed 's/:://' | sort -u
 # ...then confirm each name exists in stats4roi/r-mac/library/
 
-# 2. lolcat supplies most stats primitives. Present != new enough.
+# 2. lolcat supplies most stats primitives. Present != new enough, and version !=
+#    new enough. Most calls are UNQUALIFIED (library(lolcat) is attached), so the
+#    lolcat:: grep below misses them.
 grep -rhoE "lolcat::[A-Za-z0-9._]+" "$UP" --include="*.R" | sed 's/lolcat:://' | sort -u
-# ...diff against getNamespaceExports("lolcat") in the BUNDLED runtime
+# ...diff against getNamespaceExports("lolcat") in the BUNDLED runtime, then:
+#    install the candidate lolcat into a scratch lib with bundled `bin/R CMD INSTALL -l`,
+#    diff getNamespaceExports() old vs new, and grep "$UP" for each ADDED name.
+#    Never parse NAMESPACE text: lolcat uses exportPattern(), so a text parse is empty.
+# 3. Which lolcat does Steve build on? Check his email and
+#    `gh api repos/burrm/lolcat/compare/<pinned>...ProfessorPeregrine:lolcat:master`;
+#    bump LOLCAT_SHA in install_stats4roi_packages.R if his tests need newer commits.
 ```
 
 Quote the `--include="*.R"` glob or zsh fails with "no matches found".
+
+**Deferred module loading (upstream v4.36+).** `app.R` loads only core packages and the
+data pipeline. Feature modules and their packages (tidyverse, propagate, emmeans, nlme,
+car, bayestestR, bayesboot, agop, ggh4x) are sourced on first tab visit or by idle
+prefetch through `modules/config/deferred_module_loader.R`. Consequences for a sync:
+a missing package or function now fails in one tab at first use, not at launch, so a
+launch smoke test proves little on its own. The sync gate is (a) source every module
+eagerly by setting `options(stats4roi.run_deferred_manifest = TRUE)` before the
+`app.R` prefix (upstream's own switch), and (b) upstream `tools/smoke_deferred_load.R`,
+which activates all 32 tabs under `testServer`. The propagate-fork warning moved from
+`app.R` to `scatterplot_server.R`, so it appears only once that module loads.
+
+**Where to run upstream tests:** first confirm `diff -rq <upstream>/modules
+<upstream>/deployment/modules` reports only `Only in <root>` lines (no `differ`). Then
+run testthat from upstream's root with bundled R. A harness built from `deployment/`
+lacks fixtures and errors on roughly 20 files. To decide whether a failure is ours,
+rerun it with the previous lolcat first on `R_LIBS`; identical results mean it predates
+the sync. See LEARNING-LOG 2026-10-19.
 
 ## Release Procedure
 
@@ -220,6 +249,9 @@ rather than skipping.
 
 **Verify:** `./ensure-propagate-fork.sh --check` exits 0, and the `npm start` log
 must NOT contain "does not appear to be the Shiny fork" or "was built under R version".
+Since v4.36 the fork warning lives in `scatterplot_server.R` and fires only once that
+module is sourced (first Correlation tab visit, or idle prefetch after a browser
+session connects), so a bare HTTP probe never triggers it — rely on `--check`.
 
 ## R Runtime Dynamic-Library Containment (CRITICAL)
 
@@ -235,4 +267,4 @@ Verify a packaged launch with `lsof -p <R-pid>`: `libR.dylib`, BLAS, and gfortra
 map from inside `stats4ROI.app`, never `/Library/Frameworks/R.framework`.
 
 ---
-*Last Updated: 2026-09-03*
+*Last Updated: 2026-10-19*

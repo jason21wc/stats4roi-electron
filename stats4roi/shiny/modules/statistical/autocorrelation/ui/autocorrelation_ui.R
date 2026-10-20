@@ -30,7 +30,7 @@ create_autocorrelation_ui_internal <- function(ns) {
         numericInput(
           inputId = ns("acf_lag_max"),
           label = "Max lag (empty = default)",
-          value = NA,
+          value = NULL,
           min = 1,
           step = 1,
           width = "160px"

@@ -129,23 +129,97 @@ build_normality_test_selection <- function(test) {
   test_sel
 }
 
+# Auto-select normality tests by sample size.
+# lolcat defaults (stat.*=1) still run skew/kurt for n<25; unused tests must be set to 0.
+# Rule: n < 25 → Anderson-Darling + Shapiro-Wilk only; n >= 25 → skewness + kurtosis only.
+normality_auto_summary_all_variables <- function(clean_df) {
+  n_valid <- sum(!is.na(clean_df[[1]]))
+  if (n_valid < 25) {
+    summary.all.variables(
+      data = clean_df,
+      stat.sd = TRUE,
+      stat.ad.test = 2,
+      stat.sw.test = 2,
+      stat.skew.test = 0,
+      stat.kurt.test = 0
+    )
+  } else {
+    summary.all.variables(
+      data = clean_df,
+      stat.sd = TRUE,
+      stat.ad.test = 0,
+      stat.sw.test = 0,
+      stat.skew.test = 2,
+      stat.kurt.test = 2
+    )
+  }
+}
+
+# Factor-mode auto: pick per-group tests by that group's n (lolcat cannot do this in one call).
+normality_factor_auto_summary <- function(model_text, data) {
+  out_small <- summary.continuous(
+    fx = model_text,
+    data = data,
+    stat.sd = TRUE,
+    stat.ad.test = 2,
+    stat.sw.test = 2,
+    stat.skew.test = 0,
+    stat.kurt.test = 0
+  )
+  out_large <- summary.continuous(
+    fx = model_text,
+    data = data,
+    stat.sd = TRUE,
+    stat.ad.test = 0,
+    stat.sw.test = 0,
+    stat.skew.test = 2,
+    stat.kurt.test = 2
+  )
+  
+  if (is.null(out_small) || nrow(out_small) == 0) {
+    return(out_small)
+  }
+  
+  test_stat_cols <- c(
+    "adtest.AA", "adtest.p", "swtest.W", "swtest.p",
+    "g3.skewness", "g3test.p", "g4.kurtosis", "g4test.p"
+  )
+  base_cols <- setdiff(union(names(out_small), names(out_large)), test_stat_cols)
+  
+  # Ensure both frames have the full test column set (NA-fill missing).
+  for (col in test_stat_cols) {
+    if (!col %in% names(out_small)) out_small[[col]] <- NA
+    if (!col %in% names(out_large)) out_large[[col]] <- NA
+  }
+  
+  out <- out_small[, c(intersect(base_cols, names(out_small)), test_stat_cols), drop = FALSE]
+  # Prefer out_large base stats where available (same groups); keep group keys from small.
+  for (col in intersect(base_cols, names(out_large))) {
+    if (col %in% names(out) && col %in% names(out_large)) {
+      out[[col]] <- out_large[[col]]
+    }
+  }
+  # n comes from either; they should match — use small's n for the threshold decision.
+  n_vec <- if ("n" %in% names(out_small)) out_small$n else rep(0, nrow(out_small))
+  for (i in seq_len(nrow(out))) {
+    if (!is.na(n_vec[i]) && n_vec[i] >= 25) {
+      for (col in test_stat_cols) {
+        out[[col]][i] <- out_large[[col]][i]
+      }
+    } else {
+      for (col in test_stat_cols) {
+        out[[col]][i] <- out_small[[col]][i]
+      }
+    }
+  }
+  # Drop all-NA test columns (when every group used the other family).
+  keep_test <- vapply(test_stat_cols, function(col) any(!is.na(out[[col]])), logical(1))
+  out[, c(intersect(base_cols, names(out)), test_stat_cols[keep_test]), drop = FALSE]
+}
+
 normality_pooled_summary <- function(pooled_dat, auto, test, output) {
   if (auto) {
-    if ("g3test.p" %in% names(output) || "g4test.p" %in% names(output)) {
-      summary.all.variables(
-        data = pooled_dat,
-        stat.sd = TRUE,
-        stat.skew.test = 2,
-        stat.kurt.test = 2
-      )
-    } else {
-      summary.all.variables(
-        data = pooled_dat,
-        stat.sd = TRUE,
-        stat.ad.test = 2,
-        stat.sw.test = 2
-      )
-    }
+    normality_auto_summary_all_variables(pooled_dat)
   } else {
     test_sel <- build_normality_test_selection(test)
     eval(parse(text = paste(

@@ -339,7 +339,7 @@ register_spc_dfit_server <- function(
 
   dfit_plot_width <- reactive(900 * 8)
   dfit_plot_height <- reactive(420 * 8)
-  downloadServer("dfit_plot", dfit_plot_gg, height = dfit_plot_height, width = dfit_plot_width)
+  downloadServer("dfit_plot_dl", dfit_plot_gg, height = dfit_plot_height, width = dfit_plot_width)
 
   output$dfit_calc_out <- renderUI({
     if (length(dfit_active_x()) < 2L) {

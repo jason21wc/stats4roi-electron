@@ -259,18 +259,11 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
       
       choices <- seq_len(ncol(data))
       names(choices) <- names(data)
-      data_type <- eda_data_type()
+      # Radio may not be initialized yet on first deferred paint
+      data_type <- suppressWarnings(as.numeric(eda_data_type()))
+      if (length(data_type) == 0 || is.na(data_type)) data_type <- 1
       
-      if (data_type == 1) {
-        # Analyze columns - show column picker
-        pickerInput(
-          inputId = ns("eda_UI1"),
-          label = "Select Columns",
-          multiple = TRUE,
-          options = list(`actions-box` = TRUE),
-          choices = choices
-        )
-      } else if (data_type == 2) {
+      if (identical(data_type, 2)) {
         # Analyze by factors - show factor picker
         pickerInput(
           inputId = ns("eda_UI1"),
@@ -279,8 +272,19 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
           options = list(`actions-box` = TRUE),
           choices = choices
         )
+      } else {
+        # Analyze columns - show column picker (default)
+        pickerInput(
+          inputId = ns("eda_UI1"),
+          label = "Select Columns",
+          multiple = TRUE,
+          options = list(`actions-box` = TRUE),
+          choices = choices
+        )
       }
     })
+    # Nested under deferred renderUI — must not wait for client visibility
+    outputOptions(output, "eda_UI1", suspendWhenHidden = FALSE)
     
     # =========================================================================
     # UI2 SELECTION (following distribution testing pattern exactly)
@@ -291,11 +295,12 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
       
       choices <- seq_len(ncol(data))
       names(choices) <- names(data)
-      data_type <- eda_data_type()
+      data_type <- suppressWarnings(as.numeric(eda_data_type()))
+      if (length(data_type) == 0 || is.na(data_type)) data_type <- 1
       UI1 <- input$eda_UI1
       
       # Only show second UI for factor analysis
-      if (data_type == 2 && !is.null(UI1) && length(UI1) > 0) {
+      if (identical(data_type, 2) && !is.null(UI1) && length(UI1) > 0) {
         # Analyze by factors - show data column picker (excluding selected factors)
         fact_selected <- as.numeric(UI1)
         temp <- seq_along(choices)
@@ -311,6 +316,7 @@ create_eda_server <- function(id, filtered_data, reactive_color_palette) {
         )
       }
     })
+    outputOptions(output, "eda_UI2", suspendWhenHidden = FALSE)
     
     # =========================================================================
     # PROCESSED DATA REACTIVE (following distribution testing pattern)

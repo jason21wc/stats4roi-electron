@@ -102,6 +102,7 @@ choice_np_alt_text <- c(
 
 source("modules/statistical/one_two_sample_tests/ots_group_utils.R")
 source("modules/statistical/one_two_sample_tests/utils/runs_test.R")
+source("modules/statistical/one_two_sample_tests/utils/np_location_proportion_cis.R")
 
 # Source sub-module UI components - Adding back step by step
 source("modules/statistical/one_two_sample_tests/ui/test_reference_ui.R")
@@ -2334,12 +2335,6 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       }
     })
     
-    # Set choice vectors for alternative hypothesis selectors
-    observe({
-      updateSelectInput(session, "alt_p", choices = choice_prop_alt_1)
-      updateSelectInput(session, "alt_p2", choices = choice_prop_alt_2)
-    })
-    
     # Render Enter Statistics results
     output$pretty_prop_stat <- renderUI({
       results <- proportions_result$prop_out()
@@ -2752,13 +2747,15 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         selectInput(
           inputId = ns("alt_p_bi"),
           label = "Alternative hypothesis for proportions",
-          choices = choice_prop_alt_1
+          choices = choice_prop_alt_1,
+          selected = "two.sided"
         )
       } else if (samples == 2) {
         selectInput(
           inputId = ns("alt_p_bi"),
           label = "Alternative hypothesis for proportions",
-          choices = choice_prop_alt_2
+          choices = choice_prop_alt_2,
+          selected = "two.sided"
         )
       }
     })
@@ -2932,12 +2929,6 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         )
       })
     )
-    
-    # Set choice vectors for alternative hypothesis selectors
-    observe({
-      updateSelectInput(session, "alt_poi", choices = choice_poi_alt_1)
-      updateSelectInput(session, "alt_poi_2", choices = choice_poi_alt_2)
-    })
     
     # Render Enter Statistics results
     output$pretty_poi_stat <- renderUI({
@@ -3342,13 +3333,15 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         selectInput(
           inputId = ns("alt_poi_data"),
           label = "Alternative hypothesis for rates",
-          choices = choice_poi_alt_1
+          choices = choice_poi_alt_1,
+          selected = "two.sided"
         )
       } else if (samples == 2) {
         selectInput(
           inputId = ns("alt_poi_data"),
           label = "Alternative hypothesis for rates",
-          choices = choice_poi_alt_2
+          choices = choice_poi_alt_2,
+          selected = "two.sided"
         )
       }
     })
@@ -3861,6 +3854,10 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       
       # Test 1: One-sample sign test
       if (np_tests == 1) {
+        req(npUI1, npUI5)
+        prop_cis <- np_location_proportion_cis(n_above = npUI1, n_below = npUI5, conf.level = conf)
+        ci_above_r <- round(prop_cis$ci_above, R)
+        ci_below_r <- round(prop_cis$ci_below, R)
         HTML(c(
           paste("<b>Sign Test for Location</b><br>", "<b>", "Method: ", resultsR$method, "</b>"),
           "<br><br>",
@@ -3887,10 +3884,16 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", paste("Test for proportion below = ", resultsR$parameter), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\pi_{below} :$")), "</td>",
-          "<td>", resultsR$conf.int[1], "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", withMathJax("$\\pi_{above} :$")), "</td>",
+          "<td>", ci_above_r[1], "</td>",
           "<td>", " to ", "</td>",
-          "<td>", resultsR$conf.int[2], "</td>",
+          "<td>", ci_above_r[2], "</td>",
+          "</tr>",
+          "<tr>",
+          "<td align='right'>", paste(withMathJax("$\\pi_{below} :$")), "</td>",
+          "<td>", ci_below_r[1], "</td>",
+          "<td>", " to ", "</td>",
+          "<td>", ci_below_r[2], "</td>",
           "</tr>",
           "</table>",
           "<table>",
@@ -3917,11 +3920,6 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "</tr>",
           "<tr>",
           "<td>", paste(withMathJax("$n_{Adj.} = $"), resultsR$estimate[3]), "</td>",
-          "</tr>",
-          "</table>",
-          "<table>",
-          "<tr>",
-          "<td>", paste(conf * 100, "% confidence"), "</td>",
           "</tr>",
           "</table>",
           "<table>",
@@ -4727,6 +4725,16 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
       if (np_tests == 1) {
         req(np_groups, np_groups$g1)
         len <- length(na.omit(np_groups$g1$x))
+        n_above_sign <- as.numeric(resultsR$estimate[3])
+        n_below_sign <- as.numeric(resultsR$estimate[2]) - n_above_sign
+        R_data <- input$decimal_np_data
+        prop_cis <- np_location_proportion_cis(
+          n_above = n_above_sign,
+          n_below = n_below_sign,
+          conf.level = conf
+        )
+        ci_above_r <- round(prop_cis$ci_above, R_data)
+        ci_below_r <- round(prop_cis$ci_below, R_data)
         return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>Sign Test for Location</b><br>", "<b>", "Method: ", resultsR$method, "</b>"),
           "<br><br>",
@@ -4740,7 +4748,7 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; equal", len - resultsR$estimate[2]), "</td>",
           "</tr>",
           "<tr>",
-          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; below", resultsR$estimate[2] - resultsR$estimate[3]), "</td>",
+          "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; below", n_below_sign), "</td>",
           "</tr>",
           "<tr>",
           "<td>", ots_mj_mod_stat("n", np_groups$g1, "\\; observed", len), "</td>",
@@ -4754,9 +4762,15 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "</tr>",
           "<tr>",
           "<td>", paste(conf * 100, "% confidence interval for", ots_mj_mod_stat("\\pi", np_groups$g1, "\\; above")), "</td>",
-          "<td>", resultsR$conf.int[1], "</td>",
+          "<td>", ci_above_r[1], "</td>",
           "<td>", " to ", "</td>",
-          "<td>", resultsR$conf.int[2], "</td>",
+          "<td>", ci_above_r[2], "</td>",
+          "</tr>",
+          "<tr>",
+          "<td align='right'>", ots_mj_mod_stat("\\pi", np_groups$g1, "\\; below"), "</td>",
+          "<td>", ci_below_r[1], "</td>",
+          "<td>", " to ", "</td>",
+          "<td>", ci_below_r[2], "</td>",
           "</tr>",
           "</table>",
           "<table>",
@@ -4775,6 +4789,20 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
         req(np_groups, np_groups$g1)
         req(resultsR$method, resultsR$estimate, resultsR$statistic, resultsR$p.value)
         len <- length(na.omit(np_groups$g1$x))
+        location <- input$np_data_UI2
+        req(!is.null(location), is.finite(as.numeric(location)[1L]))
+        m0 <- as.numeric(location)[1L]
+        x_vals <- na.omit(np_groups$g1$x)
+        n_above_w <- sum(x_vals > m0)
+        n_below_w <- sum(x_vals < m0)
+        R_data <- input$decimal_np_data
+        prop_cis <- np_location_proportion_cis(
+          n_above = n_above_w,
+          n_below = n_below_w,
+          conf.level = conf
+        )
+        ci_above_r <- round(prop_cis$ci_above, R_data)
+        ci_below_r <- round(prop_cis$ci_below, R_data)
         return(ots_results_mathjax_wrap(ots_html_flatten(c(
           paste("<b>", "Method: ", resultsR$method, "</b>"),
           "<br><br>",
@@ -4792,7 +4820,16 @@ create_one_two_sample_tests_server <- function(id, filtered_data, reactive_color
           "</table>",
           "<table>",
           "<tr>",
-          "<td>", paste(conf * 100, "% confidence"), "</td>",
+          "<td>", paste(conf * 100, "% confidence interval for", ots_mj_mod_stat("\\pi", np_groups$g1, "\\; above")), "</td>",
+          "<td>", ci_above_r[1], "</td>",
+          "<td>", " to ", "</td>",
+          "<td>", ci_above_r[2], "</td>",
+          "</tr>",
+          "<tr>",
+          "<td align='right'>", ots_mj_mod_stat("\\pi", np_groups$g1, "\\; below"), "</td>",
+          "<td>", ci_below_r[1], "</td>",
+          "<td>", " to ", "</td>",
+          "<td>", ci_below_r[2], "</td>",
           "</tr>",
           "</table>",
           "<table>",

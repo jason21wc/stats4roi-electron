@@ -45,7 +45,8 @@ create_poisson_one_two_sample_ui <- function(ns) {
                 selectInput(
                   inputId = ns("alt_poi"),
                   label = "Alternative hypothesis for rates",
-                  choices = NULL  # Will be set in coordinator
+                  choices = choice_poi_alt_1,
+                  selected = "two.sided"
                 )
               )
             ),
@@ -56,7 +57,8 @@ create_poisson_one_two_sample_ui <- function(ns) {
                 selectInput(
                   inputId = ns("alt_poi_2"),
                   label = "Alternative hypothesis for rates",
-                  choices = NULL  # Will be set in coordinator
+                  choices = choice_poi_alt_2,
+                  selected = "two.sided"
                 )
               )
             )

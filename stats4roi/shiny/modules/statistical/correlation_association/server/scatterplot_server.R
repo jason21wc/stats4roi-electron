@@ -3,8 +3,17 @@
 # No UI rendering - that happens in the coordinator
 
 library(ggplot2)
-# Shiny-compatible fork required; CRAN propagate fails in Shiny (predictNLS). https://github.com/ProfessorPeregrine/propagate
-library(propagate)  # For predictNLS function
+# Shiny-compatible fork required; CRAN propagate fails in Shiny (predictNLS).
+# https://github.com/ProfessorPeregrine/propagate
+library(propagate)
+propagate_desc <- packageDescription("propagate")
+if (is.null(propagate_desc$RemoteUsername) || propagate_desc$RemoteUsername != "ProfessorPeregrine") {
+  warning(
+    "propagate does not appear to be the Shiny fork from ProfessorPeregrine. ",
+    "You may see 'predictNLS: Propagating predictor value...' messages and scatterplot fit errors. ",
+    "Fix: remove.packages('propagate'); remotes::install_github('ProfessorPeregrine/propagate')"
+  )
+}
 
 create_scatterplot_worker <- function(id, filtered_data, input_values, choice_corr_alt_text) {
   moduleServer(id, function(input, output, session) {

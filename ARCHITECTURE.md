@@ -72,7 +72,7 @@ Bundled R 4.5.1 installation for ARM64 macOS. Contains:
 
 | Path | Responsibility |
 |------|----------------|
-| `app.R` | Entry point; loads modules, defines UI/server |
+| `app.R` | Entry point; loads core packages and the data pipeline, defines UI/server. Since v4.36 feature modules load on first tab visit or idle prefetch (`modules/config/deferred_module_loader.R`) |
 | `modules/config/` | Global configuration, data invalidation |
 | `modules/data/` | Import, modification, filtering |
 | `modules/distributions/` | Probability distributions (Binomial, Normal, etc.) |
@@ -89,7 +89,7 @@ Most submodules follow a `<name>_module.R` entry point plus `ui/`, `server/`, an
 `utils/` subdirectories. `spc` is the largest, covering variables/attributes charts,
 CUSUM, EWMA, Process Performance Analysis, capability, and distribution fitting.
 
-**Codebase stats:** 170 module files, ~79,800 lines of R code (app.R + modules).
+**Codebase stats:** 172 module files, ~80,500 lines of R code (app.R + modules).
 
 ## Data Flow
 
@@ -159,4 +159,4 @@ The DMG maker calls macOS `hdiutil`, so this final step requires a build process
 working DiskArbitration in addition to workspace write access.
 
 ---
-*Last Updated: 2026-09-03 (v4.3.3 released)*
+*Last Updated: 2026-10-19 (v4.3.6 sync)*

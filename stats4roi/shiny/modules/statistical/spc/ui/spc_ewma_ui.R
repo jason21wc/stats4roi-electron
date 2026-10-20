@@ -36,7 +36,7 @@ create_spc_ewma_ui_internal <- function(ns) {
       h4("2. EWMA Parameters"),
       dropdown(
         tags$h4("Parameters"),
-        numericInput(ns("spc_ewma_target"), "Target", value = NA, width = "120px"),
+        numericInput(ns("spc_ewma_target"), "Target", value = NULL, width = "120px"),
         numericInput(
           ns("spc_ewma_alpha"),
           "\u03b1 (weight on current point)",
@@ -113,8 +113,8 @@ create_spc_ewma_ui_internal <- function(ns) {
       ),
       HTML("<p style='text-align:right;'><small>Mouse over for point information</small></p>"),
       fluidRow(
-        column(3, downloadButtonUI(ns("ewma_chart_out"))),
-        column(3, tags$div(class = "inline", downloadSelectUI(ns("ewma_chart_out"))))
+        column(3, downloadButtonUI(ns("ewma_chart_out_dl"))),
+        column(3, tags$div(class = "inline", downloadSelectUI(ns("ewma_chart_out_dl"))))
       ),
       br(),
       fluidRow(
@@ -164,8 +164,8 @@ create_spc_ewma_ui_internal <- function(ns) {
         hr(style = "border-top: 1px solid #000000;"),
         plotOutput(ns("ewma_companion_out"), height = "280px"),
         fluidRow(
-          column(3, downloadButtonUI(ns("ewma_companion_out"))),
-          column(3, tags$div(class = "inline", downloadSelectUI(ns("ewma_companion_out"))))
+          column(3, downloadButtonUI(ns("ewma_companion_out_dl"))),
+          column(3, tags$div(class = "inline", downloadSelectUI(ns("ewma_companion_out_dl"))))
         )
       ),
       conditionalPanel(

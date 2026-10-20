@@ -45,7 +45,8 @@ create_proportions_ui <- function(ns) {
                 selectInput(
                   inputId = ns("alt_p"),
                   label = "Alternative hypothesis for proportions",
-                  choices = NULL  # Will be set in coordinator
+                  choices = choice_prop_alt_1,
+                  selected = "two.sided"
                 )
               )
             ),
@@ -56,7 +57,8 @@ create_proportions_ui <- function(ns) {
                 selectInput(
                   inputId = ns("alt_p2"),
                   label = "Alternative hypothesis for proportions",
-                  choices = NULL  # Will be set in coordinator
+                  choices = choice_prop_alt_2,
+                  selected = "two.sided"
                 )
               )
             )

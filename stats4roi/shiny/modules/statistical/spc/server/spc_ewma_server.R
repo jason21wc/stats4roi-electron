@@ -212,8 +212,8 @@ register_spc_ewma_server <- function(input, output, session, filtered_data, reac
   ewma_w <- reactive(400 * 8)
   ewma_h <- reactive(200 * 8)
   companion_h <- reactive(160 * 8)
-  downloadServer("ewma_chart_out", ewma_plot_gg, height = ewma_h, width = ewma_w)
-  downloadServer("ewma_companion_out", companion_plot_gg, height = companion_h, width = ewma_w)
+  downloadServer("ewma_chart_out_dl", ewma_plot_gg, height = ewma_h, width = ewma_w)
+  downloadServer("ewma_companion_out_dl", companion_plot_gg, height = companion_h, width = ewma_w)
 
   output$ewma_summary_out <- renderUI({
     result <- ewma_result()

@@ -6,6 +6,8 @@
 
 source("modules/statistical/eda/utils/interval_plot_helpers.R")
 
+library(bayesboot)
+
 # Import required functions from lolcat package
 ro <- round.object
 

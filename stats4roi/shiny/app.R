@@ -2,6 +2,8 @@
 # This is the main application file that uses the modular components
 # Original app.R (40,000+ lines) is preserved for reference
 
+# Core packages only at startup. Specialty packages (tidyverse, propagate, emmeans,
+# nlme, car, bayestestR, bayesboot, agop, ggh4x) load inside the modules that need them.
 library(shiny)
 library(DT)
 library(datamods)
@@ -10,81 +12,27 @@ library(readr)
 library(ggplot2)
 library(lolcat)
 source("modules/statistical/spc/utils/spc_zones_classify_override.R")
-library(agop)
 library(shinyWidgets)
-library(ggh4x)
-library(emmeans)
-library(nlme)
-library(tidyverse)
-# Shiny-compatible fork required: https://github.com/ProfessorPeregrine/propagate (CRAN version prints messages and fails in modules)
-library(propagate)
-propagate_desc <- packageDescription("propagate")
-if (is.null(propagate_desc$RemoteUsername) || propagate_desc$RemoteUsername != "ProfessorPeregrine") {
-  warning(
-    "propagate does not appear to be the Shiny fork from ProfessorPeregrine. ",
-    "You may see 'predictNLS: Propagating predictor value...' messages and scatterplot fit errors. ",
-    "Fix: remove.packages('propagate'); remotes::install_github('ProfessorPeregrine/propagate')"
-  )
-}
 library(svglite)
-library(car)
-library(bayestestR)
-library(bayesboot)
 library(rhandsontable)
 
-# Source global configuration first
+# Source global configuration and deferred-loading infrastructure first
 source("modules/config/global_config.R")
 source("modules/config/global_data_invalidation.R")
 source("modules/config/architectural_patterns.R")
+source("modules/config/deferred_module_loader.R")
+# Keep deployment file discovery in sync with deferred module paths
+deferred_deployment_source_manifest()
 
-
-# Source all modules
+# Eager: data pipeline (needed for File menu and all analyses)
 source("modules/data/data_import_module.R")
 source("modules/data/data_modification_module.R")
-# Note: data_filtering_module.R not needed - using datamods package directly
 source("modules/data/working_data_module.R")
 source("modules/data/dynamic_filtering_module.R")
 source("modules/data/data_transformation_module.R")
-# Crosstabs module (now modular)
-source("modules/statistical/crosstabs/crosstabs_module.R")
-# ANOVA module (now modular)
-source("modules/statistical/anova/anova_module.R")
 
-# Source distribution modules
-source("modules/distributions/base_distribution_module.R")
-source("modules/distributions/binomial_module.R")
-source("modules/distributions/normal_module.R")
-source("modules/distributions/poisson_module.R")
-source("modules/distributions/hypergeometric_module.R")
-source("modules/distributions/geometric_module.R")
-source("modules/distributions/exponential_module.R")
-source("modules/distributions/weibull_module.R")
-source("modules/distributions/f_distribution_module.R")
-source("modules/distributions/critical_values_module.R")
-
-# Source statistical modules
-source("modules/distributions/distribution_testing/distribution_testing_module.R")
-source("modules/statistical/sample_size_power/sample_size_power_module.R")
-source("modules/statistical/eda/eda_module.R")
-source("modules/statistical/one_two_sample_tests/one_two_sample_tests_module.R")
-source("modules/statistical/correlation_association/correlation_association_module.R")  # Re-adding step by step
-source("modules/statistical/autocorrelation/autocorrelation_module.R")
-# SPC module (to be implemented for parity with monolithic app)
-source("modules/statistical/spc/spc_module.R")
-# MSA module (to be implemented for parity with monolithic app)
-source("modules/statistical/msa/msa_module.R")
-source("modules/statistical/doe_orthogonal/doe_orthogonal_module.R")
-
-# Reliability (series-of-parallels calculator + Crow-AMSAA growth + Weibull)
-# Calculator is manual grid; Growth / Weibull use working data from File | Import.
-source("modules/reliability/reliability_calculator_module.R")
-source("modules/reliability/growth_analysis_module.R")
-source("modules/reliability/weibull_analysis_module.R")
-
-# Concept simulators (teaching demos; no working data)
-source("modules/learning/simulators/clt_simulator_module.R")
-source("modules/learning/simulators/power_simulator_module.R")
-source("modules/learning/simulators/anova_simulator_module.R")
+# Feature modules (Distributions, Reliability, EDA, SPC, ANOVA, …) are sourced
+# on first navbar visit or via idle prefetch — see deferred_module_loader.R
 
 # UI
 ui <- fluidPage(
@@ -355,12 +303,14 @@ ui <- fluidPage(
   ),
   useSweetAlert(),
   
-  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.33"), windowTitle = "stats4ROI"),
+  titlePanel(title = div(img(src = "roi-stat.svg", width = "40px"), "stats4ROI v4.36"), windowTitle = "stats4ROI"),
   navbarPage(
+    id = "main_navbar",
     title = NULL,
     # Welcome Page - First tabPanel is the default
     tabPanel(
       title = "Welcome to stats4ROI!",
+      value = "welcome",
       tags$img(src = "roi-stat.svg", width = "200px", style = "float:left; margin:10px"),
       h2("Welcome to stats4ROI!"),
       HTML("<a href='https://www.roi-ally.com' target='_blank'>The ROI Alliance</a> provides this friendly graphic front end to give access to the powerful statistical program R without having to know a line of code and with the assurance that the packages used work correctly. We hope this means that you can spend time learning when and how to use statistics rather than how to script in R. Don't let that stop you from learning R when you are ready!"),
@@ -381,18 +331,9 @@ ui <- fluidPage(
     ),
     navbarMenu(
       title = "Concept Simulators",
-      tabPanel(
-        title = "Central Limit Theorem",
-        create_clt_simulator_ui("clt_sim")
-      ),
-      tabPanel(
-        title = "Power & Sample Size",
-        create_power_simulator_ui("power_sim")
-      ),
-      tabPanel(
-        title = "How ANOVA Works",
-        create_anova_simulator_ui("anova_sim")
-      )
+      deferred_tab_panel("Central Limit Theorem", "clt_sim", "deferred_ui_clt_sim"),
+      deferred_tab_panel("Power & Sample Size", "power_sim", "deferred_ui_power_sim"),
+      deferred_tab_panel("How ANOVA Works", "anova_sim", "deferred_ui_anova_sim")
     ),
     navbarMenu(
       title = "File",
@@ -502,75 +443,48 @@ colors from the <a href= 'https://CRAN.R-project.org/package=Polychrome '>Polych
     ),
     navbarMenu(
       title = "Distributions",
-      tabPanel(
-        title = "Binomial",
-        create_binomial_ui("binomial")
-      ),
-      tabPanel(
-        title = "Normal",
-        create_normal_ui("normal")
-      ),
-      tabPanel(
-        title = "Poisson",
-        create_poisson_ui("poisson")
-      ),
-      tabPanel(
-        title = "Hypergeometric",
-        create_hypergeometric_ui("hypergeometric")
-      ),
-      tabPanel(
-        title = "Geometric",
-        create_geometric_ui("geometric")
-      ),
-      tabPanel(
-        title = "Exponential",
-        create_exponential_ui("exponential")
-      ),
-      tabPanel(
-        title = "Weibull",
-        create_weibull_ui("weibull")
-      ),
-      tabPanel(
-        title = "F Distribution",
-        create_f_distribution_ui("f_distribution")
-      ),
-      tabPanel(
-        title = "Critical Values",
-        create_critical_values_ui("critical_values")
-      ),
-      tabPanel(
-        title = "Distribution Testing",
-        create_distribution_testing_ui("distribution_testing")
-      )
+      deferred_tab_panel("Binomial", "binomial", "deferred_ui_binomial"),
+      deferred_tab_panel("Normal", "normal", "deferred_ui_normal"),
+      deferred_tab_panel("Poisson", "poisson", "deferred_ui_poisson"),
+      deferred_tab_panel("Hypergeometric", "hypergeometric", "deferred_ui_hypergeometric"),
+      deferred_tab_panel("Geometric", "geometric", "deferred_ui_geometric"),
+      deferred_tab_panel("Exponential", "exponential", "deferred_ui_exponential"),
+      deferred_tab_panel("Weibull", "weibull", "deferred_ui_weibull"),
+      deferred_tab_panel("F Distribution", "f_distribution", "deferred_ui_f_distribution"),
+      deferred_tab_panel("Critical Values", "critical_values", "deferred_ui_critical_values"),
+      deferred_tab_panel("Distribution Testing", "distribution_testing", "deferred_ui_distribution_testing")
     ),
     navbarMenu(
       title = "Reliability",
-      tabPanel(
-        title = "Reliability Calculator",
-        create_reliability_calculator_ui("reliability_calc")
-      ),
-      tabPanel(
-        title = "Growth Analysis",
-        create_growth_analysis_ui("growth_analysis")
-      ),
-      tabPanel(
-        title = "Weibull Analysis",
-        create_weibull_analysis_ui("weibull_analysis")
-      )
+      deferred_tab_panel("Reliability Calculator", "reliability_calc", "deferred_ui_reliability_calc"),
+      deferred_tab_panel("Growth Analysis", "growth_analysis", "deferred_ui_growth_analysis"),
+      deferred_tab_panel("Weibull Analysis", "weibull_analysis", "deferred_ui_weibull_analysis")
     ),
-    tabPanel(
-      title = "Sample Size/Power",
-      create_sample_size_power_ui("sample_size_power")
+    deferred_tab_panel("Sample Size/Power", "sample_size_power", "deferred_ui_sample_size_power"),
+    deferred_tab_panel("EDA", "eda", "deferred_ui_eda"),
+    navbarMenu(
+      title = "One- and Two-Sample Tests",
+      deferred_tab_panel("Test Reference", "ots_test_reference", "deferred_ui_ots_test_reference"),
+      deferred_tab_panel("Means and Dispersion", "ots_means_dispersion", "deferred_ui_ots_means_dispersion"),
+      deferred_tab_panel("Proportion", "ots_proportion", "deferred_ui_ots_proportion"),
+      deferred_tab_panel("Poisson", "ots_poisson", "deferred_ui_ots_poisson"),
+      deferred_tab_panel("Nonparametric", "ots_nonparametric", "deferred_ui_ots_nonparametric")
     ),
-    create_eda_ui("eda"),
-    create_one_two_sample_tests_ui("one_two_sample_tests"),  # Re-adding step by step
-    create_correlation_association_ui("correlation_association"),
-    create_autocorrelation_ui("autocorrelation"),
-    create_spc_ui("spc"),
-    create_msa_ui("msa"),
-    create_crosstabs_ui("crosstabs"),
-    create_anova_ui("anova"),
-    create_doe_orthogonal_ui("doe_orthogonal")
+    deferred_tab_panel("Correlation and Association", "correlation_association", "deferred_ui_correlation_association"),
+    deferred_tab_panel("Autocorrelation", "autocorrelation", "deferred_ui_autocorrelation"),
+    deferred_tab_panel("SPC/Capability", "spc", "deferred_ui_spc"),
+    navbarMenu(
+      title = "MSA",
+      deferred_tab_panel("Continuous", "msa_continuous", "deferred_ui_msa_continuous"),
+      deferred_tab_panel("Discrete", "msa_discrete", "deferred_ui_msa_discrete")
+    ),
+    deferred_tab_panel("Crosstabs", "crosstabs", "deferred_ui_crosstabs"),
+    navbarMenu(
+      title = "ANOVA",
+      deferred_tab_panel("Oneway", "anova_oneway", "deferred_ui_anova_oneway"),
+      deferred_tab_panel("Multi-Factor", "anova_multifactor", "deferred_ui_anova_multifactor")
+    ),
+    deferred_tab_panel("DOE Screening Design", "doe_orthogonal", "deferred_ui_doe_orthogonal")
   ),
   tags$div(
     id = "stats4roi-init-overlay",
@@ -584,6 +498,10 @@ colors from the <a href= 'https://CRAN.R-project.org/package=Polychrome '>Polych
 
 # Server
 server <- function(input, output, session) {
+  # Fresh per-session deferred server/UI flags (source cache stays process-wide).
+  if (exists("reset_deferred_session_state", mode = "function")) {
+    reset_deferred_session_state()
+  }
 
   session$onSessionEnded(function() {
     stopApp()
@@ -691,33 +609,6 @@ server <- function(input, output, session) {
   # Data transformation module - adds transform columns to working data (pass-through when none applied)
   transform_result <- create_data_transformation_server("transform", working_data_result$data)
 
-  # Data filtering (replicating app.R lines 3857-3895)
-  # Data reactive for filtering - use transformed data (or working data when no transforms)
-  data <- reactive({
-    transform_result$data()
-  })
-
-  # Filter server (replicating app.R lines 3862-3868)
-  # Use transformed data for filtering
-  res_filter <- list(
-    filtered = data,
-    code = reactive("No filtering applied"),
-    expr = reactive("No filtering applied")
-  )
-
-  # Progress bar update (replicating app.R lines 3870-3875)
-  observeEvent(res_filter$filtered(), {
-    tryCatch({
-      updateProgressBar(
-        session = session, id = "pbar",
-        value = nrow(res_filter$filtered()), total = nrow(data())
-      )
-    }, error = function(e) {
-      # Silently ignore progress bar errors
-      cat("Progress bar update error:", e$message, "\n")
-    })
-  })
-
   # Dynamic filtering module - receives transformed data
   dynamic_filtering_result <- create_dynamic_filtering_server("dynamic_filtering", transform_result$data)
   
@@ -759,130 +650,48 @@ server <- function(input, output, session) {
     }
   )
   
-  # Global working data reactive for use by other modules
-  # This provides the filtered data (with filters applied when available)
+  # Working data for global invalidation (analyses use safe_filtered_data)
   working_data <- reactive({
     working_data_result$data()
   })
-  
-  # Store working data in reactive values for module access
-  # This replicates how the original app makes filtered data available
-  values <- reactiveValues(working_data = NULL, color_palette = NULL)
-  
-  observe({
-    values$working_data <- working_data()
-  })
-  
+
   # Set up global data invalidation system
   # This ensures ALL data-driven UI elements are reset when new data is loaded
   setup_global_data_invalidation(session, working_data)
-  
-  # Settings functionality (replicating app.R lines 16095-16106)
-  # Color palette management using global system
-  pal_col <- reactiveVal("R4")  # Default color palette
-  
-  # Create reactive color palette that updates when user changes selection
+
+  # Color palette for modules (Settings tab)
   reactive_color_palette <- reactive({
     pal <- input$color_pal
     if (is.null(pal)) pal <- "R4"  # Default if not yet selected
     get_color_palette(pal)
   })
-  
-  # Initialize color palette immediately
-  values$color_palette <- get_color_palette("R4")
 
-  # Concept simulators (no working data)
-  create_clt_simulator_server("clt_sim", reactive_color_palette)
-  create_power_simulator_server("power_sim", reactive_color_palette)
-  create_anova_simulator_server("anova_sim", reactive_color_palette)
-  
-  # Distribution modules (replicating app.R distribution functionality)
-  # Binomial distribution - use reactive color palette
-  create_binomial_server("binomial", reactive_color_palette)
-  
-  # Normal distribution - use reactive color palette
-  create_normal_server("normal", reactive_color_palette)
-  
-  # Poisson distribution - use reactive color palette
-  create_poisson_server("poisson", reactive_color_palette)
-  
-  # Hypergeometric distribution - use reactive color palette
-  create_hypergeometric_server("hypergeometric", reactive_color_palette)
-  
-  # Geometric distribution - use reactive color palette
-  create_geometric_server("geometric", reactive_color_palette)
-  
-  # Exponential distribution - use reactive color palette
-  create_exponential_server("exponential", reactive_color_palette)
-  
-  # Weibull distribution - use reactive color palette
-  create_weibull_server("weibull", reactive_color_palette)
-  
-  # F-distribution - use reactive color palette
-  create_f_distribution_server("f_distribution", reactive_color_palette)
-  
-  # Critical Values - use reactive color palette
-  create_critical_values_server("critical_values", reactive_color_palette)
-  
-  # Reliability Calculator
-  create_reliability_calculator_server("reliability_calc", reactive_color_palette)
+  deferred_deps <- list(
+    filtered_data = safe_filtered_data,
+    color_palette = reactive_color_palette
+  )
 
-  # Reliability Growth Analysis (uses working data)
-  create_growth_analysis_server("growth_analysis", safe_filtered_data, reactive_color_palette)
+  # Activate feature modules on first navbar visit (source + server + UI)
+  observeEvent(input$main_navbar, {
+    activate_deferred_tab(input$main_navbar, output, deferred_deps, session)
+  }, ignoreNULL = TRUE)
 
-  # Weibull life-data analysis (uses working data)
-  create_weibull_analysis_server("weibull_analysis", safe_filtered_data, reactive_color_palette)
+  # After first flush, prefetch deferred module sources in the background
+  session$onFlushed(function() {
+    prefetch_deferred_modules(session)
+  }, once = TRUE)
 
-  # Sample Size and Power Analysis
-  create_sample_size_power_server("sample_size_power", reactive_color_palette)
-  
-  # EDA Module
-  create_eda_server("eda", safe_filtered_data, reactive_color_palette)
-  
-  # One- and Two-Sample Tests Module
-  create_one_two_sample_tests_server("one_two_sample_tests", safe_filtered_data, reactive_color_palette)
-  
-  # Correlation and Association Module
-  create_correlation_association_server("correlation_association", safe_filtered_data, reactive_color_palette)
-
-  # Autocorrelation Module
-  create_autocorrelation_server("autocorrelation", safe_filtered_data, reactive_color_palette)
-  
-  # SPC Module
-  create_spc_server("spc", safe_filtered_data, reactive_color_palette)
-
-  # MSA Module
-  create_msa_server("msa", safe_filtered_data, reactive_color_palette)
-
-  # Crosstabs Module
-  create_crosstabs_server("crosstabs", safe_filtered_data, reactive_color_palette)
-  create_anova_server("anova", safe_filtered_data, reactive_color_palette)
-  create_doe_orthogonal_server("doe_orthogonal", reactive_color_palette)
-
-  # Distribution Testing
-  create_distribution_testing_server("distribution_testing", safe_filtered_data, reactive_color_palette)
-  
-  # Color swatch plot (replicating app.R lines 16095-16106)
+  # Color swatch plot (Settings tab demo)
   output$swatch <- renderPlot({
     pal <- input$color_pal
-    if (is.null(pal)) pal <- "R4"  # Default if not yet selected
-    
-    # Update global color palette
-    pal_col(pal)
-    
-    # Plot a demo with the selected palette
+    if (is.null(pal)) pal <- "R4"
+
     fake_data <- data.frame(
       x1 = rnorm(50), x2 = rnorm(50), x3 = rnorm(50), x4 = rnorm(50),
       x5 = rnorm(50), x6 = rnorm(50), x7 = rnorm(50), x8 = rnorm(50)
     )
-    
-    # Use global color system
-    color_palette <- get_color_palette(pal)
-    boxplot(x = fake_data, col = color_palette)
-    
-    # Store colors for use by other modules
-    values$color_palette <- color_palette
-    values$col_mean_line <- color_palette[3]
+
+    boxplot(x = fake_data, col = get_color_palette(pal))
   })
   
 }

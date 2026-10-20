@@ -1855,7 +1855,7 @@ create_continuous_msa_server <- function(id, filtered_data, reactive_color_palet
       app_num() * 400 * 4
     })
     msaltoverall_width <- reactive(400 * 8)
-    downloadServer("msa_lt_overall", msa_lt_overall, height = msaltoverall_height, width = msaltoverall_width)
+    downloadServer("msa_lt_overall_dl", msa_lt_overall, height = msaltoverall_height, width = msaltoverall_width)
 
     output$lt_plot_2 <- renderUI({
       req(lt_ready())

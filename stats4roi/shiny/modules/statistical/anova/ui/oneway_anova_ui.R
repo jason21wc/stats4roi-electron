@@ -177,8 +177,8 @@ create_oneway_anova_ui_internal <- function(ns) {
             numericInput(ns("loss_ow_dec"), "Decimals", value = 4, min = 0, max = 9, step = 1, width = "75px"),
             numericInput(ns("loss_ow_C_l"), "Lower-side cost at LSL (C_lower)", value = 1, min = 0, step = 0.01, width = "100%"),
             numericInput(ns("loss_ow_C_u"), "Upper-side cost at USL (C_upper)", value = 1, min = 0, step = 0.01, width = "100%"),
-            numericInput(ns("loss_ow_lsl"), "LSL", value = NA, width = "100%"),
-            numericInput(ns("loss_ow_usl"), "USL", value = NA, width = "100%"),
+            numericInput(ns("loss_ow_lsl"), "LSL", value = NULL, width = "100%"),
+            numericInput(ns("loss_ow_usl"), "USL", value = NULL, width = "100%"),
             uiOutput(ns("loss_ow_resolution_prior_panel")),
             selectInput(
               ns("loss_ow_opt_target"),

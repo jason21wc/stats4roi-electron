@@ -54,7 +54,9 @@ mismatch. See LEARNING-LOG 2026-09-03.
 ### #7 — Report residual discrete-distribution boundary display to Steve
 
 **Status:** Reported to Steve 2026-09-03 — awaiting his call. Upstream nit, not a
-release blocker; nothing for us to do but resync if he changes it.
+release blocker; nothing for us to do but resync if he changes it. Checked at the v4.3.6
+sync (2026-10-19): no file under `modules/distributions/` changed, so the behavior is
+unchanged.
 **Trigger:** Next upstream sync — check whether the boundary lookup changed.
 
 Excluding R=0 in the lower tail or R=n in the upper tail of binomial/Poisson/
@@ -83,6 +85,25 @@ project, and the `author` field is correctly Steve. Decide whether the field sho
 the packaging repo, name Steve's upstream, or be dropped. Flagged by the coherence audit
 of 2026-09-03.
 
+### #9 — Tell Steve which of his own tests fail in his repo layout
+
+**Status:** Open. Optional courtesy note; not a release blocker, and nothing for us to change.
+**Trigger:** Next time Jason writes to Steve, e.g. the v4.3.6 release email.
+
+At upstream `0ad0cf3`, run from upstream's root with bundled R 4.5.1, 16 of 62 testthat
+files fail or error. Results are identical under lolcat 2.0.0 and 2.0.2, so the lolcat
+upgrade did not cause them. Upstream's deferred-load smoke test passes.
+- Missing fixtures (`cannot open the connection`): `test_anova_r_squared`,
+  `test_correlation_parity`, `test_one_two_sample_parity`, `test_ppa_*` (3 files),
+  `test-crosstab-module`, `test-msa-utils`, `test-spc-cusum`, `test-spc-ewma`.
+- Stale assertions after refactors: `test_shiny_duplicate_ids` expects
+  `downloadServer("ppa_run_chart_plot"` in a file that no longer has it; `test-spc-utils`
+  expects 4 dependencies and finds 2.
+- Test does not load its helper: `test_quantiles_type6` cannot find `eda_safe_numeric`.
+- Possibly real, worth Steve's eyes: `test_doe_orthogonal_assign` gets "No valid
+  assignment" for a design it expects to be resolution V. `test_taguchi_loss_mvp`
+  predicts NA, and coefficient `c` is missing from the model.
+
 ### #2 — Code signing and notarization
 
 **Status:** Discussion — needs a cost/benefit decision.
@@ -102,4 +123,4 @@ Apple Silicon only, by decision (PROJECT-MEMORY, 2024-01-24). Would require a se
 bundled R runtime and a universal or separate build. Revisit only on real demand.
 
 ---
-*Last Updated: 2026-09-03*
+*Last Updated: 2026-10-19*

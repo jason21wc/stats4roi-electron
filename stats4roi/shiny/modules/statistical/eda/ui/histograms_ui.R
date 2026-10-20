@@ -57,7 +57,7 @@ create_histograms_ui <- function(ns) {
             numericInput(
               inputId = ns("hist_LSL"),
               label = "LSL",
-              value = NA,
+              value = NULL,
               width = "75px"
             )
           ),
@@ -65,7 +65,7 @@ create_histograms_ui <- function(ns) {
             numericInput(
               inputId = ns("hist_target"),
               label = "Target",
-              value = NA,
+              value = NULL,
               width = "75px"
             )
           ),
@@ -73,7 +73,7 @@ create_histograms_ui <- function(ns) {
             numericInput(
               inputId = ns("hist_USL"),
               label = "USL",
-              value = NA,
+              value = NULL,
               width = "75px"
             )
           )

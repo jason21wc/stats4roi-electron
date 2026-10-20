@@ -469,7 +469,7 @@ loss_mf_static_economics_ui <- function(ns) {
       style = "margin-bottom: 0.5em;",
       shiny::tags$strong("Taguchi economics")
     ),
-    shiny::numericInput(ns("loss_mf_target"), "Target (T)", value = NA_real_, width = "100%"),
+    shiny::numericInput(ns("loss_mf_target"), "Target (T)", value = NULL, width = "100%"),
     shiny::numericInput(
       ns("loss_mf_C_l"),
       "Lower-side cost at LSL (C_lower)",
@@ -486,8 +486,8 @@ loss_mf_static_economics_ui <- function(ns) {
       step = 0.01,
       width = "100%"
     ),
-    shiny::numericInput(ns("loss_mf_lsl"), "LSL", value = NA_real_, width = "100%"),
-    shiny::numericInput(ns("loss_mf_usl"), "USL", value = NA_real_, width = "100%")
+    shiny::numericInput(ns("loss_mf_lsl"), "LSL", value = NULL, width = "100%"),
+    shiny::numericInput(ns("loss_mf_usl"), "USL", value = NULL, width = "100%")
   )
 }
 

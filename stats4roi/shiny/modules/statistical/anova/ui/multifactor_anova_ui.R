@@ -145,7 +145,7 @@ create_multifactor_anova_ui_internal <- function(ns) {
           "Graphs",
           mainPanel(
             width = 12,
-            numericInput(inputId = ns("ems_target"), label = "Target", value = NA, width = "100px"),
+            numericInput(inputId = ns("ems_target"), label = "Target", value = NULL, width = "100px"),
             plotOutput(outputId = ns("emssigeffects"), width = "auto", height = 400),
             fluidRow(
               column(6, downloadButtonUI(ns("emssigeffects"))),
@@ -247,9 +247,9 @@ create_multifactor_anova_ui_internal <- function(ns) {
               "Enter economics for each selected response: switch here, edit fields, repeat for all responses, then Calculate."
             ),
             textOutput(ns("loss_mf_econ_active_label")),
-            numericInput(ns("loss_mf_lsl"), "LSL", value = NA_real_, width = "100%"),
+            numericInput(ns("loss_mf_lsl"), "LSL", value = NULL, width = "100%"),
             numericInput(ns("loss_mf_target"), "Target (T)", value = 0, width = "100%"),
-            numericInput(ns("loss_mf_usl"), "USL", value = NA_real_, width = "100%"),
+            numericInput(ns("loss_mf_usl"), "USL", value = NULL, width = "100%"),
             numericInput(
               ns("loss_mf_C_l"),
               "Lower-side cost at LSL (C_lower)",

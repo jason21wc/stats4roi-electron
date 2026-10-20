@@ -41,7 +41,7 @@ create_sample_size_power_ui_internal <- function(ns) {
           selectInput(
             inputId = ns("one_or_two_size"),
             label = "Alternative is:",
-            choices = c("Equal to the null" = "two.sided", "Less Than the null" = "less", "Greater Than the null" = "greater"),
+            choices = c("Unequal to the null" = "two.sided", "Less Than the null" = "less", "Greater Than the null" = "greater"),
             width = "150px",
             selected = 2
           )
@@ -166,11 +166,16 @@ create_sample_size_power_ui_internal <- function(ns) {
                 class = "inline sample-size-param",
                 numericInput(
                   inputId = ns("power_curve_interval"),
-                  label = "Interval",
+                  label = "Step",
                   value = 0.05,
                   min = 0,
                   step = 0.01,
                   width = "150px"
+                ),
+                tags$p(
+                  class = "help-block",
+                  style = "margin-top: 0;",
+                  "Table and plot cover 10 steps on each side of the start value."
                 )
               )
             )

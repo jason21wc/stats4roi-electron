@@ -147,22 +147,9 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
                   missing = length(spec$x),
                   stringsAsFactors = FALSE
                 )
-              } else if (n_valid <= 25) {
-                clean_df <- data.frame(setNames(list(x_num[!is.na(x_num)]), col_name), stringsAsFactors = FALSE)
-                col_result <- summary.all.variables(
-                  data = clean_df,
-                  stat.sd = TRUE,
-                  stat.ad.test = 2,
-                  stat.sw.test = 2
-                )
               } else {
                 clean_df <- data.frame(setNames(list(x_num[!is.na(x_num)]), col_name), stringsAsFactors = FALSE)
-                col_result <- summary.all.variables(
-                  data = clean_df,
-                  stat.sd = TRUE,
-                  stat.skew.test = 2,
-                  stat.kurt.test = 2
-                )
+                col_result <- normality_auto_summary_all_variables(clean_df)
               }
               results_list[[k]] <- col_result
             }, error = function(e) {
@@ -255,7 +242,7 @@ create_normality_tests_server <- function(id, data_source, data_type_reactive, i
           group_cols <- make.names(indep)
           
           if (auto == TRUE) {
-            output <- summary.continuous(fx = model_text, data = data, stat.sd = T)
+            output <- normality_factor_auto_summary(model_text, data)
           } else {
             if (is.null(test) || length(test) == 0) {
               return(list(

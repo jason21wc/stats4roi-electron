@@ -1,9 +1,11 @@
 # Process Performance Analysis tab UI
 
 ppa_plot_download_row <- function(ns, id) {
+  # Download module id must differ from plotOutput id (append _dl)
+  dl_id <- paste0(id, "_dl")
   fluidRow(
-    column(3, downloadButtonUI(ns(id))),
-    column(3, tags$div(class = "inline", downloadSelectUI(ns(id))))
+    column(3, downloadButtonUI(ns(dl_id))),
+    column(3, tags$div(class = "inline", downloadSelectUI(ns(dl_id))))
   )
 }
 
@@ -47,9 +49,9 @@ create_spc_ppa_ui_internal <- function(ns) {
       h4("3. Specifications"),
       tags$div(
         class = "inline",
-        numericInput(ns("ppa_lsl"), "LSL:", value = NA, width = "100px"),
-        numericInput(ns("ppa_target"), "Target:", value = NA, width = "100px"),
-        numericInput(ns("ppa_usl"), "USL:", value = NA, width = "100px")
+        numericInput(ns("ppa_lsl"), "LSL:", value = NULL, width = "100px"),
+        numericInput(ns("ppa_target"), "Target:", value = NULL, width = "100px"),
+        numericInput(ns("ppa_usl"), "USL:", value = NULL, width = "100px")
       ),
       helpText("Leave Target blank to report Ppk only (no Ppm)."),
       checkboxInput(ns("ppa_show_spec_limits"), "Show spec limits on exploratory charts", TRUE),
@@ -117,8 +119,8 @@ create_spc_ppa_ui_internal <- function(ns) {
           plotOutput(ns("ppa_variance_bar"), height = "320px"),
           plotOutput(ns("ppa_nested_variance_bar"), height = "280px"),
           fluidRow(
-            column(3, downloadButtonUI(ns("ppa_variance_bar"))),
-            column(3, tags$div(class = "inline", downloadSelectUI(ns("ppa_variance_bar"))))
+            column(3, downloadButtonUI(ns("ppa_variance_bar_dl"))),
+            column(3, tags$div(class = "inline", downloadSelectUI(ns("ppa_variance_bar_dl"))))
           )
         ),
         tabPanel(

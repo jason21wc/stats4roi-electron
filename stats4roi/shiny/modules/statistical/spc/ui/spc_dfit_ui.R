@@ -16,9 +16,9 @@ create_spc_dfit_ui_internal <- function(ns) {
       tags$div(
         id = "inline1",
         class = "inline",
-        numericInput(ns("dfit_lsl"), "LSL:", value = NA, width = "75px"),
-        numericInput(ns("dfit_target"), "Target:", value = NA, width = "75px"),
-        numericInput(ns("dfit_usl"), "USL:", value = NA, width = "75px")
+        numericInput(ns("dfit_lsl"), "LSL:", value = NULL, width = "75px"),
+        numericInput(ns("dfit_target"), "Target:", value = NULL, width = "75px"),
+        numericInput(ns("dfit_usl"), "USL:", value = NULL, width = "75px")
       ),
       helpText("Enter at least one spec limit for conformance and capability."),
       checkboxInput(
@@ -88,8 +88,8 @@ create_spc_dfit_ui_internal <- function(ns) {
       ),
       br(),
       fluidRow(
-        column(3, downloadButtonUI(ns("dfit_plot"))),
-        column(3, downloadSelectUI(ns("dfit_plot"))),
+        column(3, downloadButtonUI(ns("dfit_plot_dl"))),
+        column(3, downloadSelectUI(ns("dfit_plot_dl"))),
         column(
           2,
           conditionalPanel(
@@ -181,11 +181,11 @@ create_spc_dfit_ui_internal <- function(ns) {
               ),
               conditionalPanel(
                 condition = paste0("input['", ns("dfit_calc_mode"), "'] == 'proportion'"),
-                numericInput(ns("dfit_calc_value"), "Value", value = NA, width = "100%")
+                numericInput(ns("dfit_calc_value"), "Value", value = NULL, width = "100%")
               ),
               conditionalPanel(
                 condition = paste0("input['", ns("dfit_calc_mode"), "'] == 'quantile'"),
-                numericInput(ns("dfit_calc_prop"), "Proportion (%)", value = NA, min = 0, max = 100, width = "100%"),
+                numericInput(ns("dfit_calc_prop"), "Proportion (%)", value = NULL, min = 0, max = 100, width = "100%"),
                 radioButtons(
                   ns("dfit_calc_tail"),
                   "Tail",

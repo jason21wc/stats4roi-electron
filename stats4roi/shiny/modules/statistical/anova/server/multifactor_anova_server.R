@@ -13,6 +13,7 @@ library(stringr)
 library(emmeans)
 library(nlme)
 library(tidyr)
+library(car)
 
 # Avoid R CMD check notes for ggplot aesthetics
 utils::globalVariables(c("FirstFactor", "SecondFactor", "section", "y"))

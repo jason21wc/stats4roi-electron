@@ -119,8 +119,8 @@ create_spc_ui_internal <- function(ns) {
             ),
             HTML("<p style='text-align:right;'><small>Mouse over for point information</small></p>"),
             fluidRow(
-              column(3, downloadButtonUI(ns("xchartout"))),
-              column(3, tags$div(id = "inline1", class = "inline", downloadSelectUI(ns("xchartout")))),
+              column(3, downloadButtonUI(ns("xchartout_dl"))),
+              column(3, tags$div(id = "inline1", class = "inline", downloadSelectUI(ns("xchartout_dl")))),
               column(
                 6,
                 tags$div(
@@ -175,9 +175,9 @@ create_spc_ui_internal <- function(ns) {
                   column(
                     6,
                     p("Enter specs for Capability Analysis"),
-                    numericInput(inputId = ns("spc_x_USL"), label = "USL: ", value = NA, width = "75px"),
-                    numericInput(inputId = ns("spc_x_target"), label = "Target: ", value = NA, width = "75px"),
-                    numericInput(inputId = ns("spc_x_LSL"), label = "LSL: ", value = NA, width = "75px")
+                    numericInput(inputId = ns("spc_x_USL"), label = "USL: ", value = NULL, width = "75px"),
+                    numericInput(inputId = ns("spc_x_target"), label = "Target: ", value = NULL, width = "75px"),
+                    numericInput(inputId = ns("spc_x_LSL"), label = "LSL: ", value = NULL, width = "75px")
                   )
                 )
               ),
@@ -265,8 +265,8 @@ create_spc_ui_internal <- function(ns) {
               uiOutput(ns("hover_info_att"), style = "pointer-events: none")
             ),
             fluidRow(
-              column(3, downloadButtonUI(ns("attchartout"))),
-              column(3, tags$div(id = "inline1", class = "inline", downloadSelectUI(ns("attchartout")))),
+              column(3, downloadButtonUI(ns("attchartout_dl"))),
+              column(3, tags$div(id = "inline1", class = "inline", downloadSelectUI(ns("attchartout_dl")))),
               column(
                 6,
                 tags$div(
